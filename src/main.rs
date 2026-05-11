@@ -60,8 +60,8 @@ fn validate_input(input: String) -> Vec<String> {
         let mut constants = c.borrow_mut();
         FUNCTIONS.with(|f| {
             let mut functions = f.borrow_mut();
-            let mut ast = parser.parse(&mut constants, &mut functions);
-            let eval = eval(&mut ast, &HashMap::<&String, &math::Object>::new(), &mut constants, &mut functions);
+            let ast = parser.parse(&mut constants, &mut functions);
+            let eval = eval(&ast, &HashMap::<&String, &math::Object>::new(), &mut constants, &mut functions);
             match eval {
                 Ok(obj) => {
                     output = obj.to_multline();
@@ -80,10 +80,10 @@ fn validate_input(input: String) -> Vec<String> {
 
 #[component]
 fn App() -> Element {
-    let mut input_value = use_signal(|| String::new());
-    let mut console_lines = use_signal(|| Vec::<String>::new());
+    let mut input_value = use_signal(String::new);
+    let mut console_lines = use_signal(Vec::<String>::new);
     let joined_lines = console_lines().join("\n");
-    let mut previous_commands = use_signal(|| Vec::<String>::new());
+    let mut previous_commands = use_signal(Vec::<String>::new);
     let joined_previous_commands = previous_commands().join("\n");
     let mut scroll_to_bottom_signal = use_signal(|| 0); // This allows to perform actions after the DOM is updated
     use_effect(move || {
@@ -124,7 +124,7 @@ fn App() -> Element {
                                 pc.push(input);
                                 let n = new_lines.len();
                                 if n > 1 {
-                                    pc.extend(std::iter::repeat("│".to_string()).take(n - 1));
+                                    pc.extend(std::iter::repeat_n("│".to_string(), n - 1));
                                 }
                                 cl.append(&mut new_lines);
                                 console_lines.set(cl);

@@ -1,9 +1,9 @@
-/// Most things in this module are written such that user interaction is smoother,
-/// e.g. by having vectors and matrices of variable size.
-/// However, this makes computation slightly longer, so this file shouldn't be
-/// used for intensive computations.
-/// It is tailored to the use case of a calculator where performance doesn't matter
-/// that much and flexibility to define variables as desired is more important.
+//! Most things in this module are written such that user interaction is smoother,
+//! e.g. by having vectors and matrices of variable size.
+//! However, this makes computation slightly longer, so this file shouldn't be
+//! used for intensive computations.
+//! It is tailored to the use case of a calculator where performance doesn't matter
+//! that much and flexibility to define variables as desired is more important.
 
 use std::ops;
 use std::slice::SliceIndex;
@@ -73,13 +73,13 @@ impl Default for Vector {
 // Theoretically, "a + b" may still be useful for ergonomic purposes (e.g. "myvec + Vector {...}", where the RHS is a throwaway vector
 // and myvec isn't used again later). However, so are "a + &b" and "&a + b" (e.g. "&myvec + Vector {...}" when we do want to
 // reuse 'myvec' later), which one would then have to implement too. The initial idea of defining "a+b := &a + &b" might be inefficient
-/// because the compiler may not be able to optimize it away. On the contrary, rewriting the full implementation for
+// because the compiler may not be able to optimize it away. On the contrary, rewriting the full implementation for
 // "a+b", "&a+b" and "a+&b" will increase the code size by a lot (and thus probably the binary size too).
 // => For the moment, we only implement "&a + &b" and rely on the fact that the developer will not be too lazy to add two '&' in every call.
 
-impl<'a, 'b> ops::Add<&'b Vector> for &'a Vector {
+impl ops::Add<&Vector> for &Vector {
     type Output = Option<Vector>;
-    fn add(self, rhs: &'b Vector) -> Self::Output {
+    fn add(self, rhs: &Vector) -> Self::Output {
         if self.values.len() != rhs.values.len() {
             return None;
         }
@@ -98,9 +98,9 @@ impl ops::AddAssign<&Vector> for Vector {
         }
     }
 }
-impl<'a, 'b> ops::Sub<&'b Vector> for &'a Vector {
+impl ops::Sub<&Vector> for &Vector {
     type Output = Option<Vector>;
-    fn sub(self, rhs: &'b Vector) -> Self::Output {
+    fn sub(self, rhs: &Vector) -> Self::Output {
         if self.values.len() != rhs.values.len() {
             return None;
         }
@@ -122,7 +122,7 @@ impl ops::SubAssign<&Vector> for Vector {
 /// Multiplication with a "constant" (i.e. a float) is done component-wise.
 /// Operator is implemented as commutative.
 // The same goes for division, negation and modulo.
-impl<'a> ops::Mul<f64> for &'a Vector {
+impl ops::Mul<f64> for &Vector {
     type Output = Vector;
     fn mul(self, rhs: f64) -> Self::Output {
         Vector {
@@ -146,7 +146,7 @@ impl ops::MulAssign<f64> for Vector {
     }
 }
 /// Note: for the operations vector/constant and constant/vector, order matters.
-impl<'a> ops::Div<f64> for &'a Vector {
+impl ops::Div<f64> for &Vector {
     type Output = Vector;
     fn div(self, rhs: f64) -> Self::Output {
         Vector {
@@ -169,7 +169,7 @@ impl ops::DivAssign<f64> for Vector {
         }
     }
 }
-impl<'a> ops::Rem<f64> for &'a Vector {
+impl ops::Rem<f64> for &Vector {
     type Output = Vector;
     fn rem(self, rhs: f64) -> Self::Output {
         Vector {
@@ -192,7 +192,7 @@ impl ops::RemAssign<f64> for Vector {
         }
     }
 }
-impl<'a> ops::Neg for &'a Vector {
+impl ops::Neg for &Vector {
     type Output = Vector;
     fn neg(self) -> Self::Output {
         Vector {
@@ -258,9 +258,9 @@ impl fmt::Debug for Matrix {
 
 // Same rationale for matrix operations as for vectors
 /// Slightly more inefficient than the version with type parameter since we have to check whether the dimensions match
-impl<'a, 'b> ops::Add<&'b Matrix> for &'a Matrix {
+impl ops::Add<&Matrix> for &Matrix {
     type Output = Option<Matrix>;
-    fn add(self, rhs: &'b Matrix) -> Self::Output {
+    fn add(self, rhs: &Matrix) -> Self::Output {
         if self.m != rhs.m || self.n != rhs.n {
             return None;
         }
@@ -281,9 +281,9 @@ impl ops::AddAssign<&Matrix> for Matrix {
         }
     }
 }
-impl<'a, 'b> ops::Sub<&'b Matrix> for &'a Matrix {
+impl ops::Sub<&Matrix> for &Matrix {
     type Output = Option<Matrix>;
-    fn sub(self, rhs: &'b Matrix) -> Self::Output {
+    fn sub(self, rhs: &Matrix) -> Self::Output {
         if self.m != rhs.m || self.n != rhs.n {
             return None;
         }
@@ -306,7 +306,7 @@ impl ops::SubAssign<&Matrix> for Matrix {
 /// Multiplication with a "constant" (i.e. a float) is done component-wise.
 /// Operator is implemented as commutative.
 // The same goes for division, negation and modulo.
-impl<'a> ops::Mul<f64> for &'a Matrix {
+impl ops::Mul<f64> for &Matrix {
     type Output = Matrix;
     fn mul(self, rhs: f64) -> Self::Output {
         Matrix {
@@ -334,7 +334,7 @@ impl ops::MulAssign<f64> for Matrix {
     }
 }
 /// Note: for the operations vector/constant and constant/vector, order matters.
-impl<'a> ops::Div<f64> for &'a Matrix {
+impl ops::Div<f64> for &Matrix {
     type Output = Matrix;
     fn div(self, rhs: f64) -> Self::Output {
         Matrix {
@@ -361,7 +361,7 @@ impl ops::DivAssign<f64> for Matrix {
         }
     }
 }
-impl<'a> ops::Rem<f64> for &'a Matrix {
+impl ops::Rem<f64> for &Matrix {
     type Output = Matrix;
     fn rem(self, rhs: f64) -> Self::Output {
         Matrix {
@@ -388,7 +388,7 @@ impl ops::RemAssign<f64> for Matrix {
         }
     }
 }
-impl<'a> ops::Neg for &'a Matrix {
+impl ops::Neg for &Matrix {
     type Output = Matrix;
     fn neg(self) -> Self::Output {
         Matrix {
@@ -403,9 +403,9 @@ impl<'a> ops::Neg for &'a Matrix {
 /// This makes it more convenient to obtain the inner product.
 /// 
 /// Returns None in case the dimensions mismatch.
-impl<'a, 'b> ops::Mul<&'b Vector> for &'a Vector {
+impl ops::Mul<&Vector> for &Vector {
     type Output = Option<f64>;
-    fn mul(self, rhs: &'b Vector) -> Self::Output {
+    fn mul(self, rhs: &Vector) -> Self::Output {
         if self.values.len() != rhs.values.len() {
             None
         }
@@ -415,9 +415,9 @@ impl<'a, 'b> ops::Mul<&'b Vector> for &'a Vector {
     }
 }
 /// Returns None in case the dimensions mismatch.
-impl<'a, 'b> ops::Mul<&'b Vector> for &'a Matrix {
+impl ops::Mul<&Vector> for &Matrix {
     type Output = Option<Vector>;
-    fn mul(self, rhs: &'b Vector) -> Self::Output {
+    fn mul(self, rhs: &Vector) -> Self::Output {
         if self.n != rhs.values.len() {
             None
         }
@@ -432,9 +432,9 @@ impl<'a, 'b> ops::Mul<&'b Vector> for &'a Matrix {
 /// but this slight lack of rigorousness is less expensive than re-implementing all functions for a new type 'FlippedVector' or using a 1xn-matrix.
 /// 
 /// Returns None in case the dimensions mismatch.
-impl<'a, 'b> ops::Mul<&'b Matrix> for &'a Vector {
+impl ops::Mul<&Matrix> for &Vector {
     type Output = Option<Vector>;
-    fn mul(self, rhs: &'b Matrix) -> Self::Output {
+    fn mul(self, rhs: &Matrix) -> Self::Output {
         if self.values.len() != rhs.m {
             None
         }
@@ -446,9 +446,9 @@ impl<'a, 'b> ops::Mul<&'b Matrix> for &'a Vector {
     }
 }
 /// Returns None in case the dimensions mismatch.
-impl<'a, 'b> ops::Mul<&'b Matrix> for &'a Matrix {
+impl ops::Mul<&Matrix> for &Matrix {
     type Output = Option<Matrix>;
-    fn mul(self, rhs: &'b Matrix) -> Self::Output {
+    fn mul(self, rhs: &Matrix) -> Self::Output {
         if self.n != rhs.m {
             None
         }
@@ -459,7 +459,7 @@ impl<'a, 'b> ops::Mul<&'b Matrix> for &'a Matrix {
                     values.push((0..self.n).map(|k| self.get(i, k) * rhs.get(k, j)).sum())
                 }
             }
-            Some(Matrix{ m: self.m, n: rhs.n, values: values })
+            Some(Matrix{ m: self.m, n: rhs.n, values })
         }
     }
 }
@@ -478,8 +478,7 @@ impl Vector {
 impl Matrix {
     pub fn zeros(m: usize, n: usize) -> Matrix {
         Matrix {
-            m: m,
-            n: n,
+            m, n,
             values: vec![0.0; m*n]
         }
     }
@@ -491,7 +490,7 @@ impl Matrix {
 
     /// Encapsulated in order to keep the field `values` private.
     pub fn from(m: usize, n: usize, values: Vec<f64>) -> Matrix {
-        Matrix{m: m, n: n, values: values}
+        Matrix{m, n, values}
     }
 
     pub fn row(&self, i: usize) -> Vector {
@@ -508,17 +507,17 @@ impl Matrix {
                 values.push(self.get(i, j));
             }
         }
-        Matrix {m: self.n, n: self.m, values: values}
+        Matrix {m: self.n, n: self.m, values}
     }
 
     pub fn identity(n: usize) -> Matrix {
         let mut values = Vec::<f64>::with_capacity(n*n);
         values.push(1.0);
         for _ in 0..n-1 {
-            values.extend(std::iter::repeat(0.0).take(n));
+            values.extend(std::iter::repeat_n(0.0, n));
             values.push(1.0);
         }
-        Matrix{m: n, n: n, values: values}
+        Matrix{m: n, n, values}
     }
 
     /// Standard algorithm to compute the LU decomposition.
@@ -532,7 +531,7 @@ impl Matrix {
             let mut l = vec![0.0; self.m * self.m];
             let mut u = Vec::<f64>::with_capacity(self.m * self.m);
             for i in 0..self.m {
-                u.extend(std::iter::repeat(0.0).take(i));
+                u.extend(std::iter::repeat_n(0.0, i));
                 for k in i..self.m {
                     let newval = if i > 0 {
                         self.get(i, k) - (0..i).map(|j| l[i*self.m + j] * u[j * self.m + k]).sum::<f64>()

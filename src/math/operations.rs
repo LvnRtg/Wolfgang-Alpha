@@ -4,7 +4,7 @@ use crate::math::expressions::Expression;
 #[derive(Clone, Copy, PartialEq)]
 pub enum Comparison { Eq, Gt, Ge, Lt, Le }
 impl Comparison {
-    fn to_string(&self) -> &str {
+    fn as_str(&self) -> &str {
         match self {
             Comparison::Eq => "=",
             Comparison::Gt => ">",
@@ -16,12 +16,12 @@ impl Comparison {
 }
 impl fmt::Display for Comparison {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_string())
+        write!(f, "{}", self.as_str())
     }
 }
 impl fmt::Debug for Comparison {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_string())
+        write!(f, "{}", self.as_str())
     }
 }
 
@@ -46,7 +46,7 @@ impl BinaryOperation {
             BinaryOperation::Quo => "//",
             BinaryOperation::Rem => "%",
             BinaryOperation::Pow => "^",
-            BinaryOperation::Comp(c, _) => c.to_string(),
+            BinaryOperation::Comp(c, _) => c.as_str(),
         }
     }
 }

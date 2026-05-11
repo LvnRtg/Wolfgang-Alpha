@@ -7,20 +7,20 @@ pub enum Expression {
     Identifier(String),
     Number(f64),
     /// This also doubles as a container for a function's arguments when the function isn't defined yet (cf. `Assignment` block in `eval`).
-    Vector(Vec<Box<Expression>>), // As for functions
+    Vector(Vec<Expression>), // As for functions
     /// Dimensions of the matrix and list of entries in flattened version.
-    Matrix(usize, usize, Vec<Box<Expression>>), // Same
+    Matrix(usize, usize, Vec<Expression>), // Same
     UnaryOperation(UnaryOperation, Box<Expression>),
     /// Comparisons are interpreted as binary operations too.
     BinaryOperation(Box<Expression>, BinaryOperation, Box<Expression>),
     /// Respectively: function's name and list of arguments passed.
-    Function(String, Vec<Box<Expression>>),
+    Function(String, Vec<Expression>),
     /// Format: LHS := RHS
     Assignment(Box<Expression>, Box<Expression>),
     /// Compute the partial derivative of the given expression w.r.t. the given identifier. The direction to differentiate in is set to 1.0.
     PartialDerivative(String, Box<Expression>),
     /// Compute the directional derivative of `SecondArg` at point `ThirdArg` in direction `FourthArg` where the variables w.r.t. which we differentiate are `first_args`.
-    DirectionalDerivative(Vec<String>, Box<Expression>, Vec<Box<Expression>>, Vec<Box<Expression>>)
+    DirectionalDerivative(Vec<String>, Box<Expression>, Vec<Expression>, Vec<Expression>)
 }
 
 impl fmt::Display for Expression {
@@ -29,8 +29,8 @@ impl fmt::Display for Expression {
             Expression::None => write!(f, "None"),
             Expression::Identifier(s) => write!(f, "{}", s),
             Expression::Number(x) => write!(f, "{}", x),
-            Expression::Vector(x) => write!(f, "[{}]", x.iter().map(|y| format!("{}", &**y)).collect::<Vec<String>>().join(", ")),
-            Expression::Matrix(m, n, x) => write!(f, "[{}]", (0..*m).map(|i| (0..*n).map(|j| format!("{}", &*(x[i*n+j]))).collect::<Vec<String>>().join(", ")).collect::<Vec<String>>().join("; ")),
+            Expression::Vector(x) => write!(f, "[{}]", x.iter().map(|y| format!("{}", y)).collect::<Vec<String>>().join(", ")),
+            Expression::Matrix(m, n, x) => write!(f, "[{}]", (0..*m).map(|i| (0..*n).map(|j| format!("{}", x[i*n+j])).collect::<Vec<String>>().join(", ")).collect::<Vec<String>>().join("; ")),
             Expression::UnaryOperation(op, r) => {
                 match op {
                     UnaryOperation::Neg => write!(f, "(-({}))", r),
@@ -39,7 +39,7 @@ impl fmt::Display for Expression {
             },
             Expression::BinaryOperation(l, op, r) => write!(f, "({} {} {})", l, op, r),
             Expression::Function(name, args)
-                => write!(f, "{}({})", name, args.into_iter().map(|x| format!("{:?}", x)).collect::<Vec<String>>().join(", ")),
+                => write!(f, "{}({})", name, args.iter().map(|x| format!("{:?}", x)).collect::<Vec<String>>().join(", ")),
             Expression::Assignment(lhs, rhs) => write!(f, "{} := {}", lhs, rhs),
             Expression::PartialDerivative(wrt, expr) => write!(f, "d/d{} ({})", wrt, expr),
             Expression::DirectionalDerivative(vars, expr, point, direction) => write!(f, "D_{{{}}} ({})({:?})[{:?}]", vars.join(", "), expr, point, direction),
@@ -54,9 +54,9 @@ impl Expression {
             Expression::None => vec!["None".to_string()],
             Expression::Identifier(s) => vec![format!("{}", s)],
             Expression::Number(x) => vec![format!("{}", x)],
-            Expression::Vector(x) => vec![format!("[{}]", x.iter().map(|y| format!("{}", &**y)).collect::<Vec<String>>().join(", "))],
+            Expression::Vector(x) => vec![format!("[{}]", x.iter().map(|y| format!("{}", y)).collect::<Vec<String>>().join(", "))],
             Expression::Matrix(m, n, x) => {
-                let values = x.iter().map(|b| format!("{}", &*b)).collect::<Vec<String>>();
+                let values = x.iter().map(|b| format!("{}", b)).collect::<Vec<String>>();
                 let column_lengths: Vec<usize> = (0..*n).map(
                     |j| (0..*m).map(
                         |i| values[i*n+j]
@@ -81,7 +81,7 @@ impl Expression {
             },
             Expression::BinaryOperation(l, op, r) => vec![format!("({} {} {})", l, op, r)],
             Expression::Function(name, args)
-                => vec![format!("{}({})", name, args.into_iter().map(|x| format!("{}", x)).collect::<Vec<String>>().join(", "))],
+                => vec![format!("{}({})", name, args.iter().map(|x| format!("{}", x)).collect::<Vec<String>>().join(", "))],
             Expression::Assignment(lhs, rhs) => vec![format!("{} := {}", lhs, rhs)],
             Expression::PartialDerivative(wrt, expr) => vec![format!("d/d{} ({})", wrt, expr)],
             Expression::DirectionalDerivative(vars, expr, point, direction) => vec![format!("D_{{{}}} ({})({:?})[{:?}]", vars.join(", "), expr, point, direction)],

@@ -1,30 +1,30 @@
-/// The basic syntax is the natural one with usual operator precedence. A few special features are the following.
-/// - Matrices can be initialized by typing `[1, 2, 3 \ 4, 5, 6 \ 7, 8, 9]` where the rows will be `[1,2,3]`, `[4,5,6]` and `[7,8,9]` respectively.
-/// The backslash can be used interchangeably with a semicolon `;`, even within the same matrix.
-/// - Vectors can be initialized by typing either `(1, 2, 3)` (particular to vectors) or `[1; 2; 3]` or `[1 \ 2 \ 3]` (as one would initialize a matrix with only one column).
-/// - Definition of constants: `identifier := expr`, where `expr` can be any expression that can be evaluated at the time of the definition.<br/>
-/// This returns the evaluation of `expr`, so one can write e.g. `(x := 2) + 1` to obtain `3` as output and define `x` simultaneously.<br/>
-/// If `identifier` is already a defined constant, this will re-define it and permanently suppress the old value.
-/// - Definition of functions: `f(x, y) := 2x + y`. If e.g. `x` already exists as a constant/function, this will be ignored for the sake of the function's definition.
-/// The `x` on the RHS of the definition will always be the `x` passed as argument, not the constant.<br/>
-/// If one wants to include a constant from the current environment, simply type `f(y) := 2x + y` where `x` is a pre-defined constant. Note that the
-/// current value of `x` will be captured at the time of the definition; if you change `x` later on, `f` will still use its old value.
-/// - Test if two values are equal: `expr = other_expr` where both expressions must be evaluable to an `Object`. Very small errors are tolerated.
-/// - The same works for `<`, `<=`, `>` and `>=`. The strict comparison signs do _not_ tolerate small errors.
-/// As for equality, two vectors/matrices of the same size satisfy a comparison iff all of their components satisfy it.
-/// - Test if two functions are equal by evaluating at `n` random points: `f(x) ={n} g(x)` where `n` can be any expression evaluable to a float (will then be rounded to the nearest integer).
-/// The same works for `<`, `<=`, `>` and `>=`.
-/// - Partially differentiate: `d/dx (x^3 + 2x + 1)` returns `3x^2 + 2` as expression. The parentheses are not needed when differentiating e.g. a monome.<br/>
-/// The output can be stored in a function: `f(x) := d/dx ...`.<br/>
-/// Differentiating a function with a matrix/vector as output will differentiate component-wise and return the corresponding matrix/vector-valued function.<br/>
-/// If the differentiated function `f(x)` outputs a vector/matrix, the output will be the function `p \mapsto D_x f(p)[1]`, that is, the direction to differentiate in will be set to 1.0 by default.
-/// This means the syntax is still accepted although not recommended.
-/// - Directionally differentiate: multiple syntaxes:
-///     - `D_x <expr1> (expr2)[expr3]` leads to `point := {x: expr2}` and `direction := {x: expr3}`.
-///     - `D_{x, y} <expr1> (expr2x, expr2y)[expr3x, expr3y]` leads to `point := {x: expr2x, y expr2y}` and analogously for `direction`. Analogously for any higher number of variables.
-///     - `D f(4)[2]`: free variables are set to be the argnames of `f` (these will be the keys of the hashmap, cf. implementation).
-///     - `D <expr> (expr_1, ..., expr_n)[expr'_1, ..., expr'_m]`: collect all unknown identifiers within `expr` into a vector in ascending alphabetic order `x_1, ..., x_l`.
-/// If `l=m=n`, infer that these should be the keys of the hashmaps (cf. implementation). Otherwise, return `Err`.
+//! The basic syntax is the natural one with usual operator precedence. A few special features are the following.
+//! - Matrices can be initialized by typing `[1, 2, 3 \ 4, 5, 6 \ 7, 8, 9]` where the rows will be `[1,2,3]`, `[4,5,6]` and `[7,8,9]` respectively.
+//!   The backslash can be used interchangeably with a semicolon `;`, even within the same matrix.
+//! - Vectors can be initialized by typing either `(1, 2, 3)` (particular to vectors) or `[1; 2; 3]` or `[1 \ 2 \ 3]` (as one would initialize a matrix with only one column).
+//! - Definition of constants: `identifier := expr`, where `expr` can be any expression that can be evaluated at the time of the definition.<br/>
+//!   This returns the evaluation of `expr`, so one can write e.g. `(x := 2) + 1` to obtain `3` as output and define `x` simultaneously.<br/>
+//!   If `identifier` is already a defined constant, this will re-define it and permanently suppress the old value.
+//! - Definition of functions: `f(x, y) := 2x + y`. If e.g. `x` already exists as a constant/function, this will be ignored for the sake of the function's definition.
+//!   The `x` on the RHS of the definition will always be the `x` passed as argument, not the constant.<br/>
+//!   If one wants to include a constant from the current environment, simply type `f(y) := 2x + y` where `x` is a pre-defined constant. Note that the
+//!   current value of `x` will be captured at the time of the definition; if you change `x` later on, `f` will still use its old value.
+//! - Test if two values are equal: `expr = other_expr` where both expressions must be evaluable to an `Object`. Very small errors are tolerated.
+//! - The same works for `<`, `<=`, `>` and `>=`. The strict comparison signs do _not_ tolerate small errors.
+//!   As for equality, two vectors/matrices of the same size satisfy a comparison iff all of their components satisfy it.
+//! - Test if two functions are equal by evaluating at `n` random points: `f(x) ={n} g(x)` where `n` can be any expression evaluable to a float (will then be rounded to the nearest integer).
+//!   The same works for `<`, `<=`, `>` and `>=`.
+//! - Partially differentiate: `d/dx (x^3 + 2x + 1)` returns `3x^2 + 2` as expression. The parentheses are not needed when differentiating e.g. a monome.<br/>
+//!   The output can be stored in a function: `f(x) := d/dx ...`.<br/>
+//!   Differentiating a function with a matrix/vector as output will differentiate component-wise and return the corresponding matrix/vector-valued function.<br/>
+//!   If the differentiated function `f(x)` outputs a vector/matrix, the output will be the function `p \mapsto D_x f(p)[1]`, that is, the direction to differentiate in will be set to 1.0 by default.
+//!   This means the syntax is still accepted although not recommended.
+//! - Directionally differentiate: multiple syntaxes:
+//!     - `D_x <expr1> (expr2)[expr3]` leads to `point := {x: expr2}` and `direction := {x: expr3}`.
+//!     - `D_{x, y} <expr1> (expr2x, expr2y)[expr3x, expr3y]` leads to `point := {x: expr2x, y expr2y}` and analogously for `direction`. Analogously for any higher number of variables.
+//!     - `D f(4)[2]`: free variables are set to be the argnames of `f` (these will be the keys of the hashmap, cf. implementation).
+//!     - `D <expr> (expr_1, ..., expr_n)[expr'_1, ..., expr'_m]`: collect all unknown identifiers within `expr` into a vector in ascending alphabetic order `x_1, ..., x_l`.
+//!       If `l=m=n`, infer that these should be the keys of the hashmaps (cf. implementation). Otherwise, return `Err`.
 
 use std::iter::Peekable;
 use std::collections::HashMap;
@@ -178,7 +178,7 @@ fn tokenize_recursive(chars: &mut Peekable<Chars>, return_early: Vec<char>) -> V
                 let mut digits = String::new();
                 let mut had_point = false; // Only one point allowed per constant
                 while let Some(&nc) = chars.peek() {
-                    if nc.is_digit(10) {
+                    if nc.is_ascii_digit() {
                         digits.push(nc);
                         chars.next();
                     }
@@ -197,9 +197,9 @@ fn tokenize_recursive(chars: &mut Peekable<Chars>, return_early: Vec<char>) -> V
                     } else {break}
                 };
                 // Currently, accepted syntaxes are "numberIDENTIFIER" and "IDENTIFIER" only.
-                if digits.len() > 0 {
+                if !digits.is_empty() {
                     tokens.push(Token::Number(digits.parse::<f64>().unwrap()));
-                    if ident.len() > 0 {
+                    if !ident.is_empty() {
                         tokens.push(Token::Asterisk); // Since "2x" is to be parsed as "2*x"
                         tokens.push(Token::Identifier(ident));
                     }
@@ -279,10 +279,10 @@ impl Parser {
     /// Uses the following functions to parse expressions separated by commas until the token `closer` follows an expression.
     /// 
     /// Panics if an unexpected token is encountered.
-    fn parse_comma_expression(&mut self, closer: &Token, constants: &mut HashMap<String, Object>, functions: &mut HashMap<String, FunctionRepr>) -> Vec<Box<Expression>> {
-        let mut exprs = Vec::<Box<Expression>>::new();
+    fn parse_comma_expression(&mut self, closer: &Token, constants: &mut HashMap<String, Object>, functions: &mut HashMap<String, FunctionRepr>) -> Vec<Expression> {
+        let mut exprs = Vec::<Expression>::new();
         loop {
-            exprs.push(Box::new(self.parse_expression(0, constants, functions)));
+            exprs.push(self.parse_expression(0, constants, functions));
             match self.next() {
                 Token::Comma => {},
                 some if &some == closer => {break;},
@@ -344,7 +344,7 @@ impl Parser {
                             FunctionRepr::ByExpression(argnames, _) => argnames.clone(),
                             FunctionRepr::Direct(_) => (0..args.len()).map(|i| format!("x_{}", i)).collect()
                         };
-                        std::mem::replace(args, argnames.iter().map(|x| Box::new(Expression::Identifier(x.clone()))).collect())
+                        std::mem::replace(args, argnames.iter().map(|x| Expression::Identifier(x.clone())).collect())
                     }
                     _ => panic!("Missing point to differentiate at in total derivative expression.")
 
@@ -384,15 +384,15 @@ impl Parser {
                 match entries.len() {
                     0 => Expression::None,
                     1 => entries.pop().unwrap(), // I decided to not box the elements rightaway since the case `entries.len() == 1` is more common.
-                    _ => Expression::Vector(entries.into_iter().map(Box::new).collect())
+                    _ => Expression::Vector(entries.into_iter().collect())
                 }
             },
             Token::LBracket => {
-                let mut entries = Vec::<Box<Expression>>::new();
+                let mut entries = Vec::<Expression>::new();
                 let mut m: usize = 1;
                 let mut n: usize = 0;
                 loop {
-                    entries.push(Box::new(self.parse_expression(0, constants, functions)));
+                    entries.push(self.parse_expression(0, constants, functions));
                     match self.next() {
                         Token::Comma => {},
                         Token::Semicolon | Token::Backslash => {
@@ -545,12 +545,10 @@ pub fn parse_function_definition(
                 match y { // As discussed in this function's documentation, clone will be necessary here
                     Object::Success | Object::Undefined => Expression::None, // This would be a syntax error
                     Object::Float(x) => Expression::Number(*x),
-                    Object::Vector(v) => Expression::Vector(v.values.iter().map(
-                        |entry| Box::new(Expression::Number(*entry))
-                    ).collect()),
+                    Object::Vector(v) => Expression::Vector(v.values.iter().map(|entry| Expression::Number(*entry)).collect()),
                     Object::Matrix(x) => Expression::Matrix(
                         x.m, x.n,
-                        x.iter_values().map(|entry| Box::new(Expression::Number(*entry))).collect()
+                        x.iter_values().map(|entry| Expression::Number(*entry)).collect()
                     ),
                     Object::LiteralExpression(e) => e.clone()
                 }
@@ -563,31 +561,31 @@ pub fn parse_function_definition(
         Expression::Vector(x) => Expression::Vector(x.clone()),
         Expression::Matrix(m, n, x) => Expression::Matrix(*m, *n, x.clone()),
         Expression::UnaryOperation(op, rhs) => Expression::UnaryOperation(
-            op.clone(),
-            Box::new(parse_function_definition(&**rhs, argument_names, constants))
+            *op,
+            Box::new(parse_function_definition(rhs, argument_names, constants))
         ),
         Expression::BinaryOperation(lhs, op, rhs) => Expression::BinaryOperation(
-            Box::new(parse_function_definition(&**lhs, argument_names, constants)),
+            Box::new(parse_function_definition(lhs, argument_names, constants)),
             op.clone(),
-            Box::new(parse_function_definition(&**rhs, argument_names, constants))
+            Box::new(parse_function_definition(rhs, argument_names, constants))
         ),
         Expression::Function(function_name, args) => Expression::Function(
             function_name.clone(),
-            args.into_iter().map(|x| Box::new(parse_function_definition(&**x, argument_names, constants))).collect()
+            args.iter().map(|x| parse_function_definition(x, argument_names, constants)).collect()
         ),
         Expression::Assignment(lhs, rhs) => Expression::Assignment(
-            Box::new(parse_function_definition(&**lhs, argument_names, constants)),
-            Box::new(parse_function_definition(&**rhs, argument_names, constants))
+            Box::new(parse_function_definition(lhs, argument_names, constants)),
+            Box::new(parse_function_definition(rhs, argument_names, constants))
         ),
         Expression::PartialDerivative(wrt, expr) => Expression::PartialDerivative(
             wrt.clone(),
-            Box::new(parse_function_definition(&**expr, argument_names, constants))
+            Box::new(parse_function_definition(expr, argument_names, constants))
         ),
         Expression::DirectionalDerivative(vars, expr, point, direction) => Expression::DirectionalDerivative(
             vars.clone(),
-            Box::new(parse_function_definition(&**expr, argument_names, constants)),
-            point.iter().map(|x| Box::new(parse_function_definition(&**x, argument_names, constants))).collect(),
-            direction.iter().map(|x| Box::new(parse_function_definition(&**x, argument_names, constants))).collect()
+            Box::new(parse_function_definition(expr, argument_names, constants)),
+            point.iter().map(|x| parse_function_definition(x, argument_names, constants)).collect(),
+            direction.iter().map(|x| parse_function_definition(x, argument_names, constants)).collect()
         ),
     }
 }
@@ -620,14 +618,14 @@ fn prefix_unknown_identifiers(
             || prefix_unknown_identifiers(rhs, extra_vars, constants, modified_identifiers, modified_anything)
         }
         Expression::Function(_, args) => {
-            args.iter_mut().map(|arg| prefix_unknown_identifiers(arg, extra_vars, constants, modified_identifiers, modified_anything)).any(|x| x)
+            args.iter_mut().any(|arg| prefix_unknown_identifiers(arg, extra_vars, constants, modified_identifiers, modified_anything))
         }
         Expression::Assignment(_, rhs) => prefix_unknown_identifiers(rhs, extra_vars, constants, modified_identifiers, modified_anything), // Do not modify the LHS of assignment expressions
         Expression::PartialDerivative(_, expr) => prefix_unknown_identifiers(expr, extra_vars, constants, modified_identifiers, modified_anything),
         Expression::DirectionalDerivative(_, expr, point, direction) => {
             prefix_unknown_identifiers(expr, extra_vars, constants, modified_identifiers, modified_anything)
-            || point.iter_mut().map(|v| prefix_unknown_identifiers(v, extra_vars, constants, modified_identifiers, modified_anything)).any(|x| x)
-            || direction.iter_mut().map(|v| prefix_unknown_identifiers(v, extra_vars, constants, modified_identifiers, modified_anything)).any(|x| x)
+            || point.iter_mut().any(|v| prefix_unknown_identifiers(v, extra_vars, constants, modified_identifiers, modified_anything))
+            || direction.iter_mut().any(|v| prefix_unknown_identifiers(v, extra_vars, constants, modified_identifiers, modified_anything))
         },
     }
 }
@@ -638,7 +636,7 @@ fn prefix_unknown_identifiers(
 /// Requires knowledge of the environment, i.e. the hashmaps 'constants' and 'functions'.
 /// 1. If the expression can be computed directly (e.g. "2+3" or "5*x" where constants.contains("x")), returns its value as type 'Object'.
 /// 2. If the expression is a valid definition (e.g. "x := 7" or "f(x) := 5*x+2"), modifies the environment accordingly and returns 'Object.Success'.
-/// Moreover, `extra_vars` allows to specify identifiers that temporarily should have a certain value.
+///    Moreover, `extra_vars` allows to specify identifiers that temporarily should have a certain value.
 /// 
 /// If the evaluation fails, returns the corresponding error message (wrapped in a 'Result').
 /// 
@@ -723,12 +721,12 @@ pub fn eval(
                     // Then, evaluating every time would be inefficient, especially if many values will be tested.
                     // Therefore, it makes sense to check whether this is the case beforehand, and if so, simply evaluate once and save the value for later.
                     if other_only_needs_single_eval {
-                        other_eval = eval(&mut other, extra_vars, constants, functions)?;
+                        other_eval = eval(&other, extra_vars, constants, functions)?;
                     }
 
                     // If a number of repetitions is given as `param` under the form of an expression, evaluate it and use it. Otherwise, use `DEFAULT_TESTEQ_REPETITIONS`
                     let repetitions = param.as_ref()
-                        .map(|p| match eval(&**p, extra_vars, constants, functions) {
+                        .map(|p| match eval(p, extra_vars, constants, functions) {
                             Ok(Object::Float(x)) => Ok(x.round() as i64),
                             Err(e) => Err(format!("Couldn't resolve number of repetitions `{}`. Traceback: {}", p, e)),
                             _ => Err(format!("Couldn't resolve number of repetitions `{}` to float.", p))
@@ -742,19 +740,18 @@ pub fn eval(
                             let x = rand::thread_rng().gen_range(-1000.0..1000.0);
                             constants.insert(ident.clone(), Object::Float(x));
                         }
-                        let first_eval = eval(&mut this, extra_vars, constants, functions)
+                        let first_eval = eval(&this, extra_vars, constants, functions)
                             .map_err(|e| format!("Couldn't evaluate `{}` with environment {:?}. Traceback: {}", this, constants, e)) // Add information to the error message
                             ?;
                         if !other_only_needs_single_eval {
-                            other_eval = eval(&mut other, extra_vars, constants, functions)
+                            other_eval = eval(&other, extra_vars, constants, functions)
                                 .map_err(|e| format!("Couldn't evaluate `{}` with environment {:?}. Traceback: {}", this, constants, e))
                                 ?;
                         }
                         // If the objects' comparison yields `false`, return that. If the objects aren't comparable, return the appropriate error. Otherwise, continue.
-                        match math::objects::try_operation(&first_eval, &other_eval, op)
+                        if let Object::Float(0.0) = math::objects::try_operation(&first_eval, &other_eval, op)
                             .map_err(|_| format!("Couldn't compare `{}` and `{}` (arising from environment {:?}).", first_eval, other_eval, constants))? {
-                            Object::Float(b) if b == 0.0 => {return Ok(Object::Float(0.0));}
-                            _ => {}
+                            return Ok(Object::Float(0.0));
                         }
                     }
                     Ok(Object::Float(1.0)) // If nothing previous returned, then the expressions fulfill the comparison.
@@ -773,15 +770,15 @@ pub fn eval(
             if let Some(real_function_name) = function_name.strip_prefix("___diff_num_") {
                 // Ensure that `given_arg_exprs` is even. There is a special case where an uneven number is tolerated: if only a single argument
                 // is provided, simply set the direction as 1.0 (default for 1d derivative).
-                let mut tmp: Vec<Box<Expression>>;
+                let mut tmp: Vec<Expression>;
                 let arg_exprs = if given_arg_exprs.len() % 2 != 0 {
                     if given_arg_exprs.len() == 1 {
                         tmp = given_arg_exprs.clone();
-                        tmp.push(Box::new(Expression::Number(1.0)));
+                        tmp.push(Expression::Number(1.0));
                         &tmp
                     }
                     else {
-                        return Err(format!("___diff_num_{{...}} takes an even number of arguments.")); // See splitting of arguments below
+                        return Err("___diff_num_{{...}} takes an even number of arguments.".to_string()); // See splitting of arguments below
                     }
                 } else { given_arg_exprs };
                 let rm = functions.remove(real_function_name);
@@ -790,12 +787,12 @@ pub fn eval(
                         // The given arguments should then have the format `point <concat> direction`, so we have to split the arguments
                         // into two parts (splitting in the middle of the array which we ensured has even size).
                         let point = (0..arg_exprs.len()/2)
-                            .map(|i| eval(&*arg_exprs[i], extra_vars, constants, functions))
+                            .map(|i| eval(&arg_exprs[i], extra_vars, constants, functions))
                             .collect::<Result<Vec<_>, _>>()?;
                         let direction = (arg_exprs.len()/2..arg_exprs.len())
-                            .map(|i| eval(&*arg_exprs[i], extra_vars, constants, functions))
+                            .map(|i| eval(&arg_exprs[i], extra_vars, constants, functions))
                             .collect::<Result<Vec<_>, _>>()?;
-                        math::differentiation::numerical_directional_derivative(&f, point, direction)
+                        math::differentiation::numerical_directional_derivative(f, point, direction)
                     }
                     Some(FunctionRepr::ByExpression(..)) => {
                         Err("Don't use ___diff_num_ to differentiate a function that has an explicit defining expression.".to_string())
@@ -844,7 +841,7 @@ pub fn eval(
                     }
                     FunctionRepr::Direct(ref f) => {
                         (*f)(&given_arg_exprs.iter()
-                            .map(|arg_expr| eval(&**arg_expr, extra_vars, constants, functions))
+                            .map(|arg_expr| eval(arg_expr, extra_vars, constants, functions))
                             .collect::<Result<Vec<_>, _>>()?)
                     }
                 };
@@ -861,8 +858,8 @@ pub fn eval(
             /// - `Expression::BinaryOperation(Identifier(function_name), BinaryOperation::Mul, Vector(args))`
             fn define_function(
                 function_name: &String,
-                unparsed_args: std::slice::Iter<'_, Box<Expression>>,
-                rhs: &Box<Expression>,
+                unparsed_args: std::slice::Iter<'_, Expression>,
+                rhs: &Expression,
                 constants: &mut HashMap<String, Object>,
                 functions: &mut HashMap<String, FunctionRepr>
             ) -> Result<Object, String> {
@@ -872,7 +869,7 @@ pub fn eval(
                     // First, check that all declared arguments on the LHS are in fact just identifiers.
                     let mut argnames = unparsed_args.into_iter()
                         .map(|lh_arg|
-                            if let Expression::Identifier(x) = &**lh_arg {Ok(x.clone())}
+                            if let Expression::Identifier(x) = lh_arg {Ok(x.clone())}
                             else {Err("Parameters in LHS of function definition must be identifiers.".to_string())}
                         )
                         .collect::<Result<Vec<_>, _>>()?;
@@ -909,7 +906,7 @@ pub fn eval(
                 Expression::BinaryOperation(x, BinaryOperation::Mul, y) => {
                     match (&**x, &**y) {
                         (Expression::Identifier(function_name), Expression::Identifier(_))
-                            => define_function(function_name, std::slice::from_ref(y).iter(), rhs, constants, functions),
+                            => define_function(function_name, std::slice::from_ref(&**y).iter(), rhs, constants, functions),
                         (Expression::Identifier(function_name), Expression::Vector(args))
                             => define_function(function_name, args.iter(), rhs, constants, functions),
                         _ => Err(format!("Invalid LHS of assignment expression: {}", **lhs))
@@ -923,17 +920,17 @@ pub fn eval(
             }
         }
         Expression::PartialDerivative(wrt, expr) => {
-            math::differentiation::analytic_partial_derivative(expr, wrt, constants, functions).map(Object::LiteralExpression)
+            math::differentiation::analytic_partial_derivative(expr, wrt, functions).map(Object::LiteralExpression)
         }
         Expression::DirectionalDerivative(vars, expr, point_exprs, direction_exprs) => {
             if point_exprs.len() != direction_exprs.len() {
                 return Err("Point and direction of directional derivative must have the same dimension.".to_string());
             }
             let point = point_exprs.iter()
-                .map(|p| eval(&*p, extra_vars, constants, functions))
+                .map(|p| eval(p, extra_vars, constants, functions))
                 .collect::<Result<Vec<_>, _>>()?;
             let direction = direction_exprs.iter()
-                .map(|p| eval(&*p, extra_vars, constants, functions))
+                .map(|p| eval(p, extra_vars, constants, functions))
                 .collect::<Result<Vec<_>, _>>()?;
             math::differentiation::analytic_directional_derivative(vars, expr, &point, &direction, constants, functions)
         }
