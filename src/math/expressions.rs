@@ -20,7 +20,9 @@ pub enum Expression {
     /// Compute the partial derivative of the given expression w.r.t. the given identifier. The direction to differentiate in is set to 1.0.
     PartialDerivative(String, Box<Expression>),
     /// Compute the directional derivative of `SecondArg` at point `ThirdArg` in direction `FourthArg` where the variables w.r.t. which we differentiate are `first_args`.
-    DirectionalDerivative(Vec<String>, Box<Expression>, Vec<Expression>, Vec<Expression>)
+    DirectionalDerivative(Vec<String>, Box<Expression>, Vec<Expression>, Vec<Expression>),
+    /// `if (FirstArg) { SecondArg } else { ThirdArg }`
+    IfElse(Box<Expression>, Box<Expression>, Box<Expression>),
 }
 
 impl fmt::Display for Expression {
@@ -43,6 +45,7 @@ impl fmt::Display for Expression {
             Expression::Assignment(lhs, rhs) => write!(f, "{} := {}", lhs, rhs),
             Expression::PartialDerivative(wrt, expr) => write!(f, "d/d{} ({})", wrt, expr),
             Expression::DirectionalDerivative(vars, expr, point, direction) => write!(f, "D_{{{}}} ({})({:?})[{:?}]", vars.join(", "), expr, point, direction),
+            Expression::IfElse(condition, iftrue, iffalse) => write!(f, "if ({}) {{{}}} else {{{}}}", condition, iftrue, iffalse),
         }
     }
 }
@@ -85,6 +88,13 @@ impl Expression {
             Expression::Assignment(lhs, rhs) => vec![format!("{} := {}", lhs, rhs)],
             Expression::PartialDerivative(wrt, expr) => vec![format!("d/d{} ({})", wrt, expr)],
             Expression::DirectionalDerivative(vars, expr, point, direction) => vec![format!("D_{{{}}} ({})({:?})[{:?}]", vars.join(", "), expr, point, direction)],
+            Expression::IfElse(condition, iftrue, iffalse) => vec![
+                format!("if ({condition}) {{"),
+                format!("    {iftrue}"),
+                "}} else {{".to_string(),
+                format!("    {iffalse}"),
+                "}".to_string()
+            ],
         }
     }
 }
@@ -168,6 +178,8 @@ impl Expression {
                 point.iter_mut().for_each(|y| y.replace_identifiers(ident, by));
                 direction.iter_mut().for_each(|y| y.replace_identifiers(ident, by));
             }
+            Expression::IfElse(x, y, z)
+                => {x.replace_identifiers(ident, by); y.replace_identifiers(ident, by); z.replace_identifiers(ident, by);}
             _ => {}
         }
     }

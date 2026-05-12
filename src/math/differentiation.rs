@@ -152,10 +152,11 @@ pub fn analytic_partial_derivative(
                 wrt, functions
             )
         }
-        Expression::DirectionalDerivative(..) => {
+        Expression::DirectionalDerivative(..)
             // The directional derivative is an object, so whatever it actually is, its derivative is zero.
-            Ok(Expression::Number(0.0))
-        }
+            => Ok(Expression::Number(0.0)),
+        Expression::IfElse(x, y, z)
+            => Ok(Expression::IfElse(x.clone(), Box::new(analytic_partial_derivative(y, wrt, functions)?), Box::new(analytic_partial_derivative(z, wrt, functions)?))),
     }
 }
 
@@ -299,6 +300,16 @@ pub fn analytic_directional_derivative(
         Expression::DirectionalDerivative(..) => {
             // The directional derivative is an object, so whatever it actually is, its derivative is zero.
             Ok(Object::Float(0.0))
+        }
+        Expression::IfElse(condition, iftrue, iffalse) => {
+            // D (if c(x) {a(x)} else {b(x)})(x)[d] = if c(x) {Da(x)[d]} else {Db(x)[d]}
+            let extra_vars = (0..vars.len()).map(|i| (&vars[i], &point[i])).collect();
+            match parser::eval(condition, &extra_vars, constants, functions) {
+                Ok(Object::Float(1.0)) => analytic_directional_derivative(vars, iftrue, point, direction, constants, functions),
+                Ok(Object::Float(0.0)) => analytic_directional_derivative(vars, iffalse, point, direction, constants, functions),
+                Ok(x) => Err(format!("Couldn't evaluate condition {condition} to 0 or 1; got {x}")),
+                other => other
+            }
         }
     }
 }

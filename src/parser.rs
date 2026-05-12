@@ -75,6 +75,10 @@ pub enum Token {
     Backslash,
     /// |
     Pipe,
+    /// The keyword "if"
+    If,
+    /// The keyword "else"
+    Else,
     EOF,
 }
 
@@ -114,6 +118,14 @@ fn parse_comparison_parameter(chars: &mut Peekable<Chars>) -> Option<Vec<Token>>
     }
     else {
         None // No parameter given
+    }
+}
+
+fn identifier_to_token(ident: String) -> Token {
+    match ident.as_str() {
+        "if" => Token::If,
+        "else" => Token::Else,
+        _ => Token::Identifier(ident)
     }
 }
 
@@ -201,11 +213,11 @@ fn tokenize_recursive(chars: &mut Peekable<Chars>, return_early: Vec<char>) -> V
                     tokens.push(Token::Number(digits.parse::<f64>().unwrap()));
                     if !ident.is_empty() {
                         tokens.push(Token::Asterisk); // Since "2x" is to be parsed as "2*x"
-                        tokens.push(Token::Identifier(ident));
+                        tokens.push(identifier_to_token(ident));
                     }
                 }
                 else { // Note that if this case of the match block is even called, either 'digits' or 'ident' has to be non-trivial.
-                    tokens.push(Token::Identifier(ident));
+                    tokens.push(identifier_to_token(ident));
                 }
             }
             other => {
@@ -258,6 +270,11 @@ fn get_unknown_identifiers(expr: &Expression, identifiers: &mut HashSet<String>,
             let rm: Vec<&String> = vars.iter().filter(|v| !identifiers.contains(*v)).collect(); // Need to collect to call next line
             get_unknown_identifiers(x, identifiers, constants);
             for v in rm {identifiers.remove(v);}
+        }
+        Expression::IfElse(x, y, z) => {
+            get_unknown_identifiers(x, identifiers, constants);
+            get_unknown_identifiers(y, identifiers, constants);
+            get_unknown_identifiers(z, identifiers, constants);
         }
     }
 }
@@ -386,7 +403,7 @@ impl Parser {
                     1 => entries.pop().unwrap(), // I decided to not box the elements rightaway since the case `entries.len() == 1` is more common.
                     _ => Expression::Vector(entries.into_iter().collect())
                 }
-            },
+            }
             Token::LBracket => {
                 let mut entries = Vec::<Expression>::new();
                 let mut m: usize = 1;
@@ -416,13 +433,22 @@ impl Parser {
                 else {
                     Expression::Matrix(m, n, entries)
                 }
-            },
+            }
             Token::Pipe => { // As for parentheses
                 let inner = self.parse_expression(0, constants, functions);
                 match self.next() {
                     Token::Pipe => Expression::UnaryOperation(UnaryOperation::Abs, Box::new(inner)),
                     other => panic!("Expected closing '|', found {:?}", other),
                 }
+            }
+            Token::If => {
+                let condition = self.parse_expression(0, constants, functions); // Will return wenn LBrace is encountered.
+                assert!(matches!(self.next(), Token::LBrace), "Expected '{{' after condition {condition}.");
+                let iftrue = self.parse_expression(0, constants, functions);
+                assert!(matches!((self.next(), self.next(), self.next()), (Token::RBrace, Token::Else, Token::LBrace)), "Expected '}} else {{' after first `if` case.");
+                let iffalse = self.parse_expression(0, constants, functions);
+                assert!(matches!(self.next(), Token::RBrace), "Expected '}}' after `else` case.");
+                Expression::IfElse(Box::new(condition), Box::new(iftrue), Box::new(iffalse))
             }
             other => panic!("Unexpected token where expression expected: {:?}", other)
         };
@@ -455,7 +481,10 @@ impl Parser {
                 },
                 // I wrote the following cases down explicitely so adding new tokens requires reviewing this code.
                 // Note that in this context, Token::Pipe is the closing pipe, since the opening one would have been consumed in the definition of `lhs`.
-                Token::Number(_) | Token::RParenthesis | Token::RBracket | Token::Comma | Token::Semicolon | Token::Backslash | Token::Pipe | Token::LBrace | Token::RBrace | Token::EOF => { break; }
+                // Note also that the opening brace is tied to specific syntaxes (e.g. `if else` blocks) and thus cannot be found "freely".
+                Token::Number(_) | Token::Comma | Token::Semicolon | Token::Backslash | Token::LBrace | Token::If | Token::Else | Token::EOF
+                | Token::RParenthesis | Token::RBracket | Token::RBrace | Token::Pipe
+                    => { break; }
             };
 
             if prec < min_precedence { // If we encountered an operator of lower precedence, the current expression ends here.
@@ -558,8 +587,8 @@ pub fn parse_function_definition(
             }
         },
         Expression::Number(x) => Expression::Number(*x),
-        Expression::Vector(x) => Expression::Vector(x.clone()),
-        Expression::Matrix(m, n, x) => Expression::Matrix(*m, *n, x.clone()),
+        Expression::Vector(x) => Expression::Vector(x.iter().map(|x| parse_function_definition(x, argument_names, constants)).collect()),
+        Expression::Matrix(m, n, x) => Expression::Matrix(*m, *n, x.iter().map(|x| parse_function_definition(x, argument_names, constants)).collect()),
         Expression::UnaryOperation(op, rhs) => Expression::UnaryOperation(
             *op,
             Box::new(parse_function_definition(rhs, argument_names, constants))
@@ -587,6 +616,11 @@ pub fn parse_function_definition(
             point.iter().map(|x| parse_function_definition(x, argument_names, constants)).collect(),
             direction.iter().map(|x| parse_function_definition(x, argument_names, constants)).collect()
         ),
+        Expression::IfElse(x, y, z) => Expression::IfElse(
+            Box::new(parse_function_definition(x, argument_names, constants)),
+            Box::new(parse_function_definition(y, argument_names, constants)),
+            Box::new(parse_function_definition(z, argument_names, constants)),
+        )
     }
 }
 
@@ -627,6 +661,12 @@ fn prefix_unknown_identifiers(
             || point.iter_mut().any(|v| prefix_unknown_identifiers(v, extra_vars, constants, modified_identifiers, modified_anything))
             || direction.iter_mut().any(|v| prefix_unknown_identifiers(v, extra_vars, constants, modified_identifiers, modified_anything))
         },
+        Expression::IfElse(x, y, z) => {
+            // This will modify something iff at least either LHS or RHS is modified.
+            prefix_unknown_identifiers(x, extra_vars, constants, modified_identifiers, modified_anything)
+            || prefix_unknown_identifiers(y, extra_vars, constants, modified_identifiers, modified_anything)
+            || prefix_unknown_identifiers(z, extra_vars, constants, modified_identifiers, modified_anything)
+        }
     }
 }
 
@@ -933,6 +973,14 @@ pub fn eval(
                 .map(|p| eval(p, extra_vars, constants, functions))
                 .collect::<Result<Vec<_>, _>>()?;
             math::differentiation::analytic_directional_derivative(vars, expr, &point, &direction, constants, functions)
+        }
+        Expression::IfElse(condition, iftrue, iffalse) => {
+            match eval(condition, extra_vars, constants, functions) {
+                Ok(Object::Float(1.0)) => eval(iftrue, extra_vars, constants, functions),
+                Ok(Object::Float(0.0)) => eval(iffalse, extra_vars, constants, functions),
+                Ok(x) => Err(format!("Couldn't evaluate condition {} to 0 or 1; got {x}", &**condition)),
+                other => other
+            }
         }
     }
 }
