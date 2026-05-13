@@ -1,6 +1,5 @@
 use dioxus::prelude::*;
 use dioxus_logger::tracing;
-//use dioxus_logger::tracing;
 use std::vec::Vec;
 use std::collections::HashMap;
 use std::cell::RefCell;
@@ -27,6 +26,10 @@ fn Display(content: Vec<String>) -> Element {
     rsx! { "Content: {content[0]}" }
 }
 
+fn get_element_by_id(id: &str) -> Option<web_sys::Element> {
+    window().unwrap().document().unwrap().get_element_by_id(id)
+}
+
 // fn scroll_to_top(id: &str) {
 //     let document = window().unwrap().document().unwrap();
 //     if let Some(element) = document.get_element_by_id(id) {
@@ -34,8 +37,7 @@ fn Display(content: Vec<String>) -> Element {
 //     }
 // }
 fn scroll_to_bottom(id: &str) {
-    let document = window().unwrap().document().unwrap();
-    if let Some(element) = document.get_element_by_id(id) {
+    if let Some(element) = get_element_by_id(id) {
         let height = element.scroll_height();
         element.set_scroll_top(height);
     }
@@ -85,12 +87,72 @@ fn App() -> Element {
     let joined_lines = console_lines().join("\n");
     let mut previous_commands = use_signal(Vec::<String>::new);
     let joined_previous_commands = previous_commands().join("\n");
+    // Set to 0 every time an input is validated.
+    // Pressing the up arrow increases it by 1 (until it hits `previous_commands.len()`),
+    // pressing the down arrow decreases it by 1 (until it hits 1).
+    // The corresponding command is `previous_commands[previous_commands.len() - rollback_index]`.
+    let mut rollback_index: Signal<usize> = use_signal(|| 1);
     let mut scroll_to_bottom_signal = use_signal(|| 0); // This allows to perform actions after the DOM is updated
     use_effect(move || {
         if scroll_to_bottom_signal() > 0 {
             scroll_to_bottom("Display 1");
         }
     });
+
+    // Focusses the main input field and places the cursor at its right end, past the last character.
+    let move_cursor_to_right_end = || {spawn(async move {
+        // Yield to let Dioxus flush the DOM, then set cursor
+        let _ = dioxus::document::eval(
+                r#"
+                                setTimeout(() => {
+                                    const input = document.getElementById("Display 1 Input");
+                                    input.focus();
+                                    input.setSelectionRange(input.value.length, input.value.length);
+                                }, 0);
+                            "#,
+            )
+            .await;
+    });};
+    let move_cursor_to_left_end = || {spawn(async move {
+        // Yield to let Dioxus flush the DOM, then set cursor
+        let _ = dioxus::document::eval(
+                r#"
+                                setTimeout(() => {
+                                    const input = document.getElementById("Display 1 Input");
+                                    input.focus();
+                                    input.setSelectionRange(0, 0);
+                                }, 0);
+                            "#,
+            )
+            .await;
+    });};
+    let select_until_right_end = || {spawn(async move {
+        // Yield to let Dioxus flush the DOM, then set cursor
+        let _ = dioxus::document::eval(
+                r#"
+                                setTimeout(() => {
+                                    const input = document.getElementById("Display 1 Input");
+                                    input.focus();
+                                    input.setSelectionRange(input.selectionStart, input.value.length);
+                                }, 0);
+                            "#,
+            )
+            .await;
+    });};
+    let select_until_left_end = || {spawn(async move {
+        // Yield to let Dioxus flush the DOM, then set cursor
+        let _ = dioxus::document::eval(
+                r#"
+                                setTimeout(() => {
+                                    const input = document.getElementById("Display 1 Input");
+                                    input.focus();
+                                    input.setSelectionRange(0, input.selectionEnd);
+                                }, 0);
+                            "#,
+            )
+            .await;
+    });};
+
     rsx! {
         document::Title { "Wolfgang Alpha" }
         document::Link { rel: "icon", href: FAVICON }
@@ -100,7 +162,7 @@ fn App() -> Element {
             div {
                 id: "Display 1",
                 class: "display",
-                class: "halfwidth",
+                class: "fullwidth",
                 class: "fullheight",
                 div { class: "display_top_part",
                     div { class: "previous_lines", "{joined_lines}" }
@@ -111,26 +173,77 @@ fn App() -> Element {
                     input {
                         r#type: "search",
                         class: "inline_input",
+                        id: "Display 1 Input",
                         value: "{input_value}",
                         oninput: move |event| input_value.set(event.value()), // Update 'input_value' every time the content of the input field is modified
                         onkeydown: move |event| {
-                            if event.data.key() == Key::Enter {
-                                let input = input_value();
-                                let mut cl = console_lines();
-                                let mut pc = previous_commands();
-                                let mut new_lines = validate_input(input.clone());
-                                // If we newly add N lines to the LHS, we want to use the first line of the RHS to show the command
-                                // and fill the remaining N-1 lines with some filler (currently "│"; the box drawing char, not the pipe char).
-                                pc.push(input);
-                                let n = new_lines.len();
-                                if n > 1 {
-                                    pc.extend(std::iter::repeat_n("│".to_string(), n - 1));
+                            let modifiers = event.modifiers();
+                            let ctrl = modifiers.contains(Modifiers::CONTROL);
+                            let shift = modifiers.contains(Modifiers::SHIFT);
+                            match event.data.key() {
+                                Key::Enter => {
+                                    rollback_index.set(0); // Reset rollback index
+                                    let input = input_value();
+                                    let mut cl = console_lines();
+                                    let mut pc = previous_commands();
+                                    let mut new_lines = validate_input(input.clone());
+                                    // If we newly add N lines to the LHS, we want to use the first line of the RHS to show the command
+                                    // and fill the remaining N-1 lines with some filler (currently "│"; the box drawing char, not the pipe char).
+                                    pc.push(input);
+                                    let n = new_lines.len();
+                                    if n > 1 {
+                                        pc.extend(std::iter::repeat_n("│".to_string(), n - 1));
+                                    }
+                                    cl.append(&mut new_lines);
+                                    console_lines.set(cl);
+                                    previous_commands.set(pc);
+                                    input_value.set(String::new());
+                                    scroll_to_bottom_signal += 1;
                                 }
-                                cl.append(&mut new_lines);
-                                console_lines.set(cl);
-                                previous_commands.set(pc);
-                                input_value.set(String::new());
-                                scroll_to_bottom_signal += 1;
+                                Key::ArrowUp => {
+                                    let rbi = rollback_index();
+                                    let pc = previous_commands();
+                                    if rbi < pc.len() {
+                                        rollback_index.set(rbi + 1);
+                                    }
+                                    if rbi < pc.len() && !pc.is_empty() {
+                                        input_value.set(pc[pc.len() - (rbi + 1)].clone());
+                                        move_cursor_to_right_end();
+                                    }
+                                }
+                                Key::ArrowDown => {
+                                    let rbi = rollback_index();
+                                    let pc = previous_commands();
+                                    if rbi > 0 {
+                                        rollback_index.set(rbi - 1);
+                                    }
+                                    input_value
+                                        .set(
+                                            if rbi > 1 && !pc.is_empty() {
+                                                pc[pc.len() - (rbi - 1)].clone()
+                                            } else {
+                                                String::new()
+                                            },
+                                        );
+                                    move_cursor_to_right_end();
+                                }
+                                Key::ArrowLeft if ctrl => {
+                                    if shift {
+                                        select_until_left_end();
+                                    }
+                                    else {
+                                        move_cursor_to_left_end();
+                                    }
+                                }
+                                Key::ArrowRight if ctrl => {
+                                    if shift {
+                                        select_until_right_end();
+                                    }
+                                    else {
+                                        move_cursor_to_right_end();
+                                    }
+                                }
+                                _ => {}
                             }
                         },
                     }
