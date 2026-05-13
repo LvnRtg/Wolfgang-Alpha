@@ -9,10 +9,22 @@ mod math;
 mod parser;
 pub use crate::parser::*;
 mod defaults;
+mod js_snippets;
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
 const MAIN_CSS: Asset = asset!("/style/main.css");
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
+
+
+/// Calls `js_snippets::{name}` the next time the DOM updates
+macro_rules! call_js_on_dom_update {
+    ($name:ident) => {
+        spawn(async move {
+            let _ = dioxus::document::eval(js_snippets::$name).await;
+        });
+    };
+}
+
 
 fn main() {
     // Below line would log a bunch of extra things to the console (e.g. calls to listeners).
@@ -99,60 +111,6 @@ fn App() -> Element {
         }
     });
 
-    // Focusses the main input field and places the cursor at its right end, past the last character.
-    let move_cursor_to_right_end = || {spawn(async move {
-        // Yield to let Dioxus flush the DOM, then set cursor
-        let _ = dioxus::document::eval(
-                r#"
-                                setTimeout(() => {
-                                    const input = document.getElementById("Display 1 Input");
-                                    input.focus();
-                                    input.setSelectionRange(input.value.length, input.value.length);
-                                }, 0);
-                            "#,
-            )
-            .await;
-    });};
-    let move_cursor_to_left_end = || {spawn(async move {
-        // Yield to let Dioxus flush the DOM, then set cursor
-        let _ = dioxus::document::eval(
-                r#"
-                                setTimeout(() => {
-                                    const input = document.getElementById("Display 1 Input");
-                                    input.focus();
-                                    input.setSelectionRange(0, 0);
-                                }, 0);
-                            "#,
-            )
-            .await;
-    });};
-    let select_until_right_end = || {spawn(async move {
-        // Yield to let Dioxus flush the DOM, then set cursor
-        let _ = dioxus::document::eval(
-                r#"
-                                setTimeout(() => {
-                                    const input = document.getElementById("Display 1 Input");
-                                    input.focus();
-                                    input.setSelectionRange(input.selectionStart, input.value.length);
-                                }, 0);
-                            "#,
-            )
-            .await;
-    });};
-    let select_until_left_end = || {spawn(async move {
-        // Yield to let Dioxus flush the DOM, then set cursor
-        let _ = dioxus::document::eval(
-                r#"
-                                setTimeout(() => {
-                                    const input = document.getElementById("Display 1 Input");
-                                    input.focus();
-                                    input.setSelectionRange(0, input.selectionEnd);
-                                }, 0);
-                            "#,
-            )
-            .await;
-    });};
-
     rsx! {
         document::Title { "Wolfgang Alpha" }
         document::Link { rel: "icon", href: FAVICON }
@@ -208,7 +166,7 @@ fn App() -> Element {
                                     }
                                     if rbi < pc.len() && !pc.is_empty() {
                                         input_value.set(pc[pc.len() - (rbi + 1)].clone());
-                                        move_cursor_to_right_end();
+                                        call_js_on_dom_update!(MOVE_CURSOR_TO_RIGHT_END);
                                     }
                                 }
                                 Key::ArrowDown => {
@@ -225,22 +183,22 @@ fn App() -> Element {
                                                 String::new()
                                             },
                                         );
-                                    move_cursor_to_right_end();
+                                    call_js_on_dom_update!(MOVE_CURSOR_TO_RIGHT_END);
                                 }
                                 Key::ArrowLeft if ctrl => {
                                     if shift {
-                                        select_until_left_end();
+                                        call_js_on_dom_update!(SELECT_UNTIL_LEFT_END);
                                     }
                                     else {
-                                        move_cursor_to_left_end();
+                                        call_js_on_dom_update!(MOVE_CURSOR_TO_LEFT_END);
                                     }
                                 }
                                 Key::ArrowRight if ctrl => {
                                     if shift {
-                                        select_until_right_end();
+                                        call_js_on_dom_update!(SELECT_UNTIL_RIGHT_END);
                                     }
                                     else {
-                                        move_cursor_to_right_end();
+                                        call_js_on_dom_update!(MOVE_CURSOR_TO_RIGHT_END);
                                     }
                                 }
                                 _ => {}
