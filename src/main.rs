@@ -7,6 +7,7 @@ use web_sys::window;
 
 mod math;
 mod parser;
+use crate::js_snippets::FOCUS_MAIN_INPUT;
 pub use crate::parser::*;
 mod defaults;
 mod js_snippets;
@@ -72,7 +73,8 @@ fn validate_input(input: String) -> Vec<String> {
         FUNCTIONS.with(|f| {
             let mut functions = f.borrow_mut();
             let ast = parser.parse(&mut constants, &mut functions);
-            let eval = eval(&ast, &HashMap::<&String, &math::Object>::new(), &mut constants, &mut functions);
+            tracing::info!("{}", ast);
+            let eval = eval(&ast, &parser::VarStack::Empty, &mut constants, &mut functions);
             match eval {
                 Ok(obj) => {
                     output = obj.to_multline();
@@ -131,6 +133,9 @@ fn App() -> Element {
                         id: "Display 1 Input",
                         value: "{input_value}",
                         oninput: move |event| input_value.set(event.value()), // Update 'input_value' every time the content of the input field is modified
+                        onmounted: |_| {
+                            dioxus::document::eval(FOCUS_MAIN_INPUT);
+                        },
                         onkeydown: move |event| {
                             let modifiers = event.modifiers();
                             let ctrl = modifiers.contains(Modifiers::CONTROL);
