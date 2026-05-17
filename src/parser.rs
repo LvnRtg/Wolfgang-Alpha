@@ -92,7 +92,7 @@ pub enum Token {
     RBrace,
     /// Separation of arguments in function call / vector / matrix
     Comma,
-    /// Separation of rows in matrix
+    /// Separation of rows in matrix or separation of commands
     Semicolon,
     /// Alternative row separator in matrix
     Backslash,
@@ -507,7 +507,8 @@ impl Parser {
                     if let Token::Comparison(c, param) = self.next() { // Will always succeed
                         (BinaryOperation::Comp(
                             c,
-                            param.map(|p| Box::new(Parser{tokens: p, pos: 0}.parse(constants, functions)))
+                            // `unwrap` in the following line is acceptable since the `map` at the beginning ensures that `param` is `Some`
+                            param.map(|p| Box::new(Parser{tokens: p, pos: 0}.parse(constants, functions).into_iter().next().unwrap()))
                         ), 4, false) // `false` since the token was already consumed
                     }
                     else { // Will never happen anyway
@@ -581,11 +582,16 @@ impl Parser {
     /// <tr> <td>^<td/> <td>7<td/> </tr>
     /// <tr> <td>d/dx, D<td/> <td>8<td/> </tr>
     /// </table>
-    pub fn parse(&mut self, constants: &mut HashMap<String, Object>, functions: &mut HashMap<String, FunctionRepr>) -> Expression {
-        let expr = self.parse_expression(0, constants, functions);
-        match self.peek() {
-            Token::EOF => expr,
-            other => panic!("Unexpected trailing token: {:?}", other),
+    pub fn parse(&mut self, constants: &mut HashMap<String, Object>, functions: &mut HashMap<String, FunctionRepr>) -> Vec<Expression> {
+        let mut exprs = Vec::<Expression>::new();
+        loop {
+            let expr = self.parse_expression(0, constants, functions);
+            exprs.push(expr);
+            match self.peek() {
+                Token::EOF => {return exprs;},
+                Token::Semicolon => {self.next(); continue;}
+                other => panic!("Unexpected trailing token: {:?}", other),
+            }
         }
     }
 }

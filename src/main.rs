@@ -72,19 +72,19 @@ fn validate_input(input: String) -> Vec<String> {
         let mut constants = c.borrow_mut();
         FUNCTIONS.with(|f| {
             let mut functions = f.borrow_mut();
-            let ast = parser.parse(&mut constants, &mut functions);
-            tracing::info!("{}", ast);
-            let eval = eval(&ast, &parser::VarStack::Empty, &mut constants, &mut functions);
-            match eval {
-                Ok(obj) => {
-                    output = obj.to_multline();
-                }
-                Err(e) => {
-                    output.push(format!("[ERROR] {}", e));
+            let expressions = parser.parse(&mut constants, &mut functions);
+            tracing::info!("{}", expressions.iter().map(|x| format!("{}", x)).collect::<Vec<_>>().join("; "));
+            for expr in expressions {
+                let eval = eval(&expr, &parser::VarStack::Empty, &mut constants, &mut functions);
+                match eval {
+                    Ok(obj) => {
+                        output = obj.to_multline();
+                    }
+                    Err(e) => {
+                        output.push(format!("[ERROR] {}", e));
+                    }
                 }
             }
-            tracing::info!("{:?}", constants);
-            tracing::info!("{:?}", functions);
         });
     });
     
