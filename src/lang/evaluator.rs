@@ -272,7 +272,7 @@ pub fn eval(
                             // Otherwise, evaluate `opt` and use the corresponding p-norm.
                             let norm_type = if let Some(inner) = opt {match &**inner {
                                 Expression::Identifier(ident) if ident == "inf" || ident == "infty"
-                                    => math::matrices_and_vectors::VectorNorm::Sup,
+                                    => math::matrices_and_vectors::VectorNorm::P(f64::INFINITY),
                                 other => {
                                     if let Object::Float(z) = eval(other, extra_vars, env)? {
                                         math::matrices_and_vectors::VectorNorm::P(z)
@@ -288,7 +288,7 @@ pub fn eval(
                             // Otherwise, evaluate `opt` and use the corresponding p-norm.
                             let norm_type = if let Some(inner) = opt {match &**inner {
                                 Expression::Identifier(ident) if ident == "inf" || ident == "infty"
-                                    => math::matrices_and_vectors::MatrixNorm::Sup,
+                                    => math::matrices_and_vectors::MatrixNorm::P(f64::INFINITY),
                                 Expression::Identifier(ident) if ident.starts_with('f')
                                     => math::matrices_and_vectors::MatrixNorm::Frobenius,
                                 other => {
@@ -298,7 +298,7 @@ pub fn eval(
                                     else {return Err(format!("Couldn't evaluate {other} to float."))}
                                 }
                             }} else {math::matrices_and_vectors::MatrixNorm::P(2.0)};
-                            Ok(Object::Float(x.norm(&norm_type)))
+                            x.norm(&norm_type).map(Object::Float)
                         }
                         Object::LiteralExpression(e) => Ok(Object::LiteralExpression(Expression::UnaryOperation(UnaryOperation::Abs, Box::new(e)))),
                         other => Err(format!("Operation 'Norm' not valid for operand {other}.")),

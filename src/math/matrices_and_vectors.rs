@@ -9,6 +9,7 @@ use std::ops;
 use std::slice::SliceIndex;
 use std::fmt;
 use std::cmp::min;
+use std::f64::consts::PI;
 
 use crate::math::utils;
 
@@ -442,7 +443,21 @@ impl ops::Mul<&Matrix> for &Matrix {
     }
 }
 
+
+pub enum VectorNorm {
+    P(f64)
+}
+pub enum MatrixNorm {
+    P(f64),
+    Frobenius,
+}
+
+
 impl Vector {
+    pub fn zeros(n: usize) -> Vector {
+        Vector { values: vec![0.0; n] }
+    }
+
     pub fn len(&self) -> usize {
         self.values.len()
     }
@@ -457,7 +472,56 @@ impl Vector {
     pub fn into_new<F>(self, f: F) -> Vector where F: Fn(f64) -> f64 {
         Vector{values: self.values.into_iter().map(f).collect()}
     }
+
+    /// Returns the norm of this vector (w.r.t. the given norm).
+    pub fn norm(&self, norm_type: &VectorNorm) -> f64 {
+        match norm_type {
+            VectorNorm::P(f64::INFINITY) => utils::max_abs(self.values.iter()),
+            VectorNorm::P(p) => self.values.iter().map(|x| x.powf(*p)).sum::<f64>().powf(1.0 / *p),
+        }
+    }
+
+    /// Returns the dual of `self` w.r.t. the p-norm. Since (l^p)^* and l^q are isometrically isomorphic for q s.t. 1/p+1/q=1
+    /// (standard result from functional analysis), the dual of `self` can be identified by a vector `v*` s.t.
+    /// `<v*, self> = ||self||_p`.
+    /// 
+    /// In this function, we return that `v` with the additional constraint `||v*||_q = 1`.
+    /// 
+    /// # Panics
+    /// Panics if `p<1`.
+    pub fn dual(&self, p: f64) -> Vector {
+        assert!(p >= 1.0, "p must be >= 1, got {p}");
+    
+        let n = self.len();
+        let supnorm = self.norm(&VectorNorm::P(f64::INFINITY));
+        if supnorm == 0.0 {
+            return self.clone();
+        }
+    
+        if p == 1.0 {
+            // Then, `q = \infty`, so the dual is simply `self.values.map(sign)`.
+            Vector { values: self.values.iter().map(|x| x.signum()).collect() }
+        } else if p == f64::INFINITY {
+            // Then, `q = 1`, so the dual is simply the unit vector pointing in direction `argmax_i |self[i]|`.
+            let mut i: usize = 0; let mut highest_abs = 0.0;
+            for (j, x) in self.values.iter().enumerate() {
+                if *x > highest_abs {
+                    highest_abs = *x;
+                    i = j;
+                }
+            }
+            let mut dual = Vector::zeros(n);
+            dual[i] = self[i].signum();
+            dual
+        } else {
+            let q = 1.0 / (1.0 - 1.0 / p);
+            let mut dual = Vector {values: self.values.iter().map(|x| x.signum() * (x / supnorm).abs().powf(p - 1.0)).collect()};
+            dual /= dual.norm(&VectorNorm::P(q));
+            dual
+        }
+    }
 }
+
 
 impl Matrix {
     pub fn zeros(m: usize, n: usize) -> Matrix {
@@ -574,31 +638,95 @@ impl Matrix {
             0.0
         }
     }
-}
+    
+    pub fn norm(&self, norm_type: &MatrixNorm) -> Result<f64, String> {
+        match norm_type {
+            // The sup-norm is simply the highest row sum, i.e. \max_i \sum_{j=1}^n |a_{i,j}|
+            MatrixNorm::P(f64::INFINITY) => Ok(utils::max(
+                (0..self.m).map(
+                    |i| (0..self.n).map(
+                        |j| self.get(i, j).abs()
+                    ).sum()
+                )
+            )),
+            // The 1-norm is the highest column sum. We take a different approach than above to improve cache locality.
+            MatrixNorm::P(1.0) => {
+                let mut sums = vec![0.0; self.n];
+                for i in 0..self.m {
+                    sums.iter_mut().enumerate().for_each(|(j, x)| *x += self.get(i, j).abs());
+                }
+                Ok(utils::max(sums.into_iter()))
+            }
+            MatrixNorm::P(2.0) => {
+                // TODO
+                unimplemented!()
+            }
+            // This implementation is based on the article "Estimating the matrix p-norm" by Nicholas Highham,
+            // https://link.springer.com/article/10.1007/BF01396242. For explanations, see the article.
+            MatrixNorm::P(p) if *p >= 1.0 => {
+                // All `unwrap`s below are safe because the dimensions of the operands fit.
+                let q = if *p == 1.0 {
+                    f64::INFINITY
+                } else {
+                    1.0 / (1.0 - 1.0 / p)
+                };
+                let samples = 9; // Could theoretically be increased or reduced (until 2), but the default is 9.
+                let tolerance = 1e-10;
+                let mut y = Vector::zeros(self.m);
+                let mut x = Vector::zeros(self.n);
 
+                // Initialisation: block power method with angle sampling.
+                for k in 0..self.n {
+                    let (c, s) = if k == 0 {
+                        (1.0, 0.0)
+                    } else {
+                        let col_k = self.col(k);
+                        let mut best_f = 0.0_f64;
+                        let mut best_c = 1.0_f64;
+                        let mut best_s = 0.0_f64;
+                        for i in 0..samples {
+                            let th = PI * i as f64 / (samples - 1) as f64;
+                            let mut cs = Vector{values: vec![th.cos(), th.sin()]};
+                            cs /= cs.norm(&VectorNorm::P(*p));
+                            let w_cs = (&(cs[0] * &col_k) + &(cs[1] * &y)).unwrap();
+                            let f = w_cs.norm(&VectorNorm::P(*p));
+                            if f > best_f {
+                                best_f = f;
+                                best_c = cs[0];
+                                best_s = cs[1];
+                            }
+                        }
+                        (best_c, best_s)
+                    };
+                    x[k] = c;
+                    y = (&(c * &self.col(k)) + &(s * &y)).unwrap();
+                    if k > 0 {
+                        for xi in x.values.iter_mut().take(k) {
+                            *xi *= s;
+                        }
+                    }
+                }
 
-pub enum VectorNorm {
-    P(f64),
-    Sup
-}
-
-impl Vector {
-    pub fn norm(&self, norm_type: &VectorNorm) -> f64 {
-        // TODO generalize
-        self.values.iter().map(|x| x.powi(2)).sum::<f64>().sqrt()
-    }
-}
-
-
-pub enum MatrixNorm {
-    P(f64),
-    Frobenius,
-    Sup
-}
-
-impl Matrix {
-    pub fn norm(&self, norm_type: &MatrixNorm) -> f64 {
-        // TODO
-        unimplemented!()
+                // Refinement: power iteration with dual vectors.
+                let mut est = y.norm(&VectorNorm::P(*p));
+                for iter in 1usize.. {
+                    y = (self * &x).unwrap();
+                    let eo = est;
+                    est = y.norm(&VectorNorm::P(*p));
+                    let dv_y = y.dual(*p);
+                    // Slightly hacky; instead of `self^\top * dv_y`, we write `dv_y * self`, which I implemented as `(dv_y^\top * self)^\top` for convenience
+                    // (the other operation would be undefined anyway), which in turn is mathematically exactly `self^\top * dv_y`.
+                    let z = (&dv_y * self).unwrap();
+                    let z_q_norm = z.norm(&VectorNorm::P(q));
+                    if iter > 1 && (z_q_norm < (&z * &x).unwrap() || (est - eo).abs() <= tolerance * est) {
+                        break;
+                    }
+                    x = z.dual(q);
+                }
+                Ok(est)
+            }
+            MatrixNorm::P(other) => Err(format!("Parameter `p` must be at least 1 (got {other}).")),
+            MatrixNorm::Frobenius => Ok(self.values.iter().map(|x| x.powi(2)).sum::<f64>().sqrt())
+        }
     }
 }
