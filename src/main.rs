@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_logger::tracing;
 use std::vec::Vec;
 use std::cell::RefCell;
 use web_sys::window;
@@ -68,6 +69,7 @@ fn validate_input(input: &str) -> Vec<String> {
         Ok(x) => x,
         Err(e) => {return vec![format!("[ERROR] {e}")];}
     };
+    tracing::info!("{:?}", tokens);
     let mut parser = lang::Parser::from(tokens);
     let mut output = Vec::<String>::new();
     ENV.with(|c: &RefCell<math::Env>| {

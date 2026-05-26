@@ -2,6 +2,8 @@
 //! 
 use std::collections::HashSet;
 
+use dioxus_logger::tracing;
+
 use crate::math::{BinaryOperation, UnaryOperation, Expression, FunctionRepr, Env};
 use crate::lang::lexer::Token;
 
@@ -69,7 +71,7 @@ impl Parser {
     fn parse_comma_expression(&mut self, closer: &Token, env: &mut Env) -> Result<Vec<Expression>, String> {
         let mut exprs = Vec::<Expression>::new();
         loop {
-            exprs.push(self.parse_expression(0, env)?);
+            exprs.push(self.parse_expression(0, None, env)?);
             match self.next() {
                 Token::Comma => {},
                 some if &some == closer => {break;},
@@ -80,13 +82,17 @@ impl Parser {
     }
 
     /// Allows to recursively parse vectors of tokens.
-    fn parse_expression(&mut self, min_precedence: u8, env: &mut Env) -> Result<Expression, String> {
+    /// 
+    /// If `expect_closer` is `Some(x)` and `x` is encountered in a place of an operator, the function returns early instead.
+    /// This is usually unnecessary (e.g. expressions between parentheses are parsed just fine without this), but is strictly required
+    /// when parsing an expression between e.g. double pipes (`||`), because this token cannot necessarily be distinguished from the "or" operator.
+    fn parse_expression(&mut self, min_precedence: u8, expect_closer: Option<Token>, env: &mut Env) -> Result<Expression, String> {
         // First, determine the LHS of the next operation to execute.
         // This is either an identifier, a number or a further expression between parentheses.
         let mut lhs = match self.next() {
-            Token::Minus => Expression::UnaryOperation(UnaryOperation::Neg, Box::new(self.parse_expression(5, env)?)),
+            Token::Minus => Expression::UnaryOperation(UnaryOperation::Neg, Box::new(self.parse_expression(5, None, env)?)),
             Token::ExclamationMark // An exclamation mark before an expected expression signifies a `not` operator
-                => Expression::UnaryOperation(UnaryOperation::Not, Box::new(self.parse_expression(3, env)?)),
+                => Expression::UnaryOperation(UnaryOperation::Not, Box::new(self.parse_expression(3, None, env)?)),
             Token::Identifier(id) if id == "D" || id == "D_" => { // Total derivative
                 // Expected tokens: ("D" | "D_{...}") <FunctionExpr> (<point>) [<direction>].
                 // For a list of all accepted syntaxes, see the documentation of the program's syntax.
@@ -110,7 +116,7 @@ impl Parser {
                         other => panic!("Expected '{{' or identifier after `D_`, got {:?}", other)
                     }
                 }
-                let mut function_expr = self.parse_expression(8, env)?;
+                let mut function_expr = self.parse_expression(8, None, env)?;
                 // At this point, the next token can either be a parenthesis or a bracket.
                 let point = match (self.peek(), &mut function_expr) {
                     // This case means the point is yet to parse.
@@ -163,7 +169,7 @@ impl Parser {
                 // Parse expression between parentheses recursively. It could just be a single expression of multiple entries separated by commas.
                 let mut entries = Vec::<Expression>::new();
                 loop {
-                    entries.push(self.parse_expression(0, env)?);
+                    entries.push(self.parse_expression(0, None, env)?);
                     match self.next() {
                         Token::Comma => {},
                         Token::RParenthesis => {break;},
@@ -183,7 +189,7 @@ impl Parser {
                 let mut current_n: usize = 0;
                 loop {
                     current_n += 1;
-                    entries.push(self.parse_expression(0, env)?);
+                    entries.push(self.parse_expression(0, None, env)?);
                     match self.next() {
                         Token::Comma => {},
                         Token::Semicolon | Token::Backslash => {
@@ -216,24 +222,34 @@ impl Parser {
                 }
             }
             Token::Pipe => { // As for parentheses
-                let inner = self.parse_expression(0, env)?;
+                let inner = self.parse_expression(0, None, env)?;
                 match self.next() {
                     Token::Pipe => Expression::UnaryOperation(UnaryOperation::Abs, Box::new(inner)),
                     other => panic!("Expected closing '|', found {:?}", other),
                 }
             }
             Token::DoublePipe => { // In this context: opener of a norm
-                let inner = self.parse_expression(0, env)?;
+                let inner = self.parse_expression(0, Some(Token::DoublePipe), env)?;
+                tracing::info!("{:?}", inner);
                 match self.next() {
                     Token::DoublePipe => {
                         match self.peek() {
                             Token::Identifier(ident) if ident.starts_with('_') => {
                                 let norm_type = if ident == "_" {
                                     self.next();
-                                    assert!(self.next() == Token::LBrace);
-                                    let res = self.parse_expression(0, env)?;
-                                    assert!(self.next() == Token::RBrace);
-                                    res
+                                    match self.next() {
+                                        Token::Identifier(a) => Expression::Identifier(a),
+                                        Token::Number(a) => Expression::Number(a),
+                                        Token::LBrace => {
+                                            let res = self.parse_expression(0, None, env)?;
+                                            match self.next() {
+                                                Token::RBrace => {},
+                                                other => {return Err(format!("Expected closing '}}', found {:?}", other));}
+                                            }
+                                            res
+                                        }
+                                        other => {return Err(format!("Expected norm type after '||_', found {:?}", other));}
+                                    }
                                 } else {
                                     let cloned_ident = ident.clone();
                                     let mut chars = cloned_ident.chars(); chars.next();
@@ -249,11 +265,11 @@ impl Parser {
                 }
             }
             Token::If => {
-                let condition = self.parse_expression(0, env)?; // Will return wenn LBrace is encountered.
+                let condition = self.parse_expression(0, None, env)?; // Will return wenn LBrace is encountered.
                 assert!(matches!(self.next(), Token::LBrace), "Expected '{{' after condition {condition}.");
-                let iftrue = self.parse_expression(0, env)?;
+                let iftrue = self.parse_expression(0, None, env)?;
                 assert!(matches!((self.next(), self.next(), self.next()), (Token::RBrace, Token::Else, Token::LBrace)), "Expected '}} else {{' after first `if` case.");
-                let iffalse = self.parse_expression(0, env)?;
+                let iffalse = self.parse_expression(0, None, env)?;
                 assert!(matches!(self.next(), Token::RBrace), "Expected '}}' after `else` case.");
                 Expression::IfElse(Box::new(condition), Box::new(iftrue), Box::new(iffalse))
             }
@@ -261,6 +277,12 @@ impl Parser {
         };
 
         // Then, parse the RHS recursively.
+        if let Some(c) = expect_closer {
+            if *self.peek() == c {
+                // Importantly, do not consume the closer so the caller can check it.
+                return Ok(lhs);
+            }
+        }
         loop {
             let (op, prec, consume) = match self.peek() {
                 Token::Plus => (BinaryOperation::Add, 5, true),
@@ -311,7 +333,7 @@ impl Parser {
             if consume { self.next(); } // Implicit operators, e.g. left parentheses interpreted as "*(", do not lead to the consumption of the next token.
 
             // The RHS can only contain operators of strictly larger precedence, so we parse it with parameter 'prec+1'.
-            let rhs = self.parse_expression(prec + 1, env)?;
+            let rhs = self.parse_expression(prec + 1, None, env)?;
             lhs = match (lhs, &op, &rhs) {
                 // Special case: the `^` operator is traditionally right-associative and not left-associative, i.e. 2^3^2 = 2^(3^2) and not (2^3)^2.
                 (Expression::BinaryOperation(a, BinaryOperation::Pow, b), ..) if op == BinaryOperation::Pow
@@ -329,7 +351,7 @@ impl Parser {
                     Expression::Identifier(ident)
                 ) if lhs_ident == "d" && ident.len() > 1
                     // Parse the function to differentiate recursively.
-                    => Expression::PartialDerivative(ident[1..].to_string(), Box::new(self.parse_expression(8, env)?)),
+                    => Expression::PartialDerivative(ident[1..].to_string(), Box::new(self.parse_expression(8, None, env)?)),
                 // Default
                 (lhs, ..) => Expression::BinaryOperation(Box::new(lhs), op, Box::new(rhs))
             }
@@ -360,7 +382,7 @@ impl Parser {
     pub fn parse(&mut self, env: &mut Env) -> Result<Vec<Expression>, String> {
         let mut exprs = Vec::<Expression>::new();
         loop {
-            let expr = self.parse_expression(0, env)?;
+            let expr = self.parse_expression(0, None, env)?;
             exprs.push(expr);
             match self.peek() {
                 Token::EOF => {return Ok(exprs);},
