@@ -2,8 +2,6 @@
 //! 
 use std::collections::HashSet;
 
-use dioxus_logger::tracing;
-
 use crate::math::{BinaryOperation, UnaryOperation, Expression, FunctionRepr, Env};
 use crate::lang::lexer::Token;
 
@@ -230,7 +228,6 @@ impl Parser {
             }
             Token::DoublePipe => { // In this context: opener of a norm
                 let inner = self.parse_expression(0, Some(Token::DoublePipe), env)?;
-                tracing::info!("{:?}", inner);
                 match self.next() {
                     Token::DoublePipe => {
                         match self.peek() {
