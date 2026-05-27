@@ -427,8 +427,7 @@ impl ops::Mul<&Matrix> for &Matrix {
                     values.push(
                         (0..self.n)
                             .map(|k| {
-                                self.values[i * self.n + k]
-                                    * rhs_transposed.values[j * rhs_transposed.n + k]
+                                self.get(i, k) * rhs_transposed.get(j, k)
                             })
                             .sum(),
                     )
@@ -579,6 +578,31 @@ impl Matrix {
 
         Matrix { m: self.n, n: self.m, values }
     }
+    /// Multiplies `self` with `rhs^\top`. Returns `None` if the dimensions don't match.
+    pub fn mul_with_transposed(self, rhs: &Matrix) -> Option<Matrix> {
+        if self.n != rhs.n {
+            None
+        }
+        else {
+            let mut values = Vec::<f64>::with_capacity(self.m * rhs.m);
+            for i in 0..self.m {
+                for j in 0..rhs.m {
+                    values.push(
+                        (0..self.n)
+                            .map(|k| {
+                                self.get(i, k) * rhs.get(j, k)
+                            })
+                            .sum(),
+                    )
+                }
+            }
+            Some(Matrix {
+                m: self.m,
+                n: rhs.m,
+                values,
+            })
+        }
+    }
 
     pub fn identity(n: usize) -> Matrix {
         if n == 0 {return Matrix{m: 0, n: 0, values: Vec::<f64>::new()};}
@@ -638,7 +662,157 @@ impl Matrix {
             0.0
         }
     }
-    
+
+    /// Computes the matrix `G` such that `G * self` rotates the plane spanned by the rows `i` and `j`
+    /// precisely such that `A[j][col]` becomes zero.
+    /// 
+    /// Assumes that `self` is quadratic (if this function becomes public, this may be changed).
+    fn givens_matrix(&self, i: usize, j: usize, col: usize) -> Matrix {
+        let mut g = Matrix::identity(self.m);
+        let x = (self.get(i, col).powi(2) + self.get(j, col).powi(2)).sqrt();
+        g.set(i, i, self.get(i, col) / x);
+        g.set(j, j, self.get(i, col) / x);
+        g.set(i, j, self.get(j, col) / x);
+        g.set(j, i, -self.get(j, col) / x);
+        g
+    }
+
+    /// Computes the matrix `G` such that `G * self` rotates the plane spanned by the rows `i` and `j`
+    /// precisely such that `A[j][col]` becomes zero.
+    /// 
+    /// Assumes that `self` is quadratic (if this function becomes public, this may be changed).
+    fn upper_hessenberg(&self) -> (Matrix, Matrix) {
+        let mut h = self.clone();
+        let mut pg = Matrix::identity(self.m);
+        if self.m > 1 {
+            for col in 0..self.m-2 {
+                for row in col+2..self.m {
+                    let g = h.givens_matrix(col+1, row, col);
+                    h = (&g * &h).unwrap().mul_with_transposed(&g).unwrap();
+                    pg = (&g * &pg).unwrap();
+                }
+            }
+        }
+        (h, pg)
+    }
+
+    /// Computes the QR decomposition of `self`. Only works if `self` is a Hessenberg matrix.
+    fn qr_decomposition_for_hessenberg_matrix(&self) -> (Matrix, Matrix) {
+        let mut r = self.clone();
+        let mut q = Matrix::identity(self.m);
+        for i in 0..self.m-1 {
+            let g = r.givens_matrix(i, i+1, i);
+            q = (&g * &q).unwrap();
+            r = (&g * &r).unwrap();
+        }
+        (q.transpose(), r)
+    }
+    /// Computes the QR decomposition of `self` in O(n^3) using Hessenberg matrices and Givens rotations.
+    /// 
+    /// Returns `None` if `self` is not quadratic. Otherwise, returns `(eigenvalues, q, r)`.
+    pub fn qr_decomposition(&self) -> Option<(Vec<f64>, Matrix, Matrix)> {
+        if self.m != self.n {
+            return None;
+        }
+        let a = self.clone();
+        let mut u_k = Matrix::identity(self.m);
+        let (mut h_k, pg) = a.upper_hessenberg();
+        for _ in 0..100 {
+            let (inverse_pg, r_k) = h_k.qr_decomposition_for_hessenberg_matrix();
+            h_k = (&r_k * &inverse_pg).unwrap();
+            u_k = (&u_k * &inverse_pg).unwrap();
+        }
+        u_k = (&pg.transpose() * &u_k).unwrap();
+        Some(((0..self.m).map(|i| h_k.get(i, i)).collect(), h_k, u_k))
+    }
+
+    /// Returns `self^\top * self`.
+    pub fn gram_matrix(&self) -> Matrix {
+        let mut res = Matrix::zeros(self.n, self.n);
+        for i in 0..self.n {
+            for j in 0..=i {
+                let value = (0..self.n)
+                    .map(|k| self.get(k, i) * self.get(k, j))
+                    .sum();
+                res.set(i, j, value);
+                if i != j {
+                    res.set(j, i, value);
+                }
+            }
+        }
+        res
+    }
+
+    /// Approximates the operator norm of `self` induced by the `p`-norm up to an error of at most `tolerance`.
+    /// 
+    /// This implementation is based on the [article](https://link.springer.com/article/10.1007/BF01396242)
+    /// "Estimating the matrix p-norm" by Nicholas Highham. For explanations, see the article.
+    /// 
+    /// `p` must be at least one and may be `f64::INFINITY`. The matrix `self` does not have any constraints. `tolerance` is recommended to be `1e-10`.
+    /// 
+    /// This method does not treat the cases `p=1.0`, `p=2.0` and `p=f64::INFINITY` separately. For those, call `self.norm`.
+    fn pnorm(&self, p: f64, tolerance: f64) -> Result<f64, String> {
+        // All `unwrap`s below are safe because the dimensions of the operands fit.
+        let q = if p == 1.0 {
+            f64::INFINITY
+        } else {
+            1.0 / (1.0 - 1.0 / p)
+        };
+        let samples = 9; // Could theoretically be increased or reduced (until 2), but the default is 9.
+        let mut y = Vector::zeros(self.m);
+        let mut x = Vector::zeros(self.n);
+
+        // Initialisation: block power method with angle sampling.
+        for k in 0..self.n {
+            let (c, s) = if k == 0 {
+                (1.0, 0.0)
+            } else {
+                let col_k = self.col(k);
+                let mut best_f = 0.0_f64;
+                let mut best_c = 1.0_f64;
+                let mut best_s = 0.0_f64;
+                for i in 0..samples {
+                    let th = PI * i as f64 / (samples - 1) as f64;
+                    let mut cs = Vector{values: vec![th.cos(), th.sin()]};
+                    cs /= cs.norm(&VectorNorm::P(p));
+                    let w_cs = (&(cs[0] * &col_k) + &(cs[1] * &y)).unwrap();
+                    let f = w_cs.norm(&VectorNorm::P(p));
+                    if f > best_f {
+                        best_f = f;
+                        best_c = cs[0];
+                        best_s = cs[1];
+                    }
+                }
+                (best_c, best_s)
+            };
+            x[k] = c;
+            y = (&(c * &self.col(k)) + &(s * &y)).unwrap();
+            if k > 0 {
+                for xi in x.values.iter_mut().take(k) {
+                    *xi *= s;
+                }
+            }
+        }
+
+        // Refinement: power iteration with dual vectors.
+        let mut est = y.norm(&VectorNorm::P(p));
+        for iter in 1usize.. {
+            y = (self * &x).unwrap();
+            let eo = est;
+            est = y.norm(&VectorNorm::P(p));
+            let dv_y = y.dual(p);
+            // Slightly hacky; instead of `self^\top * dv_y`, we write `dv_y * self`, which I implemented as `(dv_y^\top * self)^\top` for convenience
+            // (the other operation would be undefined anyway), which in turn is mathematically exactly `self^\top * dv_y`.
+            let z = (&dv_y * self).unwrap();
+            let z_q_norm = z.norm(&VectorNorm::P(q));
+            if iter > 1 && (z_q_norm < (&z * &x).unwrap() || (est - eo).abs() <= tolerance * est) {
+                break;
+            }
+            x = z.dual(q);
+        }
+        Ok(est)
+    }
+
     pub fn norm(&self, norm_type: &MatrixNorm) -> Result<f64, String> {
         match norm_type {
             // The sup-norm is simply the highest row sum, i.e. \max_i \sum_{j=1}^n |a_{i,j}|
@@ -658,72 +832,13 @@ impl Matrix {
                 Ok(utils::max(sums.into_iter()))
             }
             MatrixNorm::P(2.0) => {
-                // TODO
-                unimplemented!()
+                match self.gram_matrix().qr_decomposition() {
+                    Some((eigenvalues, ..)) => Ok(utils::max_abs(eigenvalues.iter()).sqrt()),
+                    None => Err(format!("Matrix must be quadratic (got {}x{}).", self.m, self.n))
+                }
             }
-            // This implementation is based on the article "Estimating the matrix p-norm" by Nicholas Highham,
-            // https://link.springer.com/article/10.1007/BF01396242. For explanations, see the article.
             MatrixNorm::P(p) if *p >= 1.0 => {
-                // All `unwrap`s below are safe because the dimensions of the operands fit.
-                let q = if *p == 1.0 {
-                    f64::INFINITY
-                } else {
-                    1.0 / (1.0 - 1.0 / p)
-                };
-                let samples = 9; // Could theoretically be increased or reduced (until 2), but the default is 9.
-                let tolerance = 1e-10;
-                let mut y = Vector::zeros(self.m);
-                let mut x = Vector::zeros(self.n);
-
-                // Initialisation: block power method with angle sampling.
-                for k in 0..self.n {
-                    let (c, s) = if k == 0 {
-                        (1.0, 0.0)
-                    } else {
-                        let col_k = self.col(k);
-                        let mut best_f = 0.0_f64;
-                        let mut best_c = 1.0_f64;
-                        let mut best_s = 0.0_f64;
-                        for i in 0..samples {
-                            let th = PI * i as f64 / (samples - 1) as f64;
-                            let mut cs = Vector{values: vec![th.cos(), th.sin()]};
-                            cs /= cs.norm(&VectorNorm::P(*p));
-                            let w_cs = (&(cs[0] * &col_k) + &(cs[1] * &y)).unwrap();
-                            let f = w_cs.norm(&VectorNorm::P(*p));
-                            if f > best_f {
-                                best_f = f;
-                                best_c = cs[0];
-                                best_s = cs[1];
-                            }
-                        }
-                        (best_c, best_s)
-                    };
-                    x[k] = c;
-                    y = (&(c * &self.col(k)) + &(s * &y)).unwrap();
-                    if k > 0 {
-                        for xi in x.values.iter_mut().take(k) {
-                            *xi *= s;
-                        }
-                    }
-                }
-
-                // Refinement: power iteration with dual vectors.
-                let mut est = y.norm(&VectorNorm::P(*p));
-                for iter in 1usize.. {
-                    y = (self * &x).unwrap();
-                    let eo = est;
-                    est = y.norm(&VectorNorm::P(*p));
-                    let dv_y = y.dual(*p);
-                    // Slightly hacky; instead of `self^\top * dv_y`, we write `dv_y * self`, which I implemented as `(dv_y^\top * self)^\top` for convenience
-                    // (the other operation would be undefined anyway), which in turn is mathematically exactly `self^\top * dv_y`.
-                    let z = (&dv_y * self).unwrap();
-                    let z_q_norm = z.norm(&VectorNorm::P(q));
-                    if iter > 1 && (z_q_norm < (&z * &x).unwrap() || (est - eo).abs() <= tolerance * est) {
-                        break;
-                    }
-                    x = z.dual(q);
-                }
-                Ok(est)
+                self.pnorm(*p, 1e-10)
             }
             MatrixNorm::P(other) => Err(format!("Parameter `p` must be at least 1 (got {other}).")),
             MatrixNorm::Frobenius => Ok(self.values.iter().map(|x| x.powi(2)).sum::<f64>().sqrt())
