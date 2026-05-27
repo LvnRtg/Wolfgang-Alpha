@@ -65,14 +65,6 @@ macro_rules! expect_n_args {
     };
 }
 
-pub const DEFAULT_FUNCTION_NAMES: [&str; 16] = [
-    "exp", "ln", "log",
-    "sqrt",
-    "cos", "cosh", "acos", "acosh",
-    "sin", "sinh", "asin", "asinh",
-    "tan", "tanh", "atan", "atanh"
-];
-
 /// Wrapped in a function because const hashmaps aren't available yet.
 pub fn default_functions() -> HashMap<String, FunctionRepr> {
     HashMap::<String, FunctionRepr>::from([
@@ -101,11 +93,29 @@ pub fn default_functions() -> HashMap<String, FunctionRepr> {
             }
             else { Err("Wrong type for argument of function 'eig' (expected Matrix).".to_string()) }
         }),
+        expect_n_args!(det, 1, |args: &[Object]| {
+            if let Object::Matrix(mat) = &args[0] {
+                match mat.det() {
+                    Some(d) => Ok(Object::Float(d)),
+                    None => Err(format!("Matrix must be quadratic (got size {}x{}).", mat.m, mat.n))
+                }
+                
+            }
+            else { Err("Wrong type for argument of function 'det' (expected Matrix).".to_string()) }
+        }),
     ])
 }
 
+pub const FUNCTIONS_WITH_PROVIDED_DERIVATIVE: [&str; 16] = [
+    "exp", "ln", "log",
+    "sqrt",
+    "cos", "cosh", "acos", "acosh",
+    "sin", "sinh", "asin", "asinh",
+    "tan", "tanh", "atan", "atanh"
+];
+
 /// Example: (exp, point) => Ok(Expression::Function("exp", point[0].clone())) if point has length 1 otherwise Err
-macro_rules! get_default_derivative_macro1 {
+macro_rules! get_default_derivative_macro {
     ($name:ident, $point:expr, $direction:expr) => {
         if $point.len() != 1 {
             Err(format!(
@@ -130,7 +140,7 @@ macro_rules! get_default_derivative_macro1 {
 /// N.b.: we return an expression and not e.g. a `FunctionRepr` for the sake of simplicity in the application.
 pub fn get_default_derivative(function_name: &str, point: &[Expression], direction: &[Expression]) -> Result<Expression, String> {
     match function_name {
-        "exp" => get_default_derivative_macro1!(exp, point, direction),
+        "exp" => get_default_derivative_macro!(exp, point, direction),
         "ln" => {
             if point.len() != 1 {
                 Err(format!(
@@ -191,9 +201,9 @@ pub fn get_default_derivative(function_name: &str, point: &[Expression], directi
                 ))
             }
         }
-        "cos" => Ok(expr_neg!(get_default_derivative_macro1!(sin, point, direction)?)),
-        "sin" => get_default_derivative_macro1!(cos, point, direction),
+        "cos" => Ok(expr_neg!(get_default_derivative_macro!(sin, point, direction)?)),
+        "sin" => get_default_derivative_macro!(cos, point, direction),
         // TODO: add other functions
-        _ => Err(format!("No such default function '{function_name}'."))
+        _ => Err(format!("No derivative provided for '{function_name}'."))
     }
 }
