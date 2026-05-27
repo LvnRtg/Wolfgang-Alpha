@@ -653,13 +653,14 @@ impl Matrix {
 
     /// Returns the determinant of the matrix. Currently, this is computed via an LU-decomposition,
     /// with a time complexity of 2/3 * n^3 + O(n^2).
-    pub fn det(&self) -> f64 {
+    pub fn det(&self) -> Option<f64> {
+        if self.m != self.n { return None; }
         if let Some((l, u)) = self.lu_decomposition() {
-            l.diag_product() * u.diag_product()
+            Some(l.diag_product() * u.diag_product())
         } else {
             // If no LU-decomposition exists, there exists some linear dependency between rows.
             // This immediately implies that the matrix is not invertible, that is, it has determinant zero.
-            0.0
+            Some(0.0)
         }
     }
 
