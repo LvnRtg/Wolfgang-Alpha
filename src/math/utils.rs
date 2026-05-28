@@ -19,7 +19,7 @@ pub fn max_abs<'a>(iter: impl Iterator<Item=&'a f64>) -> f64 {
 /// Returns whether the given permutation has even parity (`true`) or odd parity (`false`).
 /// 
 /// `permutation` must be a permutation of the vector `[0, ..., n-1]` for some `n`.
-pub fn permutation_parity(permutation: &Vec<usize>) -> bool {
+pub fn permutation_parity(permutation: &[usize]) -> bool {
     // Fact: a permutation is odd iff it has an odd number of even-length cycles.
     let mut remaining: HashSet<usize> = HashSet::from_iter(0..permutation.len());
     let mut is_even = true;
