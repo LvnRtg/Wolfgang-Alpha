@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use dioxus::html::KeyCode::P;
+
 pub fn approx_eq(x: &f64, y: &f64) -> bool {
     (x-y).abs() <= 1e-10
 }
@@ -37,6 +39,15 @@ pub fn permutation_parity(permutation: &[usize]) -> bool {
         }
     }
     is_even
+}
+
+/// Returns the inverse permutation of `permutation`.
+pub fn transpose_permutation(permutation: &[usize]) -> Vec<usize> {
+    let mut inv = vec![0; permutation.len()];
+    for i in 0..permutation.len() {
+        inv[permutation[i]] = i;
+    }
+    inv
 }
 
 /// Acts like `format!("{:.decimals}", x)` but cuts off trailing zeros.
