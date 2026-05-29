@@ -163,8 +163,7 @@ fn tokenize_recursive(chars: &mut Peekable<Chars>, return_early: Vec<char>) -> R
                 chars.next();
                 match chars.peek() {
                     Some('|') => {chars.next(); tokens.push(Token::DoublePipe);}
-                    Some(_) => {tokens.push(Token::Pipe);}
-                    _ => {}
+                    _ => {tokens.push(Token::Pipe);}
                 }
             }
             c if c.is_alphanumeric() || c == '_' => {
