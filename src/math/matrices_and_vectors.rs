@@ -472,7 +472,8 @@ pub enum MatrixNorm {
     Frobenius,
 }
 impl MatrixNorm {
-    /// If `opt` is `None`, use the euclidian 2-norm. If `opt` is "inf" or "infty", use the supremum norm.
+    /// If `opt` is `None`, use the spectral norm. If `opt` is "inf" or "infty", use the supremum norm.
+    /// If it is a string starting with f, use the Frobenius norm.
     /// Otherwise, evaluate `opt` and use the corresponding p-norm.
     pub fn from_expr(opt: &Option<Box<Expression>>, extra_vars: &lang::evaluator::VarStack, env: &mut Env) -> Result<MatrixNorm, String> {
         if let Some(inner) = opt {match &**inner {
