@@ -49,17 +49,14 @@ impl Object {
                 // First, we go through all element to know how much space each column needs.
                 let column_lengths: Vec<usize> = (0..x.n).map(
                     |j| (0..x.m).map(
-                        |i| x
-                        .get(i, j)
-                        .to_string()
-                        .len()
+                        |i| format!("{:.2}", x.get(i, j)).len()
                     ).max().unwrap_or(0)
                 ).collect();
                 let row_length = column_lengths.iter().sum::<usize>() + 2*x.n; // Between two columns, add 2 spaces. Before the first columns and after the last one, only 1 space.
                 let mut lines = vec![format!("╭{}╮", (0..row_length).map(|_| ' ').collect::<String>())];
                 for i in 0..x.m {
                     lines.push(format!("│ {}│", (0..x.n).map(
-                        |j| format!("{:^2$} {}", x.get(i, j), if j == x.n-1 {""} else {" "}, column_lengths[j])
+                        |j| format!("{:^2$} {}", format!("{:.2}", x.get(i, j)), if j == x.n-1 {""} else {" "}, column_lengths[j])
                     ).collect::<String>()));
                 }
                 lines.push(format!("╰{}╯", (0..row_length).map(|_| ' ').collect::<String>()));
