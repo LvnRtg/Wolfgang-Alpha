@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use crate::math::Object;
+
 pub fn approx_eq(x: &f64, y: &f64) -> bool {
     (x-y).abs() <= 1e-10
 }
@@ -56,14 +58,22 @@ pub fn format_trimmed(x: f64, decimals: usize) -> String {
     s.to_string()
 }
 
-/// Splits the interval [a, b] into n uniformly spread points, the first of which equals a and the last of which equals b.
-/// 
-/// Exceptions: if `n == 0`, returns an empty vector. If `n == 1`, returns `vec![a]`.
-/// 
-/// Note: if `a > b`, returns `linspace(b, a, n).rev()`.
-pub fn linspace(a: f64, b: f64, n: usize) -> Vec<f64> {
-    if n == 0 {return Vec::<f64>::new();}
-    if n == 1 {return vec![a];}
+// /// Splits the interval [a, b] into n uniformly spread points, the first of which equals a and the last of which equals b.
+// /// 
+// /// Exceptions: if `n == 0`, returns an empty vector. If `n == 1`, returns `vec![a]`.
+// /// 
+// /// Note: if `a > b`, returns `linspace(b, a, n).rev()`.
+// pub fn linspace(a: f64, b: f64, n: usize) -> Vec<f64> {
+//     if n == 0 {return Vec::<f64>::new();}
+//     if n == 1 {return vec![a];}
+//     let step = (b-a) / ((n-1) as f64);
+//     (0..n).map(|i| a + i as f64 * step).collect()
+// }
+
+/// As `linspace` but directly converts all floats to `Object`s.
+pub fn linspace_as_objects(a: f64, b: f64, n: usize) -> Vec<Object> {
+    if n == 0 {return Vec::<Object>::new();}
+    if n == 1 {return vec![Object::Float(a)];}
     let step = (b-a) / ((n-1) as f64);
-    (0..n).map(|i| a + i as f64 * step).collect()
+    (0..n).map(|i| Object::Float(a + i as f64 * step)).collect()
 }

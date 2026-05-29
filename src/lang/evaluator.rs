@@ -3,15 +3,15 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use dioxus_logger::tracing;
-use rand::Rng;
 use statrs::function::gamma;
+use itertools::Itertools;
 
 use crate::math;
-use crate::math::utils::approx_eq;
+use crate::math::utils::{approx_eq, linspace_as_objects};
 use crate::math::{BinaryOperation, Env, UnaryOperation, Object, Expression, FunctionRepr}; // Common types that will be used several times
 
 
-const DEFAULT_TESTEQ_REPETITIONS: i64 = 100;
+const DEFAULT_TESTEQ_REPETITIONS: usize = 20;
 
 
 #[derive(Debug)]
@@ -321,19 +321,29 @@ pub fn eval(
                     }
 
                     // If a number of repetitions is given as `param` under the form of an expression, evaluate it and use it. Otherwise, use `DEFAULT_TESTEQ_REPETITIONS`
-                    let repetitions = param.as_ref()
+                    let n = param.as_ref()
                         .map(|p| match eval(p, extra_vars, env) {
-                            Ok(Object::Float(x)) => Ok(x.round() as i64),
+                            Ok(Object::Float(x)) => Ok(x.round() as usize),
                             Err(e) => Err(format!("Couldn't resolve number of repetitions `{}`. Traceback: {}", p, e)),
                             _ => Err(format!("Couldn't resolve number of repetitions `{}` to float.", p))
                         })
                         .unwrap_or(Ok(DEFAULT_TESTEQ_REPETITIONS))
                         ?;
 
-                    let mut rng = rand::thread_rng();
-                    for _ in 0..repetitions {
-                        let random_numbers: Vec<Object> = (0..lhs_free_variables.len()).map(|_| Object::Float(rng.gen_range(-1000.0..1000.0))).collect();
-                        let tmp_vars: HashMap<&String, &Object> = lhs_free_variables.iter().enumerate().map(|(i, ident)| (ident, &random_numbers[i])).collect();
+                    // Note that the size of the following vector is 6n, so if lhs_free_variables is large, the number of test values can quickly blow up.
+                    // Generally speaking, this is necessary though, since checking that multivariate functions are equal logically requires us to check
+                    // various possible combinations of input variables.
+                    let linspaces: Vec<Object> = [
+                        linspace_as_objects(0.0, 1.0, n),
+                        linspace_as_objects(1.0, 100.0, n),
+                        (101..=100+n).map(|x| Object::Float(x as f64)).collect::<Vec<Object>>(),
+                        linspace_as_objects(0.0, -1.0, n),
+                        linspace_as_objects(-1.0, -100.0, n),
+                        (-100-(n as isize) .. -100).map(|x| Object::Float(x as f64)).collect::<Vec<Object>>()
+                    ].iter().flat_map(|v| v.iter()).cloned().collect();
+
+                    for test_values in (0..lhs_free_variables.len()).map(|_| linspaces.iter()).multi_cartesian_product() {
+                        let tmp_vars: HashMap<&String, &Object> = lhs_free_variables.iter().enumerate().map(|(i, ident)| (ident, test_values[i])).collect();
                         let new_stack = VarStack::Frame { vars: &tmp_vars, parent: extra_vars };
                         let first_eval = eval(&this, &new_stack, env)
                             .map_err(|e| format!("Couldn't evaluate `{}` with environment {:?}. Traceback: {}", this, tmp_vars, e)) // Add information to the error message
@@ -354,60 +364,6 @@ pub fn eval(
                 }
                 None => math::objects::try_operation(&eval(lhs, extra_vars, env)?, &eval(rhs, extra_vars, env)?, op)
             }
-            // match (&**lhs, &**rhs, op) {
-            //     // If the operation is a comparison and at least one of `lhs`, `rhs` is a function (which we'll call `this`; we'll call the remaining one `other`)...
-            //     // (Note: being a function means having unknown identifiers within.)
-            //     (a, b, BinaryOperation::Comp(_, param))
-            //     | (b, a, BinaryOperation::Comp(_, param))
-            //     if  => {
-            //         let this = a.clone(); let other = b.clone();
-                    
-            //         list_unknown_identifiers(&this, extra_vars, env, &mut free_variables, false);
-            //         let other_only_needs_single_eval = !list_unknown_identifiers(&other, extra_vars, env, &mut free_variables, false);
-            //         let mut other_eval = Object::Success; // Placeholder
-            //         // If `other` doesn't contain any free variables (<=> the second `list_unknown_identifiers` call above actually modified the expression),
-            //         // it suffices to evaluate `other` once.
-            //         // Then, evaluating every time would be inefficient, especially if many values will be tested.
-            //         // Therefore, it makes sense to check whether this is the case beforehand, and if so, simply evaluate once and save the value for later.
-            //         if other_only_needs_single_eval {
-            //             other_eval = eval(&other, extra_vars, env)?;
-            //         }
-
-            //         // If a number of repetitions is given as `param` under the form of an expression, evaluate it and use it. Otherwise, use `DEFAULT_TESTEQ_REPETITIONS`
-            //         let repetitions = param.as_ref()
-            //             .map(|p| match eval(p, extra_vars, env) {
-            //                 Ok(Object::Float(x)) => Ok(x.round() as i64),
-            //                 Err(e) => Err(format!("Couldn't resolve number of repetitions `{}`. Traceback: {}", p, e)),
-            //                 _ => Err(format!("Couldn't resolve number of repetitions `{}` to float.", p))
-            //             })
-            //             .unwrap_or(Ok(DEFAULT_TESTEQ_REPETITIONS))
-            //             ?;
-
-            //         let mut rng = rand::thread_rng();
-            //         for _ in 0..repetitions {
-            //             let random_numbers: Vec<Object> = (0..free_variables.len()).map(|_| Object::Float(rng.gen_range(-1000.0..1000.0))).collect();
-            //             let tmp_vars: HashMap<&String, &Object> = free_variables.iter().enumerate().map(|(i, ident)| (ident, &random_numbers[i])).collect();
-            //             let new_stack = VarStack::Frame { vars: &tmp_vars, parent: extra_vars };
-            //             let first_eval = eval(&this, &new_stack, env)
-            //                 .map_err(|e| format!("Couldn't evaluate `{}` with environment {:?}. Traceback: {}", this, tmp_vars, e)) // Add information to the error message
-            //                 ?;
-            //             if !other_only_needs_single_eval {
-            //                 other_eval = eval(&other, &new_stack, env)
-            //                     .map_err(|e| format!("Couldn't evaluate `{}` with environment {:?}. Traceback: {}", this, tmp_vars, e))
-            //                     ?;
-            //             }
-            //             // If the objects' comparison yields `false`, return that. If the objects aren't comparable, return the appropriate error. Otherwise, continue.
-            //             match math::objects::try_operation(&first_eval, &other_eval, op) {
-            //                 Ok(Object::Float(0.0)) => { return Ok(Object::Float(0.0)); }
-            //                 Err(_) => { return Err(format!("Couldn't compare `{}` and `{}` (arising from environment {:?}).", first_eval, other_eval, env.constants)); }
-            //                 _ => {}
-            //             }
-            //         }
-            //         Ok(Object::Float(1.0)) // If nothing previous returned, then the expressions fulfill the comparison.
-            //     }
-            //     // Otherwise...
-            //     _ => math::objects::try_operation(&eval(lhs, extra_vars, env)?, &eval(rhs, extra_vars, env)?, op)
-            // }
         },
         Expression::Function(function_name, given_arg_exprs) => {
             // Note this case can only occur when we actually have a function call, not an assignment.
