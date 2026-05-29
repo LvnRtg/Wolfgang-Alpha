@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::f64::consts;
 use crate::math::Expression;
 use crate::math::expressions;
-use crate::math::{Vector, Object, FunctionRepr};
+use crate::math::{Matrix, Vector, Object, FunctionRepr};
 use crate::math::operations::{UnaryOperation, BinaryOperation};
-use crate::{expr_if_else, expr_and, expr_compare, expr_sub, expr_mul, expr_div, expr_square, expr_neg, expr_1arg_func};
+use crate::{expr_if_else, expr_and, expr_compare, expr_add, expr_sub, expr_mul, expr_div, expr_inv, expr_square, expr_neg, expr_1arg_func};
 
 /// Wrapped in a function because const hashmaps aren't available yet.
 pub fn default_constants() -> HashMap<String, Object> {
@@ -65,6 +65,29 @@ macro_rules! expect_n_args {
     };
 }
 
+/// For examples, see the use of the macro in `default_functions`.
+macro_rules! apply_matrix_fn {
+    ($name:ident, $e:expr) => {
+        (
+            stringify!($name).to_string(),
+            FunctionRepr::Direct(Box::new(|args| {
+                if args.len() != 1 {
+                    Err(format!(
+                        "Wrong number of arguments provided for function '{}' (expected 1, got {}).",
+                        stringify!($name),
+                        args.len()
+                    ))
+                } else {
+                    if let Object::Matrix(mat) = &args[0] {
+                        $e(mat.$name(), mat)
+                    }
+                    else { Err(format!("Wrong type for argument of function '{}' (expected Matrix).", stringify!($name))) }
+                }
+            })),
+        )
+    };
+}
+
 /// Wrapped in a function because const hashmaps aren't available yet.
 pub fn default_functions() -> HashMap<String, FunctionRepr> {
     HashMap::<String, FunctionRepr>::from([
@@ -93,26 +116,15 @@ pub fn default_functions() -> HashMap<String, FunctionRepr> {
             }
             else { Err("Wrong type for argument of function 'eig' (expected Matrix).".to_string()) }
         }),
-        expect_n_args!(det, 1, |args: &[Object]| {
-            if let Object::Matrix(mat) = &args[0] {
-                match mat.det() {
-                    Some(d) => Ok(Object::Float(d)),
-                    None => Err(format!("Matrix must be quadratic (got size {}x{}).", mat.m, mat.n))
-                }
-                
-            }
-            else { Err("Wrong type for argument of function 'det' (expected Matrix).".to_string()) }
+        apply_matrix_fn!(det, |r, mat: &Matrix| match r {
+            Some(res) => Ok(Object::Float(res)),
+            None => Err(format!("Matrix must be quadratic (got size {}x{}).", mat.m, mat.n))
         }),
-        expect_n_args!(adj, 1, |args: &[Object]| {
-            if let Object::Matrix(mat) = &args[0] {
-                match mat.adj() {
-                    Some(m) => Ok(Object::Matrix(m)),
-                    None => Err(format!("Matrix must be quadratic (got size {}x{}).", mat.m, mat.n))
-                }
-                
-            }
-            else { Err("Wrong type for argument of function 'adj' (expected Matrix).".to_string()) }
+        apply_matrix_fn!(adj, |r, mat: &Matrix| match r {
+            Some(res) => Ok(Object::Matrix(res)),
+            None => Err(format!("Matrix must be quadratic (got size {}x{}).", mat.m, mat.n))
         }),
+        apply_matrix_fn!(tr, |r, _| {Ok(Object::Float(r))}),
     ])
 }
 
@@ -126,7 +138,7 @@ pub const FUNCTIONS_WITH_PROVIDED_DERIVATIVE: [&str; 17] = [
 ];
 
 /// Example: (exp, point) => Ok(Expression::Function("exp", point[0].clone())) if point has length 1 otherwise Err
-macro_rules! get_default_derivative_macro {
+macro_rules! apply_to_first_arg {
     ($name:ident, $point:expr, $direction:expr) => {
         if $point.len() != 1 {
             Err(format!(
@@ -151,7 +163,7 @@ macro_rules! get_default_derivative_macro {
 /// N.b.: we return an expression and not e.g. a `FunctionRepr` for the sake of simplicity in the application.
 pub fn get_default_derivative(function_name: &str, point: &[Expression], direction: &[Expression]) -> Result<Expression, String> {
     match function_name {
-        "exp" => get_default_derivative_macro!(exp, point, direction),
+        "exp" => apply_to_first_arg!(exp, point, direction),
         "ln" => {
             if point.len() != 1 {
                 Err(format!(
@@ -212,9 +224,73 @@ pub fn get_default_derivative(function_name: &str, point: &[Expression], directi
                 ))
             }
         }
-        "cos" => Ok(expr_neg!(get_default_derivative_macro!(sin, point, direction)?)),
-        "sin" => get_default_derivative_macro!(cos, point, direction),
-        // TODO: add other functions
+        "cos" => Ok(expr_neg!(apply_to_first_arg!(sin, point, direction)?)),
+        "sin" => apply_to_first_arg!(cos, point, direction),
+        "tan" => Ok(expr_inv!(expr_square!(apply_to_first_arg!(cos, point, direction)?))),
+        "acos" => Ok(expr_div!(
+            Expression::Number(-1.0),
+            expr_1arg_func!(
+                "sqrt",
+                expr_sub!(
+                    Expression::Number(1.0),
+                    expr_square!(point[0].clone())
+                )
+            )
+        )),
+        "asin" => Ok(expr_inv!(
+            expr_1arg_func!(
+                "sqrt",
+                expr_sub!(
+                    Expression::Number(1.0),
+                    expr_square!(point[0].clone())
+                )
+            )
+        )),
+        "atan" => Ok(expr_inv!(
+            expr_add!(
+                Expression::Number(1.0),
+                expr_square!(point[0].clone())
+            )
+        )),
+        "cosh" => apply_to_first_arg!(sinh, point, direction),
+        "sinh" => apply_to_first_arg!(cosh, point, direction),
+        "tanh" => Ok(expr_sub!(
+            Expression::Number(1.0),
+            expr_square!(apply_to_first_arg!(tanh, point, direction)?)
+        )),
+        "acosh" => Ok(expr_inv!(
+            expr_1arg_func!(
+                "sqrt",
+                expr_sub!(
+                    expr_square!(point[0].clone()),
+                    Expression::Number(1.0)
+                )
+            )
+        )),
+        "asinh" => Ok(expr_inv!(
+            expr_1arg_func!(
+                "sqrt",
+                expr_add!(
+                    expr_square!(point[0].clone()),
+                    Expression::Number(1.0)
+                )
+            )
+        )),
+        "atanh" => Ok(expr_inv!(
+            expr_sub!(
+                Expression::Number(1.0),
+                expr_square!(point[0].clone())
+            )
+        )),
+        // Jacobi's formula states `d/dt det A(t) = tr(adj(A(t)) * d/dt A(t))`.
+        // Here, `A(t) = point[0]` and `d/dt A(t) = direction[0]`.
+        "det" => Ok(expr_1arg_func!(
+            "tr",
+            expr_mul!(
+                apply_to_first_arg!(adj, point, direction)?,
+                direction[0].clone()
+            )
+        )),
         _ => Err(format!("No derivative provided for '{function_name}'."))
     }
 }
