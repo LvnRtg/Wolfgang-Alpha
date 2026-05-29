@@ -335,6 +335,16 @@ macro_rules! expr_compare {
     };
 }
 #[macro_export]
+macro_rules! expr_add {
+    ($lhs:expr, $rhs:expr) => {
+        Expression::BinaryOperation(
+            Box::new($lhs),
+            BinaryOperation::Add,
+            Box::new($rhs)
+        )
+    };
+}
+#[macro_export]
 macro_rules! expr_sub {
     ($lhs:expr, $rhs:expr) => {
         Expression::BinaryOperation(
@@ -359,6 +369,16 @@ macro_rules! expr_div {
     ($lhs:expr, $rhs:expr) => {
         Expression::BinaryOperation(
             Box::new($lhs),
+            BinaryOperation::Div,
+            Box::new($rhs)
+        )
+    };
+}
+#[macro_export]
+macro_rules! expr_inv {
+    ($rhs:expr) => {
+        Expression::BinaryOperation(
+            Box::new(Expression::Number(1.0)),
             BinaryOperation::Div,
             Box::new($rhs)
         )
