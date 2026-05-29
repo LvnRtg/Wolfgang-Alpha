@@ -267,39 +267,12 @@ pub fn eval(
                     match eval(rhs, extra_vars, env)? {
                         Object::Success => Ok(Object::Success),
                         Object::Float(x) => Ok(Object::Float(x.abs())),
-                        Object::Vector(x) => {
-                            // If `opt` is `None`, use the euclidian 2-norm. If `opt` is "inf" or "infty", use the supremum norm.
-                            // Otherwise, evaluate `opt` and use the corresponding p-norm.
-                            let norm_type = if let Some(inner) = opt {match &**inner {
-                                Expression::Identifier(ident) if ident == "inf" || ident == "infty"
-                                    => math::matrices_and_vectors::VectorNorm::P(f64::INFINITY),
-                                other => {
-                                    if let Object::Float(z) = eval(other, extra_vars, env)? {
-                                        math::matrices_and_vectors::VectorNorm::P(z)
-                                    }
-                                    else {return Err(format!("Couldn't evaluate {other} to float."))}
-                                }
-                            }} else {math::matrices_and_vectors::VectorNorm::P(2.0)};
-                            Ok(Object::Float(x.norm(&norm_type)))
-                        }
-                        Object::Matrix(x) => {
-                            // If `opt` is `None`, use the spectral norm. If `opt` is "inf" or "infty", use the supremum norm.
-                            // If it is a string starting with f, use the Frobenius norm.
-                            // Otherwise, evaluate `opt` and use the corresponding p-norm.
-                            let norm_type = if let Some(inner) = opt {match &**inner {
-                                Expression::Identifier(ident) if ident == "inf" || ident == "infty"
-                                    => math::matrices_and_vectors::MatrixNorm::P(f64::INFINITY),
-                                Expression::Identifier(ident) if ident.starts_with('f')
-                                    => math::matrices_and_vectors::MatrixNorm::Frobenius,
-                                other => {
-                                    if let Object::Float(z) = eval(other, extra_vars, env)? {
-                                        math::matrices_and_vectors::MatrixNorm::P(z)
-                                    }
-                                    else {return Err(format!("Couldn't evaluate {other} to float."))}
-                                }
-                            }} else {math::matrices_and_vectors::MatrixNorm::P(2.0)};
-                            x.norm(&norm_type).map(Object::Float)
-                        }
+                        Object::Vector(x) => Ok(Object::Float(
+                            x.norm(&math::matrices_and_vectors::VectorNorm::from_expr(opt, extra_vars, env)?)
+                        )),
+                        Object::Matrix(x) => Ok(Object::Float(
+                            x.norm(&math::matrices_and_vectors::MatrixNorm::from_expr(opt, extra_vars, env)?)?
+                        )),
                         Object::LiteralExpression(e) => Ok(Object::LiteralExpression(Expression::UnaryOperation(UnaryOperation::Abs, Box::new(e)))),
                         other => Err(format!("Operation 'Norm' not valid for operand {other}.")),
                     }
