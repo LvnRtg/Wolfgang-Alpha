@@ -457,7 +457,7 @@ pub fn eval(
             }
         }
         Expression::PartialDerivative(wrt, expr) => {
-            math::differentiation::analytic_partial_derivative(expr, wrt, env).map(Object::LiteralExpression)
+            math::differentiation::analytic_partial_derivative(expr, wrt, extra_vars, env).map(Object::LiteralExpression)
         }
         Expression::DirectionalDerivative(vars, expr, point_exprs, direction_exprs) => {
             if point_exprs.len() != direction_exprs.len() {
@@ -469,7 +469,7 @@ pub fn eval(
             let direction = direction_exprs.iter()
                 .map(|p| eval(p, extra_vars, env))
                 .collect::<Result<Vec<_>, _>>()?;
-            math::differentiation::analytic_directional_derivative(vars, expr, &point, &direction, env)
+            math::differentiation::analytic_directional_derivative(vars, expr, &point, &direction, extra_vars, env)
         }
         Expression::IfElse(condition, iftrue, iffalse) => {
             match eval(condition, extra_vars, env) {
