@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::f64::consts;
+
 use crate::math::Expression;
 use crate::math::expressions;
 use crate::math::{Matrix, Vector, Object, FunctionRepr};

@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_logger::tracing;
 use std::vec::Vec;
 use std::cell::RefCell;
 use web_sys::window;
@@ -63,7 +64,6 @@ fn validate_input(input: &str) -> Vec<String> {
         });
     }
 
-
     let tokens = match lang::tokenize(input) {
         Ok(x) => x,
         Err(e) => {return vec![format!("[ERROR] {e}")];}
@@ -76,13 +76,18 @@ fn validate_input(input: &str) -> Vec<String> {
             Ok(expressions) => {
                 // tracing::info!("{}", expressions.iter().map(|x| format!("{}", x)).collect::<Vec<_>>().join("; "));
                 for expr in expressions {
-                    let eval = lang::eval(&expr, &lang::evaluator::VarStack::Empty, &mut env);
-                    match eval {
-                        Ok(obj) => {
-                            output = obj.to_multline();
-                        }
-                        Err(e) => {
-                            output.push(format!("[ERROR] {}", e));
+                    if expr == math::Expression::Identifier("debug".to_string()) {
+                        tracing::info!("{:?}", env.constants);
+                        tracing::info!("{:?}", env.functions);
+                    }
+                    else {
+                        match lang::eval(&expr, &lang::evaluator::VarStack::Empty, &mut env) {
+                            Ok(obj) => {
+                                output = obj.to_multline();
+                            }
+                            Err(e) => {
+                                output.push(format!("[ERROR] {}", e));
+                            }
                         }
                     }
                 }
