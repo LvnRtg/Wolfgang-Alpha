@@ -38,3 +38,11 @@ pub fn permutation_parity(permutation: &[usize]) -> bool {
     }
     is_even
 }
+
+/// Acts like `format!("{:.decimals}", x)` but cuts off trailing zeros.
+pub fn format_trimmed(x: f64, decimals: usize) -> String {
+    let s = format!("{:.prec$}", x, prec = decimals);
+    let s = s.trim_end_matches('0');
+    let s = s.trim_end_matches('.');
+    s.to_string()
+}
