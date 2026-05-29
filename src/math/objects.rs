@@ -42,7 +42,7 @@ impl Object {
     /// The lines will be returned as a vector of strings, not as a single string containing newline chars.
     pub fn to_multline(&self) -> Vec<String> {
         match self {
-            Object::Success => vec!["Assignment successful".to_string()],
+            Object::Success => vec!["Success".to_string()],
             Object::Undefined => vec!["Undefined".to_string()],
             Object::Float(x) => vec![x.to_string()],
             Object::Vector(x) => vec![format!("Vec<{}>: {:?}", x.len(), &x.values)],
