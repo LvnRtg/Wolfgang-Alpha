@@ -11,7 +11,9 @@ use std::fmt;
 use std::cmp::min;
 use std::f64::consts::PI;
 
+use crate::lang;
 use crate::math::utils;
+use crate::math::{Env, Expression, Object};
 
 /// Set this constant such that `BLOCK^2 * 8` fits in your L1 Cache. Find out the capacity of the latter by running `sudo lshw -C memory`.
 /// 
@@ -446,9 +448,48 @@ impl ops::Mul<&Matrix> for &Matrix {
 pub enum VectorNorm {
     P(f64)
 }
+impl VectorNorm {
+    /// If `opt` is `None`, use the euclidian 2-norm. If `opt` is "inf" or "infty", use the supremum norm.
+    /// Otherwise, evaluate `opt` and use the corresponding p-norm.
+    pub fn from_expr(opt: &Option<Box<Expression>>, extra_vars: &lang::evaluator::VarStack, env: &mut Env) -> Result<VectorNorm, String> {
+        if let Some(inner) = opt {match &**inner {
+            Expression::Identifier(ident) if ident == "inf" || ident == "infty"
+                => Ok(VectorNorm::P(f64::INFINITY)),
+            other => {
+                if let Object::Float(z) = lang::eval(other, extra_vars, env)? {
+                    Ok(VectorNorm::P(z))
+                }
+                else {
+                    Err(format!("Couldn't evaluate {other} to float."))
+                }
+            }
+        }} else {Ok(VectorNorm::P(2.0))}
+    }
+}
+
 pub enum MatrixNorm {
     P(f64),
     Frobenius,
+}
+impl MatrixNorm {
+    /// If `opt` is `None`, use the euclidian 2-norm. If `opt` is "inf" or "infty", use the supremum norm.
+    /// Otherwise, evaluate `opt` and use the corresponding p-norm.
+    pub fn from_expr(opt: &Option<Box<Expression>>, extra_vars: &lang::evaluator::VarStack, env: &mut Env) -> Result<MatrixNorm, String> {
+        if let Some(inner) = opt {match &**inner {
+            Expression::Identifier(ident) if ident == "inf" || ident == "infty"
+                => Ok(MatrixNorm::P(f64::INFINITY)),
+            Expression::Identifier(ident) if ident.starts_with('f')
+                => Ok(MatrixNorm::Frobenius),
+            other => {
+                if let Object::Float(z) = lang::eval(other, extra_vars, env)? {
+                    Ok(MatrixNorm::P(z))
+                }
+                else {
+                    Err(format!("Couldn't evaluate {other} to float."))
+                }
+            }
+        }} else {Ok(MatrixNorm::P(2.0))}
+    }
 }
 
 
