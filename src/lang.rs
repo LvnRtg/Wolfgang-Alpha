@@ -14,8 +14,8 @@
 //!   As for equality, two vectors/matrices of the same size satisfy a comparison iff all of their components satisfy it.
 //! - Running `lhs = rhs` where at least one of `lhs`, `rhs` contains unknown identifiers (and is thus considered a function), both sides are evaluated at every point
 //!   in `linspace(0, 1, n)`, `linspace(1, 100, n)` and `(101, ..., 100 + n)` as well as their negative counterparts. If they differ at some point, `0` is immediately
-//!   returned. If they match at all points, `1` is returned. Per default, `n = 100`. One can specify `n` by using `lhs ={e} rhs` where `e` can be any expression
-//!   evaluable to a float (will then be rounded to the nearest integer). 
+//!   returned. If they match at all points, `1` is returned. Per default, `n = lang::evaluator::DEFAULT_TESTEQ_REPETITIONS`. One can specify `n` by using `lhs ={e} rhs`
+//!   where `e` can be any expression evaluable to a float (will then be rounded to the nearest integer). 
 //!   The same works for `<`, `<=`, `>` and `>=`.
 //! - Partially differentiate: `d/dx (x^3 + 2x + 1)` returns `3x^2 + 2` as expression. The parentheses are not needed when differentiating e.g. a monome.<br/>
 //!   The output can be stored in a function: `f(x) := d/dx ...`.<br/>
