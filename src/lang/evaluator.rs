@@ -56,9 +56,10 @@ impl<'a> VarStack<'a> {
 pub fn parse_function_definition(
     expr: &Expression,
     argument_names: &Vec<String>,
-    env: &Env
-) -> Expression {
-    match expr {
+    extra_vars: &VarStack,
+    env: &mut Env
+) -> Result<Expression, String> {
+    Ok(match expr {
         Expression::None => Expression::None,
         Expression::Identifier(x) => {
             if argument_names.contains(x) {
@@ -80,41 +81,51 @@ pub fn parse_function_definition(
             }
         },
         Expression::Number(x) => Expression::Number(*x),
-        Expression::Vector(x) => Expression::Vector(x.iter().map(|x| parse_function_definition(x, argument_names, env)).collect()),
-        Expression::Matrix(m, n, x) => Expression::Matrix(*m, *n, x.iter().map(|x| parse_function_definition(x, argument_names, env)).collect()),
+        Expression::Vector(x) => Expression::Vector(
+            x.iter()
+            .map(|x| parse_function_definition(x, argument_names, extra_vars, env))
+            .collect::<Result<Vec<_>, _>>()
+            ?
+        ),
+        Expression::Matrix(m, n, x) => Expression::Matrix(
+            *m,
+            *n,
+            x.iter()
+            .map(|x| parse_function_definition(x, argument_names, extra_vars, env))
+            .collect::<Result<Vec<_>, _>>()
+            ?
+        ),
         Expression::UnaryOperation(op, rhs) => Expression::UnaryOperation(
             op.clone(),
-            Box::new(parse_function_definition(rhs, argument_names, env))
+            Box::new(parse_function_definition(rhs, argument_names, extra_vars, env)?)
         ),
         Expression::BinaryOperation(lhs, op, rhs) => Expression::BinaryOperation(
-            Box::new(parse_function_definition(lhs, argument_names, env)),
+            Box::new(parse_function_definition(lhs, argument_names, extra_vars, env)?),
             op.clone(),
-            Box::new(parse_function_definition(rhs, argument_names, env))
+            Box::new(parse_function_definition(rhs, argument_names, extra_vars, env)?)
         ),
         Expression::Function(function_name, args) => Expression::Function(
             function_name.clone(),
-            args.iter().map(|x| parse_function_definition(x, argument_names, env)).collect()
+            args.iter().map(|x| parse_function_definition(x, argument_names, extra_vars, env)).collect::<Result<Vec<_>, _>>()?
         ),
         Expression::Assignment(lhs, rhs) => Expression::Assignment(
-            Box::new(parse_function_definition(lhs, argument_names, env)),
-            Box::new(parse_function_definition(rhs, argument_names, env))
+            Box::new(parse_function_definition(lhs, argument_names, extra_vars, env)?),
+            Box::new(parse_function_definition(rhs, argument_names, extra_vars, env)?)
         ),
-        Expression::PartialDerivative(wrt, expr) => Expression::PartialDerivative(
-            wrt.clone(),
-            Box::new(parse_function_definition(expr, argument_names, env))
-        ),
+        Expression::PartialDerivative(wrt, expr)
+            => parse_function_definition(&math::differentiation::analytic_partial_derivative(expr, wrt, extra_vars, env)?, argument_names, extra_vars, env)?,
         Expression::DirectionalDerivative(vars, expr, point, direction) => Expression::DirectionalDerivative(
             vars.clone(),
-            Box::new(parse_function_definition(expr, argument_names, env)),
-            point.iter().map(|x| parse_function_definition(x, argument_names, env)).collect(),
-            direction.iter().map(|x| parse_function_definition(x, argument_names, env)).collect()
+            Box::new(parse_function_definition(expr, argument_names, extra_vars, env)?),
+            point.iter().map(|x| parse_function_definition(x, argument_names, extra_vars, env)).collect::<Result<Vec<_>, _>>()?,
+            direction.iter().map(|x| parse_function_definition(x, argument_names, extra_vars, env)).collect::<Result<Vec<_>, _>>()?
         ),
         Expression::IfElse(x, y, z) => Expression::IfElse(
-            Box::new(parse_function_definition(x, argument_names, env)),
-            Box::new(parse_function_definition(y, argument_names, env)),
-            Box::new(parse_function_definition(z, argument_names, env)),
+            Box::new(parse_function_definition(x, argument_names, extra_vars, env)?),
+            Box::new(parse_function_definition(y, argument_names, extra_vars, env)?),
+            Box::new(parse_function_definition(z, argument_names, extra_vars, env)?),
         )
-    }
+    })
 }
 
 /// Parses the expression `expr` recursively and collects all identifiers that are neither in `constants` nor in `extra_vars` into a HashSet `modified_identifiers`.
@@ -398,6 +409,7 @@ pub fn eval(
                 function_name: &String,
                 unparsed_args: std::slice::Iter<'_, Expression>,
                 rhs: &Expression,
+                extra_vars: &VarStack,
                 env: &mut Env
             ) -> Result<Object, String> {
                 if function_name.starts_with("___") { Err("Names starting with \"___\" are forbidden".to_string()) }
@@ -411,7 +423,7 @@ pub fn eval(
                         )
                         .collect::<Result<Vec<_>, _>>()?;
                     // Next, parse the RHS as explained in the documentation of `parse_function_definition`.
-                    let expr = parse_function_definition(rhs, &argnames, env);
+                    let expr = parse_function_definition(rhs, &argnames, extra_vars, env)?;
                     // The argument names have to be prefixed too
                     argnames = argnames.into_iter().map(|x| format!("___tmp_{}", x)).collect();
                     env.functions.insert(function_name.clone(), FunctionRepr::ByExpression(
@@ -443,14 +455,14 @@ pub fn eval(
                 Expression::BinaryOperation(x, BinaryOperation::Mul, y) => {
                     match (&**x, &**y) {
                         (Expression::Identifier(function_name), Expression::Identifier(_))
-                            => define_function(function_name, std::slice::from_ref(&**y).iter(), rhs, env),
+                            => define_function(function_name, std::slice::from_ref(&**y).iter(), rhs, extra_vars, env),
                         (Expression::Identifier(function_name), Expression::Vector(args))
-                            => define_function(function_name, args.iter(), rhs, env),
+                            => define_function(function_name, args.iter(), rhs, extra_vars, env),
                         _ => Err(format!("Invalid LHS of assignment expression: {}", **lhs))
                     }
                 }
                 Expression::Function(function_name, unparsed_args)
-                    => define_function(function_name, unparsed_args.iter(), rhs, env),
+                    => define_function(function_name, unparsed_args.iter(), rhs, extra_vars, env),
                 _ => {
                     Err(format!("Invalid LHS of assignment expression: {}", **lhs))
                 }
