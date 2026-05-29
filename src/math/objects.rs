@@ -4,6 +4,7 @@ use std::fmt;
 use crate::math::matrices_and_vectors::{Matrix, Vector};
 use crate::math::expressions::Expression;
 use crate::math::operations::*;
+use crate::math::utils;
 use crate::math::utils::approx_eq;
 
 /// Here, objects are things an identifier (e.g. "x") can represent, that is:
@@ -47,16 +48,24 @@ impl Object {
             Object::Vector(x) => vec![format!("Vec<{}>: {:?}", x.len(), &x.values)],
             Object::Matrix(x) => {
                 // First, we go through all element to know how much space each column needs.
-                let column_lengths: Vec<usize> = (0..x.n).map(
-                    |j| (0..x.m).map(
-                        |i| format!("{:.2}", x.get(i, j)).len()
-                    ).max().unwrap_or(0)
-                ).collect();
+                let mut column_lengths = Vec::<usize>::with_capacity(x.n);
+                let mut entries = Vec::<String>::with_capacity(x.n * x.m); // Notice this is the transposed version of the typical flattened vector
+                for j in 0..x.n {
+                    column_lengths.push((0..x.m).map(
+                        |i| {
+                            let s = utils::format_trimmed(x.get(i, j), 8);
+                            let len = s.len();
+                            entries.push(s);
+                            len
+                        }
+                    ).max().unwrap_or(0))
+                }
+                // Cache locality isn't very important here since only so much can be displayed on a reasonable screen anyway
                 let row_length = column_lengths.iter().sum::<usize>() + 2*x.n; // Between two columns, add 2 spaces. Before the first columns and after the last one, only 1 space.
                 let mut lines = vec![format!("╭{}╮", (0..row_length).map(|_| ' ').collect::<String>())];
                 for i in 0..x.m {
                     lines.push(format!("│ {}│", (0..x.n).map(
-                        |j| format!("{:^2$} {}", format!("{:.2}", x.get(i, j)), if j == x.n-1 {""} else {" "}, column_lengths[j])
+                        |j| format!("{:^2$} {}", entries[j*x.m + i], if j == x.n-1 {""} else {" "}, column_lengths[j])
                     ).collect::<String>()));
                 }
                 lines.push(format!("╰{}╯", (0..row_length).map(|_| ' ').collect::<String>()));
