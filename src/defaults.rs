@@ -92,6 +92,14 @@ macro_rules! apply_matrix_fn {
 /// Wrapped in a function because const hashmaps aren't available yet.
 pub fn default_functions() -> HashMap<String, FunctionRepr> {
     HashMap::<String, FunctionRepr>::from([
+        ("1".to_string(), FunctionRepr::ByExpression(
+            vec!["___tmp_x".to_string()],
+            expr_if_else!(
+                Expression::Identifier("___tmp_x".to_string()),
+                Expression::Number(1.0),
+                Expression::Number(0.0)
+            )
+        )),
         float_1_function!(exp),
         float_1_function!(ln),
         expect_n_args!(log, 2, |args: &[Object]| {

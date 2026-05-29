@@ -23,7 +23,7 @@ pub enum Token {
     /// Exponentiation
     Circumflex,
     /// Contains a vector of tokens if this uses the syntax `f(x) ={expr} g(x)` (where the tokens are the tokenized expression `expr`), otherwise `None`.
-    Comparison(Comparison, Option<Vec<Token>>), // TODO: allow to restrict the domain of the free variables
+    Comparison(Comparison, Option<Vec<Token>>),
     /// :=
     Assign,
     LParenthesis,

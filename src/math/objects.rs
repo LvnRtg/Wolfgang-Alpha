@@ -116,11 +116,8 @@ pub type DirectFunction = Box<dyn Fn(&[Object]) -> Result<Object, String>>;
 /// Different representations for a function
 pub enum FunctionRepr {
     /// 1. The list of identifiers of the arguments (in order to parse the literal expression correctly).
-    ///    These will be prefixed with three underscores to avoid confusion with normal constants. Note that
-    ///    the user is not allowed to define a variable whose name starts with three underscores. From our
-    ///    perspective, this prefix is good because it allows us to simply add a few constants temporarily
-    ///    when evaluating a function instead of having to remember which variables to revert or even
-    ///    copying the HashMap `constants` entirely.
+    ///    These will be prefixed with `___tmp_` to avoid confusion with normal constants. Note that
+    ///    the user is not allowed to define a variable whose name starts with three underscores.
     /// 2. E.g. `"5 * ___tmp_x + 2"` where `arguments` is `["___tmp_x"]`. The variable names here will already be prefixed.
     ByExpression(Vec<String>, Expression),
     Direct(DirectFunction)
