@@ -348,7 +348,18 @@ pub fn eval(
                     }
                     Ok(Object::Float(1.0)) // If nothing previous returned, then the expressions fulfill the comparison.
                 }
-                None => math::objects::try_operation(&eval(lhs, extra_vars, env)?, &eval(rhs, extra_vars, env)?, op)
+                // `None` means that this binary operation is just a regular operation.
+                None => {
+                    let lhs_eval = eval(lhs, extra_vars, env)?;
+                    // If the LHS is evaluated to zero and `op` is a multiplication, we can skip evaluating the RHS.
+                    // Furthermore, we actually SHOULD skip it, since this enables us to use indicator functions smartly.
+                    if let Object::Float(x) = &lhs_eval {
+                        if approx_eq(x, &0.0) && *op == BinaryOperation::Mul {
+                            return Ok(Object::Float(0.0));
+                        }
+                    }
+                    math::objects::try_operation(&lhs_eval, &eval(rhs, extra_vars, env)?, op)
+                }
             }
         },
         Expression::Function(function_name, given_arg_exprs) => {
