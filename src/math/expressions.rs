@@ -16,6 +16,8 @@ pub enum Expression {
     BinaryOperation(Box<Expression>, BinaryOperation, Box<Expression>),
     /// Respectively: function's name and list of arguments passed.
     Function(String, Vec<Expression>),
+    /// A collection of comma-separated expressions between parentheses.
+    Tuple(Vec<Expression>),
     /// Format: LHS := RHS
     Assignment(Box<Expression>, Box<Expression>),
     /// Compute the partial derivative of the given expression w.r.t. the given identifier. The direction to differentiate in is set to 1.0.
@@ -35,6 +37,7 @@ impl fmt::Display for Expression {
             Expression::None => write!(f, "None"),
             Expression::Identifier(s) => write!(f, "{}", s),
             Expression::Number(x) => write!(f, "{}", x),
+            Expression::Tuple(x) => write!(f, "({})", x.iter().map(|y| format!("{}", y)).collect::<Vec<String>>().join(", ")),
             Expression::Vector(x) => write!(f, "[{}]", x.iter().map(|y| format!("{}", y)).collect::<Vec<String>>().join(", ")),
             Expression::Matrix(m, n, x) => write!(f, "[{}]", (0..*m).map(|i| (0..*n).map(|j| format!("{}", x[i*n+j])).collect::<Vec<String>>().join(", ")).collect::<Vec<String>>().join("; ")),
             Expression::UnaryOperation(op, r) => {
@@ -66,6 +69,27 @@ impl Expression {
             Expression::None => vec!["None".to_string()],
             Expression::Identifier(s) => vec![format!("{}", s)],
             Expression::Number(x) => vec![format!("{}", x)],
+            Expression::Tuple(components) => {
+                let mut multlines = components.iter().map(|y| y.to_multline()).collect::<Vec<Vec<String>>>();
+                // We display the vector in expanded form (i.e. one component per line) if at least one of the following holds:
+                // A component spans multiple lines; a component has length >= 15 chars.
+                if multlines.iter().any(|v| v.len() > 1 || v.iter().any(|elem| elem.len() >= 15)) {
+                    let mut result = vec!["(".to_string()];
+                    multlines.iter_mut().for_each( // Indent every component of the vector and add a comma at the very end
+                        |v| {
+                            v.last_mut().unwrap().push(',');
+                            v.iter_mut().for_each(|x| x.insert_str(0, "  "));
+                        }
+                    );
+                    result.reserve(multlines.iter().map(|r| r.len()).sum());
+                    result.extend(multlines.into_iter().flatten());
+                    result.push(")".to_string());
+                    result
+                }
+                else {
+                    vec![format!("[{}]", multlines.into_iter().map(|v| v.into_iter().next().unwrap()).collect::<Vec<String>>().join(", "))]
+                }
+            }
             Expression::Vector(components) => {
                 let mut multlines = components.iter().map(|y| y.to_multline()).collect::<Vec<Vec<String>>>();
                 // We display the vector in expanded form (i.e. one component per line) if at least one of the following holds:

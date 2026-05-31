@@ -1,10 +1,13 @@
 //! The basic syntax is the natural one with usual operator precedence. A few special features are the following.
 //! - Matrices can be initialized by typing `[1, 2, 3 \ 4, 5, 6 \ 7, 8, 9]` where the rows will be `[1,2,3]`, `[4,5,6]` and `[7,8,9]` respectively.
 //!   The backslash can be used interchangeably with a semicolon `;`, even within the same matrix.
-//! - Vectors can be initialized by typing either `(1, 2, 3)` (particular to vectors) or `[1; 2; 3]` or `[1 \ 2 \ 3]` (as one would initialize a matrix with only one column).
+//! - Vectors can be initialized by typing either `[1; 2; 3]` or `[1 \ 2 \ 3]` (as one would initialize a matrix with only one column).
+//! - Tuples can be initialized by typing `(1, 2, 3)`. Tuples are polymorphic but only support very few operations. They are primarily intended to support multiple
+//!   simultaneous assignments (see below); generally, the use of vectors is preferred.
 //! - Definition of constants: `identifier := expr`, where `expr` can be any expression that can be evaluated at the time of the definition.<br/>
 //!   This returns the evaluation of `expr`, so one can write e.g. `(x := 2) + 1` to obtain `3` as output and define `x` simultaneously.<br/>
 //!   If `identifier` is already a defined constant, this will re-define it and permanently suppress the old value.
+//! - Tuple assignment is supported: write e.g. `(x, y) := rhs` where `rhs` can be evaluated to a tuple of the same size. Function assignment is not allowed in this way.
 //! - Definition of functions: `f(x, y) := 2x + y`. If e.g. `x` already exists as a constant/function, this will be ignored for the sake of the function's definition.
 //!   The `x` on the RHS of the definition will always be the `x` passed as argument, not the constant.<br/>
 //!   If one wants to include a constant from the current environment, simply type `f(y) := 2x + y` where `x` is a pre-defined constant. Note that the

@@ -27,6 +27,13 @@ pub fn analytic_partial_derivative(
         Expression::None => Ok(Expression::None),
         Expression::Identifier(ident) => Ok(Expression::Number(if ident == wrt { 1.0 } else { 0.0 })),
         Expression::Number(_) => Ok(Expression::Number(0.0)),
+        Expression::Tuple(entries) => {
+            Ok(Expression::Tuple(
+                entries.iter()
+                .map(|x| analytic_partial_derivative(x, wrt, extra_vars, env))
+                .collect::<Result<Vec<_>, _>>()?
+            ))
+        }
         Expression::Vector(entries) => {
             Ok(Expression::Vector(
                 entries.iter()
@@ -245,6 +252,15 @@ pub fn analytic_directional_derivative(
             if let Some(i) = vars.iter().position(|n| n == ident) { direction[i].clone() } else { Object::Float(0.0) }
         ),
         Expression::Number(_) => Ok(Object::Float(0.0)),
+        Expression::Tuple(entries) => {
+            Ok(Object::Tuple(
+                entries
+                .iter()
+                .map(|x| analytic_directional_derivative(vars, x, point, direction, extra_vars, env))
+                .collect::<Result<Vec<_>, _>>()
+                ?
+            ))
+        }
         Expression::Vector(entries) => {
             let mut new_entries = Vec::<f64>::with_capacity(entries.len());
             // We instantiate this vector via a loop to allow us to return a special error message if a component can be evaluated, but not to a float.
@@ -269,7 +285,7 @@ pub fn analytic_directional_derivative(
             Ok(Object::Matrix(Matrix::from(*m, *n, new_entries)))
         }
         Expression::UnaryOperation(UnaryOperation::Neg, rhs) => {
-            Ok(-&analytic_directional_derivative(vars, rhs, point, direction, extra_vars, env)?)
+            -&analytic_directional_derivative(vars, rhs, point, direction, extra_vars, env)?
         }
         Expression::UnaryOperation(UnaryOperation::Not, _) => Err("Cannot differentiate the operation `Not`.".to_string()),
         Expression::UnaryOperation(UnaryOperation::Factorial, _) => {
@@ -283,7 +299,7 @@ pub fn analytic_directional_derivative(
                 Object::Float(x) => if x > 0.0 {
                     Ok(diff_r)
                 } else if x < 0.0 {
-                    Ok(-&diff_r)
+                    -&diff_r
                 } else {
                     Ok(Object::Undefined)
                 },

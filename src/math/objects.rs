@@ -18,6 +18,7 @@ pub enum Object {
     /// May be returned by a derivative if the given expression is not differentiable.
     Undefined,
     Float(f64),
+    Tuple(Vec<Object>),
     /// Vector/matrix operations are implemented for references to vectors/matrices anyway, so only
     /// using references to Vector/Matrix makes sense here.
     Vector(Vector),
@@ -30,10 +31,10 @@ impl fmt::Display for Object {
             Object::Success => write!(f, "Object::Success"),
             Object::Undefined => write!(f, "Undefined"),
             Object::Float(x) => write!(f, "{}", x),
+            Object::Tuple(x) => write!(f, "({})", x.iter().map(|o| format!("{:?}", o)).collect::<Vec<String>>().join(", ")),
             Object::Vector(x) => write!(f, "{:?}", x),
             Object::Matrix(x) => write!(f, "{:?}", x),
             Object::LiteralExpression(x) => write!(f, "{:?}", x),
-            //Object::Boolean(x) => write!(f, "{}", if *x { "True" } else { "False" })
         }
     }
 }
@@ -45,6 +46,26 @@ impl Object {
             Object::Success => vec!["Success".to_string()],
             Object::Undefined => vec!["Undefined".to_string()],
             Object::Float(x) => vec![x.to_string()],
+            Object::Tuple(x) => {
+                let multlined_inner = x.iter().map(|o| o.to_multline()).collect::<Vec<Vec<String>>>();
+                if multlined_inner.iter().all(|v| v.len() == 1) {
+                    // If all inner objects have length one, simply join them into a single line with commas
+                    vec![format!("({})", multlined_inner.into_iter().map(|v| v.into_iter().next().unwrap()).collect::<Vec<String>>().join(", "))]
+                } else {
+                    let mut res = vec!["(".to_string()];
+                    let len = multlined_inner.len();
+                    for (i, v) in multlined_inner.into_iter().enumerate() {
+                        for l in v.into_iter() {
+                            res.push(format!("    {l}"));
+                        }
+                        if i < len - 1 {
+                            res.last_mut().unwrap().push(',');
+                        }
+                    }
+                    res.push(")".to_string());
+                    res
+                }
+            }
             Object::Vector(x) => vec![format!("Vec<{}>: {:?}", x.len(), &x.values)],
             Object::Matrix(x) => {
                 // First, we go through all element to know how much space each column needs.
@@ -74,6 +95,20 @@ impl Object {
             Object::LiteralExpression(x) => x.to_multline()
         }
     }
+
+    pub fn to_expression(&self) -> Expression {
+        match self {
+            Object::Success | Object::Undefined => Expression::None, // This would be a syntax error
+            Object::Float(x) => Expression::Number(*x),
+            Object::Tuple(v) => Expression::Tuple(v.iter().map(|o| o.to_expression()).collect()),
+            Object::Vector(v) => Expression::Vector(v.values.iter().map(|entry| Expression::Number(*entry)).collect()),
+            Object::Matrix(x) => Expression::Matrix(
+                x.m, x.n,
+                x.iter_values().map(|entry| Expression::Number(*entry)).collect()
+            ),
+            Object::LiteralExpression(e) => e.clone()
+        }
+    }
 }
 /// This operation is only derived to simplify typing in `directional_derivative`.
 impl<'a> ops::Mul<&'a Object> for f64 {
@@ -83,6 +118,7 @@ impl<'a> ops::Mul<&'a Object> for f64 {
             Object::Success => Object::Success,
             Object::Undefined => Object::Undefined,
             Object::Float(x) => Object::Float(self * x),
+            Object::Tuple(x) => Object::Tuple(x.iter().map(|o| self * o).collect()),
             Object::Vector(x) => Object::Vector(self * x),
             Object::Matrix(x) => Object::Matrix(self * x),
             Object::LiteralExpression(expr) => Object::LiteralExpression(Expression::BinaryOperation(
@@ -95,18 +131,30 @@ impl<'a> ops::Mul<&'a Object> for f64 {
 }
 
 impl ops::Neg for &Object {
-    type Output = Object;
+    type Output = Result<Object, String>;
     fn neg(self) -> Self::Output {
         match self {
-            Object::Success => Object::Success,
-            Object::Undefined => Object::Undefined,
-            Object::Float(x) => Object::Float(-x),
-            Object::Vector(x) => Object::Vector(-x),
-            Object::Matrix(x) => Object::Matrix(-x),
-            Object::LiteralExpression(expr) => Object::LiteralExpression(Expression::UnaryOperation(
-                UnaryOperation::Neg,
-                Box::new(expr.clone())
-            )),
+            Object::Success => Ok(Object::Success),
+            Object::Undefined => Err("Operation 'Neg' not valid for undefined operand.".to_string()),
+            Object::Float(x) => Ok(Object::Float(-x)),
+            Object::Tuple(x) => Ok(Object::Tuple(x.iter().map(|o| -o).collect::<Result<Vec<_>, _>>()?)),
+            Object::Vector(x) => Ok(Object::Vector(-x)),
+            Object::Matrix(x) => Ok(Object::Matrix(-x)),
+            Object::LiteralExpression(expr) => Ok(Object::LiteralExpression(crate::expr_neg!(expr.clone()))),
+        }
+    }
+}
+impl ops::Not for &Object {
+    type Output = Result<Object, String>;
+    fn not(self) -> Self::Output {
+        match self {
+            Object::Success => Ok(Object::Success),
+            Object::Undefined => Err("Operation 'Not' not valid for undefined operand.".to_string()),
+            Object::Float(x) => Ok(Object::Float(if *x == 0.0 {1.0} else {0.0})),
+            Object::Tuple(v) => Ok(Object::Tuple(v.iter().map(|o| !o).collect::<Result<Vec<_>, _>>()?)),
+            Object::Vector(v) => Ok(Object::Vector(v.transform(|x| if x == 0.0 {1.0} else {0.0}))),
+            Object::Matrix(m) => Ok(Object::Matrix(m.transform(|x| if x == 0.0 {1.0} else {0.0}))),
+            Object::LiteralExpression(e) => Ok(Object::LiteralExpression(Expression::UnaryOperation(UnaryOperation::Not, Box::new(e.clone())))),
         }
     }
 }
@@ -167,7 +215,7 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
     let err_msg = || format!("Operation {} invalid for operands {:?} and {:?}.", op, lhs, rhs); // Simplifies typing in the following match block
     let err = || Err(err_msg());
     match lhs {
-        Object::Success | Object::Undefined => err(), // You can't do any operation with 'Success'
+        Object::Success | Object::Undefined | Object::Tuple(_) => err(), // You can't do any operation with 'Success'
         Object::Float(x) => {
             match rhs {
                 Object::Float(y) => Ok(Object::Float(
@@ -191,7 +239,7 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
                 Object::Matrix(y) => {
                     Ok(Object::Matrix(_op_mv_float(*x, y, op)?))
                 }
-                Object::Success | Object::Undefined | Object::LiteralExpression(_) => err()
+                Object::Tuple(_) | Object::Success | Object::Undefined | Object::LiteralExpression(_) => err()
             }
         }
         Object::Vector(x) => {

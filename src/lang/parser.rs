@@ -21,7 +21,7 @@ fn get_unknown_identifiers(expr: &Expression, identifiers: &mut HashSet<String>,
                 identifiers.insert(x.clone());
             }
         }
-        Expression::Vector(v) | Expression::Matrix(.., v) | Expression::Function(_, v) => {
+        Expression::Tuple(v) | Expression::Vector(v) | Expression::Matrix(.., v) | Expression::Function(_, v) => {
             for x in v {
                 get_unknown_identifiers(x, identifiers, env);
             }
@@ -73,7 +73,7 @@ impl Parser {
             match self.next() {
                 Token::Comma => {},
                 some if &some == closer => {break;},
-                other => panic!("Expected ')', found {:?}", other),
+                other => panic!("Expected '{:?}', found {:?}", closer, other),
             }
         }
         Ok(exprs)
@@ -165,19 +165,11 @@ impl Parser {
             Token::Number(x) => Expression::Number(x),
             Token::LParenthesis => {
                 // Parse expression between parentheses recursively. It could just be a single expression of multiple entries separated by commas.
-                let mut entries = Vec::<Expression>::new();
-                loop {
-                    entries.push(self.parse_expression(0, None, env)?);
-                    match self.next() {
-                        Token::Comma => {},
-                        Token::RParenthesis => {break;},
-                        other => panic!("Expected ')', found {:?}", other),
-                    }
-                }
+                let mut entries = self.parse_comma_expression(&Token::RParenthesis, env)?;
                 match entries.len() {
-                    0 => Expression::None,
+                    0 => Expression::Vector(Vec::new()),
                     1 => entries.pop().unwrap(), // I decided to not box the elements rightaway since the case `entries.len() == 1` is more common.
-                    _ => Expression::Vector(entries.into_iter().collect())
+                    _ => Expression::Tuple(entries)
                 }
             }
             Token::LBracket => {

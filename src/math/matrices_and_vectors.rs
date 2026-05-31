@@ -504,10 +504,14 @@ impl Vector {
     }
 
     /// Replaces every component `x` of the vector by `f(x)`.
-    pub fn transform<F>(&mut self, f: F) where F: Fn(f64) -> f64 {
+    pub fn transform_in_place<F>(&mut self, f: F) where F: Fn(f64) -> f64 {
         for x in self.values.iter_mut() {
             *x = f(*x);
         }
+    }
+    /// Maps every component `x` of `self` to `f(x)`, returning a new vector.
+    pub fn transform<F>(&self, f: F) -> Vector where F: Fn(f64) -> f64 {
+        Vector{values: self.values.iter().map(|x| f(*x)).collect()}
     }
     /// Creates a new vector by applying f to every element of `self` while consuming `self`.
     pub fn into_new<F>(self, f: F) -> Vector where F: Fn(f64) -> f64 {
@@ -607,10 +611,14 @@ impl Matrix {
     }
 
     /// Replaces every component `x` of the matrix by `f(x)`.
-    pub fn transform<F>(&mut self, f: F) where F: Fn(f64) -> f64 {
+    pub fn transform_in_place<F>(&mut self, f: F) where F: Fn(f64) -> f64 {
         for x in self.values.iter_mut() {
             *x = f(*x);
         }
+    }
+    /// Maps every component `x` of `self` to `f(x)`, returning a new vector.
+    pub fn transform<F>(&self, f: F) -> Matrix where F: Fn(f64) -> f64 {
+        Matrix{m: self.m, n: self.n, values: self.values.iter().map(|x| f(*x)).collect()}
     }
     /// Creates a new matrix by applying f to every element of `self` while consuming `self`.
     pub fn into_new<F>(self, f: F) -> Matrix where F: Fn(f64) -> f64 {

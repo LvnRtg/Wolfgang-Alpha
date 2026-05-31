@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
-use dioxus_logger::tracing;
 use statrs::function::gamma;
 use itertools::Itertools;
 
@@ -66,22 +65,19 @@ pub fn parse_function_definition(
             if argument_names.contains(x) {
                 Expression::Identifier(format!("___tmp_{}", x))
             } else if let Some(y) = env.constants.get(x) {
-                match y { // As discussed in this function's documentation, clone will be necessary here
-                    Object::Success | Object::Undefined => Expression::None, // This would be a syntax error
-                    Object::Float(x) => Expression::Number(*x),
-                    Object::Vector(v) => Expression::Vector(v.values.iter().map(|entry| Expression::Number(*entry)).collect()),
-                    Object::Matrix(x) => Expression::Matrix(
-                        x.m, x.n,
-                        x.iter_values().map(|entry| Expression::Number(*entry)).collect()
-                    ),
-                    Object::LiteralExpression(e) => e.clone()
-                }
+                y.to_expression()
             }
             else {
                 Expression::Identifier(x.clone())
             }
         },
         Expression::Number(x) => Expression::Number(*x),
+        Expression::Tuple(x) => Expression::Tuple(
+            x.iter()
+            .map(|x| parse_function_definition(x, argument_names, extra_vars, env))
+            .collect::<Result<Vec<_>, _>>()
+            ?
+        ),
         Expression::Vector(x) => Expression::Vector(
             x.iter()
             .map(|x| parse_function_definition(x, argument_names, extra_vars, env))
@@ -140,7 +136,7 @@ fn list_unknown_identifiers(
     modified_anything: bool
 ) -> bool {
     match expr {
-        Expression::None | Expression::Number(_) | Expression::Vector(_) | Expression::Matrix(..) => modified_anything,
+        Expression::None | Expression::Number(_) => modified_anything,
         Expression::Identifier(x) => {
             if !env.constants.contains_key(x) && extra_vars.lookup(x).is_none() {
                 modified_identifiers.insert(x.clone());
@@ -148,6 +144,8 @@ fn list_unknown_identifiers(
             }
             else { modified_anything }
         }
+        Expression::Tuple(v) | Expression::Vector(v) | Expression::Matrix(.., v)
+            => v.iter().map(|e| list_unknown_identifiers(e, extra_vars, env, modified_identifiers, modified_anything)).collect::<Vec<_>>().iter().any(|x| *x),
         Expression::UnaryOperation(_, expr) => list_unknown_identifiers(expr, extra_vars, env, modified_identifiers, modified_anything),
         Expression::BinaryOperation(lhs, _, rhs) => {
             // This will modify something iff at least either LHS or RHS is modified.
@@ -211,6 +209,11 @@ pub fn eval(
             }
         },
         Expression::Number(x) => Ok(Object::Float(*x)),
+        Expression::Tuple(entries) => {
+            Ok(Object::Tuple(entries.iter().map(|x|
+                eval(x, extra_vars, env).map_err(|e| format!("Couldn't evaluate entry {}. Traceback: {}", x, e))
+            ).collect::<Result<Vec<_>, _>>()?))
+        },
         Expression::Vector(entries) => {
             Ok(Object::Vector(math::Vector{values: entries.iter().map(
                 |x| match eval(x, extra_vars, env) {
@@ -232,24 +235,10 @@ pub fn eval(
         Expression::UnaryOperation(op, rhs) => {
             match op {
                 UnaryOperation::Neg => {
-                    match eval(rhs, extra_vars, env)? {
-                        Object::Success => Ok(Object::Success),
-                        Object::Undefined => Err("Operation 'Neg' not valid for undefined operand.".to_string()),
-                        Object::Float(x) => Ok(Object::Float(-x)),
-                        Object::Vector(x) => Ok(Object::Vector(-&x)),
-                        Object::Matrix(x) => Ok(Object::Matrix(-&x)),
-                        Object::LiteralExpression(e) => Ok(Object::LiteralExpression(Expression::UnaryOperation(UnaryOperation::Neg, Box::new(e)))),
-                    }
+                    -&eval(rhs, extra_vars, env)?
                 }
                 UnaryOperation::Not => {
-                    match eval(rhs, extra_vars, env)? {
-                        Object::Success => Ok(Object::Success),
-                        Object::Undefined => Err("Operation 'Not' not valid for undefined operand.".to_string()),
-                        Object::Float(x) => Ok(Object::Float(if x == 0.0 {1.0} else {0.0})),
-                        Object::Vector(v) => Ok(Object::Vector(v.into_new(|x| if x == 0.0 {1.0} else {0.0}))),
-                        Object::Matrix(m) => Ok(Object::Matrix(m.into_new(|x| if x == 0.0 {1.0} else {0.0}))),
-                        Object::LiteralExpression(e) => Ok(Object::LiteralExpression(Expression::UnaryOperation(UnaryOperation::Not, Box::new(e)))),
-                    }
+                    !&eval(rhs, extra_vars, env)?
                 }
                 UnaryOperation::Factorial => {
                     match eval(rhs, extra_vars, env)? {
@@ -297,10 +286,7 @@ pub fn eval(
             list_unknown_identifiers(lhs, extra_vars, env, &mut lhs_free_variables, false);
             let mut rhs_free_variables = HashSet::<String>::new();
             list_unknown_identifiers(rhs, extra_vars, env, &mut rhs_free_variables, false);
-            tracing::info!("Evaluating {} {} {}", &**lhs, op, &**rhs);
-            tracing::info!("LHS free variables: {:?}", lhs_free_variables);
-            tracing::info!("RHS free variables: {:?}", rhs_free_variables);
-            // I do conceed the following is messy.
+            // I conceed the following is messy.
             // Check if the operation is a comparison and at least one of `lhs`, `rhs` is a function (which we'll call `this`; we'll call the remaining one `other`).
             // Here, being a function means having unknown identifiers within.
             match if let BinaryOperation::Comp(_, param) = op {
@@ -422,73 +408,7 @@ pub fn eval(
             else {Err(format!("No such function: {:?}", function_name))}
         },
         Expression::Assignment(lhs, rhs) => {
-            // Note that names starting with "___" are forbidden (prefix "___tmp_" reserved for temporary variables, prefix "___diff_" for the derivative of a function with direct representation).
-            /// Helper function. We need this because multiple syntax structures lead to a function definition:
-            /// - `Expression::Function(function_name, args)`
-            /// - `Expression::BinaryOperation(Identifier(function_name), BinaryOperation::Mul, Identifier(arg))`
-            /// - `Expression::BinaryOperation(Identifier(function_name), BinaryOperation::Mul, Vector(args))`
-            fn define_function(
-                function_name: &String,
-                unparsed_args: std::slice::Iter<'_, Expression>,
-                rhs: &Expression,
-                extra_vars: &VarStack,
-                env: &mut Env
-            ) -> Result<Object, String> {
-                if function_name.starts_with("___") { Err("Names starting with \"___\" are forbidden".to_string()) }
-                else if function_name == "D" || function_name.starts_with("D_") { Err("The name \"D\" and identifiers starting with \"D_\" are reserved for the total derivative.".to_string()) }
-                else {
-                    // First, check that all declared arguments on the LHS are in fact just identifiers.
-                    let mut argnames = unparsed_args.into_iter()
-                        .map(|lh_arg|
-                            if let Expression::Identifier(x) = lh_arg {Ok(x.clone())}
-                            else {Err("Parameters in LHS of function definition must be identifiers.".to_string())}
-                        )
-                        .collect::<Result<Vec<_>, _>>()?;
-                    // Next, parse the RHS as explained in the documentation of `parse_function_definition`.
-                    let expr = parse_function_definition(rhs, &argnames, extra_vars, env)?;
-                    // The argument names have to be prefixed too
-                    argnames = argnames.into_iter().map(|x| format!("___tmp_{}", x)).collect();
-                    env.functions.insert(function_name.clone(), FunctionRepr::ByExpression(
-                        argnames,
-                        expr
-                    ));
-                    // The .clone() above is no problem since function definitions are rare (in the sense that performance doesn't matter for this).
-                    // Lastly, if there was already a function `__diff_{function_name}` present in `functions` (cf. `analytic_derivative`).
-                    // If so, it is now outdated, so remove it.
-                    env.functions.remove(&format!("___diff_num_{}", function_name));
-                    Ok(Object::Success)
-                }
-            }
-            match &**lhs {
-                Expression::Identifier(ident) => { // Definition of a constant
-                    if ident.starts_with("___") { Err("Names starting with \"___\" are forbidden".to_string()) }
-                    else if ident == "D" || ident.starts_with("D_") { Err("The name \"D\" and identifiers starting with \"D_\" are reserved for the total derivative.".to_string()) }
-                    else {
-                        if let Ok(obj_rhs) = eval(rhs, extra_vars, env) {
-                            // The '.clone()' in below line is due to the fact that we want to save the value on one hand (within 'constants')
-                            // but also return it (e.g. the expression "x := 5" should not only define x as 5 but also return the value 5 so that
-                            // one can write "... * (x := ...)" to save intermediate results).
-                            env.constants.insert(ident.clone(), obj_rhs.clone());
-                            Ok(obj_rhs)
-                        }
-                        else { Err(format!("Couldn't evaluate expression {}", **rhs)) }
-                    }
-                }
-                Expression::BinaryOperation(x, BinaryOperation::Mul, y) => {
-                    match (&**x, &**y) {
-                        (Expression::Identifier(function_name), Expression::Identifier(_))
-                            => define_function(function_name, std::slice::from_ref(&**y).iter(), rhs, extra_vars, env),
-                        (Expression::Identifier(function_name), Expression::Vector(args))
-                            => define_function(function_name, args.iter(), rhs, extra_vars, env),
-                        _ => Err(format!("Invalid LHS of assignment expression: {}", **lhs))
-                    }
-                }
-                Expression::Function(function_name, unparsed_args)
-                    => define_function(function_name, unparsed_args.iter(), rhs, extra_vars, env),
-                _ => {
-                    Err(format!("Invalid LHS of assignment expression: {}", **lhs))
-                }
-            }
+            eval_assignment(lhs, rhs, extra_vars, env)
         }
         Expression::PartialDerivative(wrt, expr) => {
             math::differentiation::analytic_partial_derivative(expr, wrt, extra_vars, env).map(Object::LiteralExpression)
@@ -544,5 +464,106 @@ fn eval_function(
                 .map(|arg_expr| eval(arg_expr, extra_vars, env))
                 .collect::<Result<Vec<_>, _>>()?)
         }
+    }
+}
+
+fn eval_assignment(
+    lhs: &Expression,
+    rhs: &Expression,
+    extra_vars: &VarStack,
+    env: &mut Env
+) -> Result<Object, String> {
+    // Note that names starting with "___" are forbidden (prefix "___tmp_" reserved for temporary variables, prefix "___diff_" for the derivative of a function with direct representation).
+    /// Helper function. We need this because multiple syntax structures lead to a function definition:
+    /// - `Expression::Function(function_name, args)`
+    /// - `Expression::BinaryOperation(Identifier(function_name), BinaryOperation::Mul, Identifier(arg))`
+    /// - `Expression::BinaryOperation(Identifier(function_name), BinaryOperation::Mul, Vector(args))`
+    fn define_function(
+        function_name: &String,
+        unparsed_args: std::slice::Iter<'_, Expression>,
+        rhs: &Expression,
+        extra_vars: &VarStack,
+        env: &mut Env
+    ) -> Result<Object, String> {
+        if function_name.starts_with("___") { Err("Names starting with \"___\" are forbidden".to_string()) }
+        else if function_name == "D" || function_name.starts_with("D_") { Err("The name \"D\" and identifiers starting with \"D_\" are reserved for the total derivative.".to_string()) }
+        else {
+            // First, check that all declared arguments on the LHS are in fact just identifiers.
+            let mut argnames = unparsed_args.into_iter()
+                .map(|lh_arg|
+                    if let Expression::Identifier(x) = lh_arg {Ok(x.clone())}
+                    else {Err("Parameters in LHS of function definition must be identifiers.".to_string())}
+                )
+                .collect::<Result<Vec<_>, _>>()?;
+            // Next, parse the RHS as explained in the documentation of `parse_function_definition`.
+            let expr = parse_function_definition(rhs, &argnames, extra_vars, env)?;
+            // The argument names have to be prefixed too
+            argnames = argnames.into_iter().map(|x| format!("___tmp_{}", x)).collect();
+            env.functions.insert(function_name.clone(), FunctionRepr::ByExpression(
+                argnames,
+                expr
+            ));
+            // The .clone() above is no problem since function definitions are rare (in the sense that performance doesn't matter for this).
+            // Lastly, if there was already a function `__diff_{function_name}` present in `functions` (cf. `analytic_derivative`).
+            // If so, it is now outdated, so remove it.
+            env.functions.remove(&format!("___diff_num_{}", function_name));
+            Ok(Object::Success)
+        }
+    }
+
+    fn define_constant(
+        constant_name: &String,
+        value: Object,
+        env: &mut Env
+    ) -> Result<Object, String> {
+        if constant_name.starts_with("___") {
+            Err("Names starting with \"___\" are forbidden".to_string())
+        } else if constant_name == "D" || constant_name.starts_with("D_") {
+            Err("The name \"D\" and identifiers starting with \"D_\" are reserved for the total derivative.".to_string())
+        } else {
+            // The '.clone()' in below line is due to the fact that we want to save the value on one hand (within 'constants')
+            // but also return it (e.g. the expression "x := 5" should not only define x as 5 but also return the value 5 so that
+            // one can write "... * (x := ...)" to save intermediate results).
+            env.constants.insert(constant_name.clone(), value.clone());
+            Ok(value)
+        }
+    }
+
+    match lhs {
+        Expression::Identifier(ident)
+            => define_constant(ident, eval(rhs, extra_vars, env)?, env),
+        Expression::BinaryOperation(x, BinaryOperation::Mul, y) => {
+            match (&**x, &**y) {
+                (Expression::Identifier(function_name), Expression::Identifier(_))
+                    => define_function(function_name, std::slice::from_ref(&**y).iter(), rhs, extra_vars, env),
+                (Expression::Identifier(function_name), Expression::Vector(args))
+                    => define_function(function_name, args.iter(), rhs, extra_vars, env),
+                _ => Err(format!("Invalid LHS of assignment expression: {}", lhs))
+            }
+        }
+        Expression::Function(function_name, unparsed_args)
+            => define_function(function_name, unparsed_args.iter(), rhs, extra_vars, env),
+        Expression::Tuple(lhs_exprs) => {
+            match eval(rhs, extra_vars, env)? {
+                Object::Tuple(rhs_values) => {
+                    if lhs_exprs.len() != rhs_values.len() {
+                        return Err(format!("Tuples on both sides of assignment operator must be of equal length (got {}, {}).", lhs_exprs.len(), rhs_values.len()))
+                    }
+                    let mut rhs_values_iter = rhs_values.into_iter();
+                    lhs_exprs.iter()
+                    .map(|lhs_expr| {
+                        if let Expression::Identifier(ident) = lhs_expr {
+                            define_constant(ident, rhs_values_iter.next().unwrap(), env)
+                        } else {
+                            Err("All LHS entries must be identifiers.".to_string())
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(Object::Tuple)
+                }
+                other => Err(format!("RHS couldn't be evaluated to a tuple (result: {}).", other))
+            }
+        }
+        _ => Err(format!("Invalid LHS of assignment expression: {}", lhs))
     }
 }
