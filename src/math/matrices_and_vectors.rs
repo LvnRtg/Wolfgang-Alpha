@@ -696,17 +696,14 @@ impl Matrix {
     /// Effectively, the column `i` of the new matrix will be the column `permutation[i]` of `self`.
     pub fn permute_columns(&self, permutation: &[usize]) -> Matrix {
         // To avoid cache thrashing (inevitable in a naive implementation), we first transpose `self`,
-        // apply the permutation as row permutation to it, and finally transpose back.
+        // apply the inversed permutation as row permutation to it, and finally transpose back.
         // Mathematically, this works because A*P = (P^t * A^t)^t.
-        let self_t = self.transpose();
-        let mut values = Vec::<f64>::with_capacity(self_t.values.len());
-        for p in permutation {
-            values.extend(&self_t.values[p * self_t.n .. (p + 1) * self_t.n]);
-        }
-        Matrix { m: self_t.m, n: self_t.n, values }.transpose()
+        self.transpose().permute_rows(&utils::transpose_permutation(permutation)).transpose()
     }
 
     /// Computes the LU decomposition of `self`.
+    /// 
+    /// Note: this does not necessarily exist just because a matrix is invertible.
     /// 
     /// Time complexity: 2/3 * n^3 + O(n^2)
     pub fn lu_decomposition(&self) -> Option<(Matrix, Matrix)> {
@@ -732,6 +729,53 @@ impl Matrix {
             }
         }
         Some((Matrix{m: self.m, n: self.m, values: l}, Matrix{m: self.m, n: self.m, values: u}))
+    }
+
+    /// Computes the PLU decomposition of `self` (i.e. with partial pivoting).
+    /// The returned vector `p` encodes `P` via `P[i][p[i]] = 1`.
+    /// 
+    /// Note: this exists iff the matrix is invertible.
+    /// 
+    /// Time complexity: O(n^3).
+    pub fn plu_decomposition(&self) -> Option<(Vec<usize>, Matrix, Matrix)> {
+        if self.m != self.n { return None; } // Ensure the matrix is square
+
+        let n = self.m;
+        let mut a = self.clone();
+        let mut l = Matrix::zeros(n, n);
+        let mut u = Matrix::zeros(n, n);
+        let mut perm: Vec<usize> = (0..n).collect();
+
+        for i in 0..n {
+            let pivot_row = (i..n).max_by(
+                |&r1, &r2| a.get(r1, i).abs().partial_cmp(&a.get(r2, i).abs()).unwrap()
+            ).unwrap();
+
+            // Swap rows `i` and `pivot_row` in `a`, `l`, and `perm`
+            if pivot_row != i {
+                perm.swap(i, pivot_row);
+                for col in 0..n {
+                    a.values.swap(i * n + col, pivot_row * n + col);
+                }
+                // Swap the already-computed `l` entries (columns `0..i`) for these two rows
+                for col in 0..i {
+                    l.values.swap(i * n + col, pivot_row * n + col);
+                }
+            }
+
+            // Compute `i`-th row of `u` and `i`-th column of `l`
+            for k in i..n {
+                u.set(i, k, a.get(i, k) - (0..i).map(|j| l.get(i, j) * u.get(j, k)).sum::<f64>());
+            }
+            if utils::approx_eq(&u.get(i, i), &0.0) {
+                return None; // Matrix is singular
+            }
+            for k in i..n {
+                l.set(k, i, (a.get(k, i) - (0..i).map(|j| l.get(k, j) * u.get(j, i)).sum::<f64>()) / u.get(i, i));
+            }
+        }
+
+        Some((utils::transpose_permutation(&perm), l, u))
     }
 
     /// Computes the full-pivot LU decomposition of `self`.
@@ -827,8 +871,8 @@ impl Matrix {
 
     /// Returns the inverse of `self` in O(n^3).
     pub fn inv(&self) -> Option<Matrix> {
-        if let Some((l, u)) = self.lu_decomposition() {
-            &u.inv_for_upper_triangular()? * &l.inv_for_lower_triangular()?
+        if let Some((p, l, u)) = self.plu_decomposition() {
+            Some((&u.inv_for_upper_triangular()? * &l.inv_for_lower_triangular()?)?.permute_columns(&utils::transpose_permutation(&p)))
         } else {None}
     }
 
