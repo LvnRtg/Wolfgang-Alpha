@@ -807,6 +807,31 @@ impl Matrix {
         Some((l, u, p, q))
     }
 
+    /// Returns `self^n`.
+    pub fn pow(&self, n: u64) -> Option<Matrix> {
+        if self.m != self.n {return None;}
+        let mut result = Matrix::identity(self.m);
+        let mut base = self.clone();
+        let mut remaining = n;
+        while remaining > 0 {
+            if remaining % 2 == 1 {
+                result = (&result * &base).unwrap(); // `unwrap` is safe since all matrices are quadratic and of the same size
+            }
+            remaining /= 2;
+            if remaining > 0 {
+                base = (&base * &base).unwrap();
+            }
+        }
+        Some(result)
+    }
+
+    /// Returns the inverse of `self` in O(n^3).
+    pub fn inv(&self) -> Option<Matrix> {
+        if let Some((l, u)) = self.lu_decomposition() {
+            &u.inv_for_upper_triangular()? * &l.inv_for_lower_triangular()?
+        } else {None}
+    }
+
     /// Returns the inverse of `self` assuming that `self` is an upper triangular matrix.
     /// 
     /// If `self` is singular or non-square, returns `None`.

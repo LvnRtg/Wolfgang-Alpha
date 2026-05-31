@@ -282,20 +282,13 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
                     if let BinaryOperation::Pow = op {
                         // Matrix exponentiation is only accepted when the exponent is an integer (a.k.a. approximately equal to an integer)
                         let exponent = y.round();
-                        if x.m == x.n && approx_eq(&exponent, y) && *y >= 0.0 {
-                            let mut result = Matrix::identity(x.m);
-                            let mut base = x.clone();
-                            let mut remaining = exponent as u64;
-                            while remaining > 0 {
-                                if remaining % 2 == 1 {
-                                    result = (&result * &base).ok_or_else(err_msg)?;
-                                }
-                                remaining /= 2;
-                                if remaining > 0 {
-                                    base = (&base * &base).ok_or_else(err_msg)?;
-                                }
+                        if x.m == x.n && approx_eq(&exponent, y) {
+                            if exponent >= 0.0 {
+                                Ok(Object::Matrix(x.pow(exponent as u64).ok_or(format!("Matrix must be quadratic to apply `Pow` (got size {}x{})", x.m, x.n))?))
+                            } else {
+                                let inv = x.inv().ok_or(format!("Matrix is not invertible: {:?}", x))?;
+                                Ok(Object::Matrix(inv.pow((-exponent) as u64).unwrap())) // `unwrap` is safe since if `inv` exists, it is necessarily quadratic.
                             }
-                            Ok(Object::Matrix(result))
                         }
                         else {err()}
                     }
