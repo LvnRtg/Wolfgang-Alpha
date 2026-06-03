@@ -12,6 +12,7 @@
 //!   The `x` on the RHS of the definition will always be the `x` passed as argument, not the constant.<br/>
 //!   If one wants to include a constant from the current environment, simply type `f(y) := 2x + y` where `x` is a pre-defined constant. Note that the
 //!   current value of `x` will be captured at the time of the definition; if you change `x` later on, `f` will still use its old value.
+//! - `debug` logs the entire current environment (constants + functions) to the browser's console (access via `F12`).
 //! - Test if two values are equal: `expr = other_expr` where both expressions must be evaluable to an `Object`. Very small errors are tolerated.
 //! - The same works for `<`, `<=`, `>` and `>=`. The strict comparison signs do _not_ tolerate small errors.
 //!   As for equality, two vectors/matrices of the same size satisfy a comparison iff all of their components satisfy it.
@@ -33,6 +34,7 @@
 //!       If `l=m=n`, infer that these should be the keys of the hashmaps (cf. implementation). Otherwise, return `Err`.
 //! - Notice that the token `!` acts as both the `not` operator and the factorial operator. In context, one can always differentiate between the two, with one minor downside:
 //!   the syntax `x * (!y)` cannot be shortened to `x !y` (since these spaces disappear while tokenizing, one would not be able to differentiate this with `(x!) * y`).
+//! - `sum_{i=1}^n ...` acts as one would expect. The same holds for `prod`.
 
 pub mod lexer;
 pub mod parser;
