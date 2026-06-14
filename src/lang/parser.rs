@@ -1,16 +1,11 @@
 //! Responsible for parsing tokenized inputs into expressions, which includes respecting operator precedence.
 //! 
 use std::collections::HashSet;
+use std::iter::Peekable;
+use std::vec::IntoIter;
 
-use crate::math::{BinaryOperation, UnaryOperation, Expression, FunctionRepr, Env};
+use crate::math::{BinaryOperation, Comparison, UnaryOperation, FoldedOperation, Expression, FunctionRepr, Env};
 use crate::lang::lexer::Token;
-
-
-#[derive(Debug)]
-pub struct Parser {
-    pub tokens: Vec<Token>,
-    pub pos: usize,
-}
 
 
 fn get_unknown_identifiers(expr: &Expression, identifiers: &mut HashSet<String>, env: &Env) {
@@ -31,6 +26,11 @@ fn get_unknown_identifiers(expr: &Expression, identifiers: &mut HashSet<String>,
             get_unknown_identifiers(x, identifiers, env);
             get_unknown_identifiers(y, identifiers, env);
         }
+        Expression::FoldedOperation(.., x, y, z) => {
+            get_unknown_identifiers(x, identifiers, env);
+            get_unknown_identifiers(y, identifiers, env);
+            get_unknown_identifiers(z, identifiers, env);
+        }
         Expression::PartialDerivative(wrt, x) => {
             let b = identifiers.contains(wrt);
             get_unknown_identifiers(x, identifiers, env);
@@ -49,34 +49,87 @@ fn get_unknown_identifiers(expr: &Expression, identifiers: &mut HashSet<String>,
     }
 }
 
+
+pub struct Parser {
+    pub tokens: Peekable<IntoIter<Token>>
+}
+
 impl Parser {
     pub fn from(tokens: Vec<Token>) -> Self {
-        Parser { tokens, pos: 0 }
+        Parser { tokens: tokens.into_iter().peekable() }
+    }
+    fn peek(&mut self) -> Result<&Token, String> {
+        self.tokens.peek().ok_or("Expected token, encountered EOF.".to_string())
+    }
+    fn next(&mut self) -> Result<Token, String> {
+        self.tokens.next().ok_or("Expected token, encountered EOF.".to_string())
     }
 
-    fn peek(&self) -> &Token {
-        &self.tokens[self.pos]
-    }
-    fn next(&mut self) -> Token {
-        let t = self.tokens[self.pos].clone();
-        if self.pos < self.tokens.len() { self.pos += 1; }
-        t
+    // This approach is slightly more inefficient, but I keep this code in case a future syntax requires looking further ahead.
+    // pub fn from(tokens: Vec<Token>) -> Self {
+    //     Parser { tokens, pos: 0 }
+    // }
+    // fn peek(&self) -> &Token {
+    //     &self.tokens[self.pos]
+    // }
+    // fn next(&mut self) -> Token {
+    //     let t = self.tokens[self.pos].clone();
+    //     if self.pos < self.tokens.len() { self.pos += 1; }
+    //     t
+    // }
+
+    fn expect_token(&mut self, token: Token, context: Option<&str>) -> Result<(), String> {
+        let next = self.next()?;
+        if next != token {
+            Err(format!("Expected {}{}, got {}.", token, if let Some(c) = context {c} else {""}, next))
+        } else {
+            Ok(())
+        }
     }
 
     /// Uses the following functions to parse expressions separated by commas until the token `closer` follows an expression.
     /// 
-    /// Panics if an unexpected token is encountered.
+    /// Consumes the closer.
     fn parse_comma_expression(&mut self, closer: &Token, env: &mut Env) -> Result<Vec<Expression>, String> {
         let mut exprs = Vec::<Expression>::new();
         loop {
             exprs.push(self.parse_expression(0, None, env)?);
-            match self.next() {
+            match self.next()? {
                 Token::Comma => {},
                 some if &some == closer => {break;},
-                other => panic!("Expected '{:?}', found {:?}", closer, other),
+                other => {return Err(format!("Expected '{:?}', found {:?}.", closer, other));}
             }
         }
         Ok(exprs)
+    }
+
+    /// Expects either `LBrace, ..., RBrace` (then parses `...` and returns the result) or `Identifier(...) | Number(...)`
+    /// (then returns `...` directly). All other syntaxes return `Err`.
+    /// 
+    /// For example, you'd call this after encountering `sum_`.
+    fn expect_brace_expr(&mut self, env: &mut Env) -> Result<Expression, String> {
+        match self.next()? {
+            Token::Identifier(x) => Ok(Expression::Identifier(x)),
+            Token::Number(x) => Ok(Expression::Number(x)),
+            Token::LBrace => {
+                let res = self.parse_expression(0, Some(Token::RBrace), env)?;
+                self.expect_token(Token::RBrace, None)?;
+                Ok(res)
+            }
+            other => Err(format!("Expected '{{', identifier or number; got {:?} instead.", other))
+        }
+    }
+    /// Expects either `LBrace, ..., RBrace` (then parses `...`, splitting expressions between commas, and returns the result) or `Identifier(...) | Number(...)`
+    /// (then returns `vec![...]` directly). All other syntaxes return `Err`.
+    /// 
+    /// For example, you'd call this after encountering `sum_`.
+    fn expect_brace_expr_with_commas(&mut self, env: &mut Env) -> Result<Vec<Expression>, String> {
+        match self.next()? {
+            Token::Identifier(x) => Ok(vec![Expression::Identifier(x)]),
+            Token::Number(x) => Ok(vec![Expression::Number(x)]),
+            Token::LBrace => self.parse_comma_expression(&Token::RBrace, env),
+            other => Err(format!("Expected '{{', identifier or number; got {:?} instead.", other))
+        }
     }
 
     /// Allows to recursively parse vectors of tokens.
@@ -87,7 +140,7 @@ impl Parser {
     fn parse_expression(&mut self, min_precedence: u8, expect_closer: Option<Token>, env: &mut Env) -> Result<Expression, String> {
         // First, determine the LHS of the next operation to execute.
         // This is either an identifier, a number or a further expression between parentheses.
-        let mut lhs = match self.next() {
+        let mut lhs = match self.next()? {
             Token::Minus => Expression::UnaryOperation(UnaryOperation::Neg, Box::new(self.parse_expression(5, None, env)?)),
             Token::ExclamationMark // An exclamation mark before an expected expression signifies a `not` operator
                 => Expression::UnaryOperation(UnaryOperation::Not, Box::new(self.parse_expression(3, None, env)?)),
@@ -96,27 +149,17 @@ impl Parser {
                 // For a list of all accepted syntaxes, see the documentation of the program's syntax.
                 let mut argnames = Vec::<String>::new();
                 if id == "D_" { // Then, parse argnames now. Otherwise, we need knowledge of `function_expr` for this.
-                    match self.next() {
-                        Token::LBrace => {
-                            loop {
-                                match self.next() {
-                                    Token::Identifier(ident) => {argnames.push(ident);}
-                                    _ => panic!("Expected variable name in `D_{{...}}`.")
-                                }
-                                match self.next() {
-                                    Token::Comma => {},
-                                    Token::RBrace => {break;},
-                                    other => panic!("Expected ',' or '}}', found {:?}", other),
-                                }
-                            }
+                    for inner_expr in self.expect_brace_expr_with_commas(env)?.into_iter() {
+                        if let Expression::Identifier(s) = inner_expr {
+                            argnames.push(s);
+                        } else {
+                            return Err(format!("Expected identifier, got {}.", inner_expr));
                         }
-                        Token::Identifier(ident) => {argnames.push(ident);}
-                        other => panic!("Expected '{{' or identifier after `D_`, got {:?}", other)
                     }
                 }
                 let mut function_expr = self.parse_expression(8, None, env)?;
                 // At this point, the next token can either be a parenthesis or a bracket.
-                let point = match (self.peek(), &mut function_expr) {
+                let point = match (self.peek()?, &mut function_expr) {
                     // This case means the point is yet to parse.
                     (Token::LParenthesis, _) => {
                         if id == "D" { // Then, only parse arguments now (since we need to know `function_expr` for this)
@@ -139,22 +182,41 @@ impl Parser {
                         };
                         std::mem::replace(args, argnames.iter().map(|x| Expression::Identifier(x.clone())).collect())
                     }
-                    _ => panic!("Missing point to differentiate at in total derivative expression.")
+                    _ => return Err(format!("Missing point to differentiate at in total derivative expression."))
 
                 };
-                match self.next() {
-                    Token::LBracket => {}
-                    other => {panic!("Expected '[', found {:?}", other);}
-                };
+                self.expect_token(Token::LBracket, None)?;
                 let direction = self.parse_comma_expression(&Token::RBracket, env)?;
                 Expression::DirectionalDerivative(argnames, Box::new(function_expr), point, direction)
+            }
+            Token::Identifier(id) if let Some(op) = FoldedOperation::from_string(&id) => { // Folded operation
+                // Expected tokens:
+                // <op_name>, Ident("_"), LBrace,
+                //     Ident, Eq, Comparison(Eq, None), Vec<Token>,
+                // RBrace, Circumflex, LBrace | None,
+                //     Vec<Token> | (Identifier | Number),
+                // RBrace | None,
+                // Vec<Token>
+                let subscript = self.expect_brace_expr(env)?;
+                let (index_var_name, index_var_init) = match subscript {
+                    Expression::BinaryOperation(lhs, BinaryOperation::Comp(Comparison::Eq, None), rhs) => match *lhs {
+                        Expression::Identifier(s) => (s, *rhs),
+                        other => return Err(format!("Expected an identifier as LHS of `=`, got {:?}.", other))
+                    }
+                    other => return Err(format!("Expected an expression of the form `Identifier(...) = ...`, got {:?}.", other))
+                };
+                self.expect_token(Token::Circumflex, Some(" to specify end of range"))?;
+                let superscript = self.expect_brace_expr(env)?;
+                // 
+                let inner = self.parse_expression(op.priority() + 1, None, env)?;
+                Expression::FoldedOperation(op, index_var_name, Box::new(index_var_init), Box::new(superscript), Box::new(inner))
             }
             Token::Identifier(x) => {
                 // We have to check whether this will be a function call: we judge this to be the case iff the next token is an LParenthesis and
                 // either the identifier `x` is contained in `functions` or we are on the LHS of an assignment operator. There is no efficient
                 // way to know yet whether there will be an assignment operator on the same precedence level as we currently are. Therefore,
                 // this case will be handled afterwards by 'eval'. So, we only have to check the case:
-                match self.peek() {
+                match self.peek()? {
                     Token::LParenthesis if env.functions.contains_key(&x) || x.starts_with("___diff_num_") => {
                         self.next();
                         Expression::Function(x, self.parse_comma_expression(&Token::RParenthesis, env)?)
@@ -180,14 +242,14 @@ impl Parser {
                 loop {
                     current_n += 1;
                     entries.push(self.parse_expression(0, None, env)?);
-                    match self.next() {
+                    match self.next()? {
                         Token::Comma => {},
                         Token::Semicolon | Token::Backslash => {
                             if n == 0 { // If n has not been set yet
                                 n = current_n; // Set n
                             }
                             else if n != current_n {
-                                panic!("Got matrix row of wrong length (expected {n}, got {}.", current_n);
+                                return Err(format!("Got matrix row of wrong length (expected {n}, got {}.", current_n));
                             }
                             current_n = 0;
                             m += 1;
@@ -197,11 +259,11 @@ impl Parser {
                                 n = entries.len(); // Set n
                             }
                             else if n != current_n {
-                                panic!("Got matrix row of wrong length (expected {n}, got {}.", current_n);
+                                return Err(format!("Got matrix row of wrong length (expected {n}, got {}.", current_n));
                             }
                             break;
                         },
-                        other => panic!("Expected ')', found {:?}", other),
+                        other => return Err(format!("Expected ')', found {:?}", other))
                     }
                 }
                 if n == 1 {
@@ -213,67 +275,58 @@ impl Parser {
             }
             Token::Pipe => { // As for parentheses
                 let inner = self.parse_expression(0, None, env)?;
-                match self.next() {
-                    Token::Pipe => Expression::UnaryOperation(UnaryOperation::Abs, Box::new(inner)),
-                    other => panic!("Expected closing '|', found {:?}", other),
-                }
+                self.expect_token(Token::Pipe, Some(" as closer"))?;
+                Expression::UnaryOperation(UnaryOperation::Abs, Box::new(inner))
             }
             Token::DoublePipe => { // In this context: opener of a norm
                 let inner = self.parse_expression(0, Some(Token::DoublePipe), env)?;
-                match self.next() {
-                    Token::DoublePipe => {
-                        match self.peek() {
-                            Token::Identifier(ident) if ident.starts_with('_') => {
-                                let norm_type = if ident == "_" {
-                                    self.next();
-                                    match self.next() {
-                                        Token::Identifier(a) => Expression::Identifier(a),
-                                        Token::Number(a) => Expression::Number(a),
-                                        Token::LBrace => {
-                                            let res = self.parse_expression(0, None, env)?;
-                                            match self.next() {
-                                                Token::RBrace => {},
-                                                other => {return Err(format!("Expected closing '}}', found {:?}", other));}
-                                            }
-                                            res
-                                        }
-                                        other => {return Err(format!("Expected norm type after '||_', found {:?}", other));}
-                                    }
-                                } else {
-                                    let cloned_ident = ident.clone();
-                                    let mut chars = cloned_ident.chars(); chars.next();
-                                    self.next();
-                                    Expression::Identifier(chars.collect::<String>())
-                                };
-                                Expression::UnaryOperation(UnaryOperation::Norm(Some(Box::new(norm_type))), Box::new(inner))
+                self.expect_token(Token::DoublePipe, Some(" as closer"))?;
+                match self.peek()? {
+                    Token::Identifier(ident) if ident.starts_with('_') => {
+                        let norm_type = if ident == "_" {
+                            self.next();
+                            match self.next()? {
+                                Token::Identifier(a) => Expression::Identifier(a),
+                                Token::Number(a) => Expression::Number(a),
+                                Token::LBrace => {
+                                    let res = self.parse_expression(0, None, env)?;
+                                    self.expect_token(Token::RBrace, None)?;
+                                    res
+                                }
+                                other => {return Err(format!("Expected norm type after '||_', found {:?}", other));}
                             }
-                            _ => Expression::UnaryOperation(UnaryOperation::Norm(None), Box::new(inner))
-                        }
+                        } else {
+                            let cloned_ident = ident.clone();
+                            let mut chars = cloned_ident.chars(); chars.next();
+                            self.next();
+                            Expression::Identifier(chars.collect::<String>())
+                        };
+                        Expression::UnaryOperation(UnaryOperation::Norm(Some(Box::new(norm_type))), Box::new(inner))
                     }
-                    other => panic!("Expected closing '||', found {:?}", other),
+                    _ => Expression::UnaryOperation(UnaryOperation::Norm(None), Box::new(inner))
                 }
             }
             Token::If => {
                 let condition = self.parse_expression(0, None, env)?; // Will return wenn LBrace is encountered.
-                assert!(matches!(self.next(), Token::LBrace), "Expected '{{' after condition {condition}.");
+                self.expect_token(Token::LBrace, Some(" after condition"))?;
                 let iftrue = self.parse_expression(0, None, env)?;
-                assert!(matches!((self.next(), self.next(), self.next()), (Token::RBrace, Token::Else, Token::LBrace)), "Expected '}} else {{' after first `if` case.");
+                self.expect_token(Token::RBrace, Some(" before `iftrue` expression"))?;
+                self.expect_token(Token::Else, None)?;
+                self.expect_token(Token::LBrace, Some(" after `else`"))?;
                 let iffalse = self.parse_expression(0, None, env)?;
-                assert!(matches!(self.next(), Token::RBrace), "Expected '}}' after `else` case.");
+                self.expect_token(Token::RBrace, Some(" after `iffalse` expression"))?;
                 Expression::IfElse(Box::new(condition), Box::new(iftrue), Box::new(iffalse))
             }
-            other => panic!("Unexpected token where expression expected: {:?}", other)
+            other => return Err(format!("Unexpected token where expression expected: {:?}", other))
         };
 
         // Then, parse the RHS recursively.
-        if let Some(c) = expect_closer {
-            if *self.peek() == c {
-                // Importantly, do not consume the closer so the caller can check it.
-                return Ok(lhs);
-            }
+        if let Some(c) = expect_closer && *self.peek()? == c {
+            // Importantly, do not consume the closer so the caller can check it.
+            return Ok(lhs);
         }
         loop {
-            let (mut op, prec, consume) = match self.peek() {
+            let (mut op, prec, consume) = match self.peek()? {
                 Token::Plus => (BinaryOperation::Add, 5, true),
                 Token::Minus => (BinaryOperation::Sub, 5, true),
                 Token::Asterisk => (BinaryOperation::Mul, 6, true),
@@ -309,10 +362,10 @@ impl Parser {
                 break;
             }
             if consume { // Implicit operators, e.g. left parentheses interpreted as "*(", do not lead to the consumption of the next token.
-                if let Token::Comparison(c, param) = self.next() { // As mentioned above, fetch the missing comparison parameter (if there is one)
+                if let Token::Comparison(c, param) = self.next()? { // As mentioned above, fetch the missing comparison parameter (if there is one)
                     let parsed_param = if let Some(p) = param {
                         // `unwrap` in the following line is acceptable since the `map` at the beginning ensures that `param` is `Some`
-                        Some(Box::new(Parser{tokens: p, pos: 0}.parse(env)?.into_iter().next().unwrap()))
+                        Some(Box::new(Parser::from(p).parse(env)?.into_iter().next().unwrap()))
                     } else {None};
                     op = BinaryOperation::Comp(c, parsed_param)
                 }
@@ -370,10 +423,10 @@ impl Parser {
         loop {
             let expr = self.parse_expression(0, None, env)?;
             exprs.push(expr);
-            match self.peek() {
+            match self.peek()? {
                 Token::EOF => {return Ok(exprs);},
                 Token::Semicolon => {self.next(); continue;}
-                other => panic!("Unexpected trailing token: {:?}", other),
+                other => return Err(format!("Unexpected trailing token: {:?}", other))
             }
         }
     }

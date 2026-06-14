@@ -21,7 +21,7 @@ pub mod utils;
 pub use crate::math::expressions::Expression;
 pub use crate::math::matrices_and_vectors::{Matrix, Vector};
 pub use crate::math::objects::{Object, DirectFunction, FunctionRepr};
-pub use crate::math::operations::{Comparison, BinaryOperation, UnaryOperation};
+pub use crate::math::operations::{Comparison, BinaryOperation, UnaryOperation, FoldedOperation};
 
 pub struct Env {
     pub constants: HashMap<String, Object>,

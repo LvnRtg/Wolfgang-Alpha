@@ -2,6 +2,8 @@
 
 use std::iter::Peekable;
 use std::str::Chars;
+use std::fmt;
+
 use crate::math::Comparison;
 
 /// The tokens appearing in the grammar used by the calculator.
@@ -53,6 +55,45 @@ pub enum Token {
     /// !
     ExclamationMark,
     #[allow(clippy::upper_case_acronyms)] EOF
+}
+
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", match self {
+            Token::Identifier(x) => x.clone(),
+            Token::Number(x) => x.to_string(),
+            Token::Plus => "+".to_string(),
+            Token::Minus => "-".to_string(),
+            Token::Asterisk => "*".to_string(),
+            Token::Slash => "/".to_string(),
+            Token::DoubleSlash => "//".to_string(),
+            Token::Percent => "%".to_string(),
+            Token::Circumflex => "^".to_string(),
+            Token::Comparison(comp, opt) => if let Some(v) = opt {
+                format!("{}[{:?}]", comp, v.iter().map(|x| x.to_string()).collect::<Vec<String>>().join(" "))
+            } else {
+                comp.to_string()
+            },
+            Token::Assign => ":=".to_string(),
+            Token::LParenthesis => "(".to_string(),
+            Token::RParenthesis => ")".to_string(),
+            Token::LBracket => "[".to_string(),
+            Token::RBracket => "]".to_string(),
+            Token::LBrace => "{".to_string(),
+            Token::RBrace => "}".to_string(),
+            Token::Comma => ",".to_string(),
+            Token::Semicolon => ";".to_string(),
+            Token::Backslash => "\\".to_string(),
+            Token::Pipe => "|".to_string(),
+            Token::If => "if".to_string(),
+            Token::Else => "else".to_string(),
+            Token::Ampersand => "&".to_string(),
+            Token::DoubleAmpersand => "&&".to_string(),
+            Token::DoublePipe => "||".to_string(),
+            Token::ExclamationMark => "!".to_string(),
+            Token::EOF => "EOF".to_string(),
+        })
+    }
 }
 
 /// Tokenizes a given input string recursively using the internal function 'tokenize_recursive'.

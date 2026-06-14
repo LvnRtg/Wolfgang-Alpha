@@ -7,6 +7,7 @@ use itertools::Itertools;
 
 use crate::math;
 use crate::math::utils::{approx_eq, linspace_as_objects};
+use crate::math::objects::try_operation;
 use crate::math::{BinaryOperation, Env, UnaryOperation, Object, Expression, FunctionRepr}; // Common types that will be used several times
 
 
@@ -101,6 +102,13 @@ pub fn parse_function_definition(
             op.clone(),
             Box::new(parse_function_definition(rhs, argument_names, extra_vars, env)?)
         ),
+        Expression::FoldedOperation(op, varname, from, to, inner) => Expression::FoldedOperation(
+            op.clone(),
+            varname.clone(),
+            Box::new(parse_function_definition(from, argument_names, extra_vars, env)?),
+            Box::new(parse_function_definition(to, argument_names, extra_vars, env)?),
+            Box::new(parse_function_definition(inner, argument_names, extra_vars, env)?)
+        ),
         Expression::Function(function_name, args) => Expression::Function(
             function_name.clone(),
             args.iter().map(|x| parse_function_definition(x, argument_names, extra_vars, env)).collect::<Result<Vec<_>, _>>()?
@@ -151,6 +159,21 @@ fn list_unknown_identifiers(
             // This will modify something iff at least either LHS or RHS is modified.
             list_unknown_identifiers(lhs, extra_vars, env, modified_identifiers, modified_anything)
             || list_unknown_identifiers(rhs, extra_vars, env, modified_identifiers, modified_anything)
+        }
+        Expression::FoldedOperation(_, varname, from, to, inner) => {
+            // Important: `varname` is no longer unknown within `inner`; however, it is still unknown within `from` and `to`.
+            list_unknown_identifiers(from, extra_vars, env, modified_identifiers, modified_anything) // Here, use old `extra_vars`
+            || list_unknown_identifiers(to, extra_vars, env, modified_identifiers, modified_anything) // Here too
+            || list_unknown_identifiers( // But here, declare `varname` as known (temporarily for this function call)
+                inner,
+                &VarStack::Frame {
+                    vars: &HashMap::from([(varname, &Object::Success)]),
+                    parent: extra_vars
+                },
+                env,
+                modified_identifiers,
+                modified_anything
+            )
         }
         Expression::Function(_, args) => {
             args.iter().map(|arg| list_unknown_identifiers(arg, extra_vars, env, modified_identifiers, modified_anything)).collect::<Vec<_>>().iter().any(|x| *x)
@@ -281,20 +304,18 @@ pub fn eval(
             }
         },
         Expression::BinaryOperation(lhs, op, rhs) => {
-            // First, collect all unknown variables if there are any
-            let mut lhs_free_variables = HashSet::<String>::new();
-            list_unknown_identifiers(lhs, extra_vars, env, &mut lhs_free_variables, false);
-            let mut rhs_free_variables = HashSet::<String>::new();
-            list_unknown_identifiers(rhs, extra_vars, env, &mut rhs_free_variables, false);
-            // I conceed the following is messy.
             // Check if the operation is a comparison and at least one of `lhs`, `rhs` is a function (which we'll call `this`; we'll call the remaining one `other`).
             // Here, being a function means having unknown identifiers within.
-            match if let BinaryOperation::Comp(_, param) = op {
-                if !lhs_free_variables.is_empty() {Some((*lhs.clone(), *rhs.clone(), param))}
-                else if !rhs_free_variables.is_empty() {Some((*rhs.clone(), *lhs.clone(), param))}
-                else {None}
-            } else {None} {
-                Some((this, other, param)) => {
+            if let BinaryOperation::Comp(_, param) = op {
+                let mut lhs_free_variables = HashSet::<String>::new();
+                list_unknown_identifiers(lhs, extra_vars, env, &mut lhs_free_variables, false);
+                let mut rhs_free_variables = HashSet::<String>::new();
+                list_unknown_identifiers(rhs, extra_vars, env, &mut rhs_free_variables, false);
+                if let Some((this, other, param)) = if !lhs_free_variables.is_empty() {
+                    Some((*lhs.clone(), *rhs.clone(), param))
+                } else if !rhs_free_variables.is_empty() {
+                    Some((*rhs.clone(), *lhs.clone(), param))
+                } else {None} {
                     let other_only_needs_single_eval = rhs_free_variables.is_empty();
                     lhs_free_variables.extend(rhs_free_variables);
                     let mut other_eval = Object::Success; // Placeholder
@@ -340,28 +361,44 @@ pub fn eval(
                                 ?;
                         }
                         // If the objects' comparison yields `false`, return that. If the objects aren't comparable, return the appropriate error. Otherwise, continue.
-                        match math::objects::try_operation(&first_eval, &other_eval, op) {
+                        match try_operation(&first_eval, &other_eval, op) {
                             Ok(Object::Float(0.0)) => { return Ok(Object::Float(0.0)); }
                             Err(_) => { return Err(format!("Couldn't compare `{}` and `{}` (arising from environment {:?}).", first_eval, other_eval, env.constants)); }
                             _ => {}
                         }
                     }
-                    Ok(Object::Float(1.0)) // If nothing previous returned, then the expressions fulfill the comparison.
-                }
-                // `None` means that this binary operation is just a regular operation.
-                None => {
-                    let lhs_eval = eval(lhs, extra_vars, env)?;
-                    // If the LHS is evaluated to zero and `op` is a multiplication, we can skip evaluating the RHS.
-                    // Furthermore, we actually SHOULD skip it, since this enables us to use indicator functions smartly.
-                    if let Object::Float(x) = &lhs_eval {
-                        if approx_eq(x, &0.0) && *op == BinaryOperation::Mul {
-                            return Ok(Object::Float(0.0));
-                        }
-                    }
-                    math::objects::try_operation(&lhs_eval, &eval(rhs, extra_vars, env)?, op)
+                    return Ok(Object::Float(1.0)); // If nothing previous returned, then the expressions fulfill the comparison.
                 }
             }
+            
+            // Otherwise, simply evaluate the binary operation.
+            let lhs_eval = eval(lhs, extra_vars, env)?;
+            // If the LHS is evaluated to zero and `op` is a multiplication, we can skip evaluating the RHS.
+            // Furthermore, we actually SHOULD skip it, since this enables us to use indicator functions smartly.
+            if let Object::Float(x) = &lhs_eval {
+                if approx_eq(x, &0.0) && *op == BinaryOperation::Mul {
+                    return Ok(Object::Float(0.0));
+                }
+            }
+            try_operation(&lhs_eval, &eval(rhs, extra_vars, env)?, op)
         },
+        Expression::FoldedOperation(op, varname, from, to, inner) => {
+            let mut i = eval(from, extra_vars, env)?.expect_int()?;
+            // If i is more than `to` rightaway, return the default value for a folded operator over an empty range.
+            if i > eval(to, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars }, env)?.expect_float()? {
+                // TODO check type using extra function `checktype(expr)` and return 0 of the appropriate space.
+                return Ok(op.if_empty());
+            }
+            let mut res = eval(inner, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars }, env)?;
+            i += 1.0;
+            let binop = op.underlying_binop();
+            while i <= eval(to, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars }, env)?.expect_float()? {
+                let next_term = eval(inner, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars }, env)?;
+                res = try_operation(&res, &next_term, &binop)?;
+                i += 1.0;
+            }
+            Ok(res)
+        }
         Expression::Function(function_name, given_arg_exprs) => {
             // Note this case can only occur when we actually have a function call, not an assignment.
             // We can be sure about this because the assignment operator is given the lowest priority level by the tokenizer
@@ -455,7 +492,7 @@ fn eval_function(
     env: &mut Env
 ) -> Result<Object, String> {
     match func {
-        FunctionRepr::ByExpression(ref argnames, ref defining_expr) => {
+        FunctionRepr::ByExpression(argnames, defining_expr) => {
             if given_arg_exprs.len() != argnames.len() {
                 return Err(format!("Wrong number of arguments provided for function '{}' (expected {}, got {}).", function_name, argnames.len(), given_arg_exprs.len()));
             }
@@ -470,7 +507,7 @@ fn eval_function(
             let new_stack = VarStack::Frame { vars: &tmp_vars, parent: extra_vars };
             eval(defining_expr, &new_stack, env)
         }
-        FunctionRepr::Direct(ref f) => {
+        FunctionRepr::Direct(f) => {
             (*f)(&given_arg_exprs.iter()
                 .map(|arg_expr| eval(arg_expr, extra_vars, env))
                 .collect::<Result<Vec<_>, _>>()?)

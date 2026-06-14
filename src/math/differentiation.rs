@@ -1,9 +1,12 @@
+use std::iter::zip;
+use std::collections::HashMap;
+
 use crate::math::matrices_and_vectors::VectorNorm;
 use crate::math::objects::{try_operation};
 use crate::math::expressions::*;
 use crate::math::utils::approx_eq;
 use crate::math::{Env, Object, DirectFunction, FunctionRepr, Vector, Matrix};
-use crate::math::operations::{BinaryOperation, UnaryOperation};
+use crate::math::operations::{BinaryOperation, FoldedOperation, UnaryOperation};
 use crate::{defaults, expr_compare, expr_if_else, expr_neg, lang};
 use lang::evaluator::VarStack;
 
@@ -139,6 +142,17 @@ pub fn analytic_partial_derivative(
                 )),
                 BinaryOperation::Comp(..) => Err(format!("Cannot differentiate comparison {:?}", expr)),
             }
+        }
+        Expression::FoldedOperation(FoldedOperation::Sum, varname, from, to, inner) => Ok(Expression::FoldedOperation(
+            FoldedOperation::Sum,
+            varname.clone(),
+            from.clone(),
+            to.clone(),
+            Box::new(analytic_partial_derivative(inner, wrt, extra_vars, env)?)
+        )),
+        Expression::FoldedOperation(FoldedOperation::Product, varname, from, to, inner) => {
+            // TODO
+            unimplemented!()
         }
         Expression::Function(function_name, g_exprs) => {
             // Standard trick. To be able to create mutable references of `functions` within the `match` block, we don't call
@@ -367,6 +381,39 @@ pub fn analytic_directional_derivative(
                 }
                 BinaryOperation::Comp(..) => Err(format!("Cannot differentiate comparison {:?}", expr)),
             }
+        }
+        Expression::FoldedOperation(FoldedOperation::Sum, varname, from, to, inner) => {
+            // Note: since the bounds of the sum must be integers, taking them into consideration when differentiating is useless.
+            // Therefore, we simply treat `D sum_{i=a}^b ...(p)[d]` as `sum_{i=a(p)}^{b(p)} D ... (p)[d]`.
+            // The following code is adapted from lang::evaluator::eval (case Expression::FoldedOperation).
+            // Copying and adapting it is more efficient than to try to call `eval` instead.
+            let varstack = VarStack::Frame { vars: &zip(vars, point).collect(), parent: extra_vars };
+            let mut i = lang::eval(from, &varstack, env)?.expect_int()?;
+            if i > lang::eval(to, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: &varstack }, env)?.expect_float()? {
+                // TODO when the corresponding TODO in eval is done
+                return Ok(Object::Float(0.0));
+            }
+            let mut res = analytic_directional_derivative( // Compute D inner (point)[direction] knowing the current value of `i`
+                vars, inner, point, direction,
+                // Note: we use `extra_vars` instead of `&varstack` as parent stack since here, we do NOT want `vars` to have concrete values.
+                &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars },
+                env
+            )?;
+            i += 1.0;
+            while i <= lang::eval(to, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: &varstack }, env)?.expect_float()? {
+                let next_term = analytic_directional_derivative( // As above
+                    vars, inner, point, direction,
+                    &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars },
+                    env
+                )?;
+                res = try_operation(&res, &next_term, &BinaryOperation::Add)?;
+                i += 1.0;
+            }
+            Ok(res)
+        }
+        Expression::FoldedOperation(FoldedOperation::Product, varname, from, to, inner) => {
+            // TODO
+            unimplemented!()
         }
         Expression::Function(function_name, arg_expressions) => {
             // For simplicity, I'll subsequently write `f` instead of `function_name`.

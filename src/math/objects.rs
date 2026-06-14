@@ -109,6 +109,23 @@ impl Object {
             Object::LiteralExpression(e) => e.clone()
         }
     }
+
+    pub fn expect_float(self) -> Result<f64, String> {
+        match self {
+            Object::Float(x) => Ok(x),
+            other => Err(format!("Expected float, got {other}."))
+        }
+    }
+
+    pub fn expect_int(self) -> Result<f64, String> {
+        let f = self.expect_float()?;
+        let i = f.round();
+        if approx_eq(&f, &i) {
+            Ok(i)
+        } else {
+            Err(format!("Expected number close to integer; got {f}."))
+        }
+    }
 }
 /// This operation is only derived to simplify typing in `directional_derivative`.
 impl<'a> ops::Mul<&'a Object> for f64 {
