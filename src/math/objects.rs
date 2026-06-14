@@ -120,7 +120,7 @@ impl Object {
     pub fn expect_int(self) -> Result<f64, String> {
         let f = self.expect_float()?;
         let i = f.round();
-        if approx_eq(&f, &i) {
+        if approx_eq(f, i) {
             Ok(i)
         } else {
             Err(format!("Expected number close to integer; got {f}."))
@@ -214,11 +214,11 @@ where T: std::ops::Mul<U, Output=V> + std::ops::Div<U, Output=V> + std::ops::Rem
 /// Returns 1 if the comparison succeeds, 0 otherwise
 fn compare(x: &f64, y: &f64, comp: &Comparison) -> bool {
     match comp {
-        Comparison::Eq => approx_eq(x, y),
+        Comparison::Eq => approx_eq(*x, *y),
         Comparison::Gt => x > y,
         Comparison::Lt => x < y,
-        Comparison::Ge => x >= y || approx_eq(x, y),
-        Comparison::Le => x < y || approx_eq(x, y)
+        Comparison::Ge => x >= y || approx_eq(*x, *y),
+        Comparison::Le => x < y || approx_eq(*x, *y)
     }
 }
 
@@ -299,7 +299,7 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
                     if let BinaryOperation::Pow = op {
                         // Matrix exponentiation is only accepted when the exponent is an integer (a.k.a. approximately equal to an integer)
                         let exponent = y.round();
-                        if x.m == x.n && approx_eq(&exponent, y) {
+                        if x.m == x.n && approx_eq(exponent, *y) {
                             if exponent >= 0.0 {
                                 Ok(Object::Matrix(x.pow(exponent as u64).ok_or(format!("Matrix must be quadratic to apply `Pow` (got size {}x{})", x.m, x.n))?))
                             } else {

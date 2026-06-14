@@ -720,7 +720,7 @@ impl Matrix {
                 u.push(newval); // Can't condense into single line because of ownership of u
             }
             for k in i..self.m {
-                if utils::approx_eq(&u[i*self.m + i], &0.0) {
+                if utils::approx_eq(u[i*self.m + i], 0.0) {
                     return None; // No LU decomposition
                 }
                 l[k*self.m + i] = (if i > 0 {
@@ -767,7 +767,7 @@ impl Matrix {
             for k in i..n {
                 u.set(i, k, a.get(i, k) - (0..i).map(|j| l.get(i, j) * u.get(j, k)).sum::<f64>());
             }
-            if utils::approx_eq(&u.get(i, i), &0.0) {
+            if utils::approx_eq(u.get(i, i), 0.0) {
                 return None; // Matrix is singular
             }
             for k in i..n {
@@ -919,7 +919,7 @@ impl Matrix {
         // Currently, U doesn't necessarily have diagonal entries (1, ..., 1). We still have to extract D.
         let d = Matrix::diag(&(0..n).map(|i| u.get(i, i)).collect::<Vec<f64>>());
         for i in 0..n {
-            if !utils::approx_eq(&d.get(i, i), &0.0) {
+            if !utils::approx_eq(d.get(i, i), 0.0) {
                 for j in i..n {
                     u.values[i*n+j] /= d.get(i, i);
                 }

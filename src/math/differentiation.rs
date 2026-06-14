@@ -370,7 +370,7 @@ pub fn analytic_directional_derivative(
                             // The following argument `rhs` should be f(x)g'(x)ln(f(x)). However, if g'(x) = 0, then
                             // f(x) may be negative, so we then want to avoid calling f(x).ln().
                             &match (try_operation(&eval_lhs, &diff_r, &BinaryOperation::Mul)?, eval_lhs) {
-                                (Object::Float(x), _) if approx_eq(&x, &0.0) => Ok(Object::Float(0.0)),
+                                (Object::Float(x), _) if approx_eq(x, 0.0) => Ok(Object::Float(0.0)),
                                 (l, Object::Float(x)) => try_operation(&l, &Object::Float(x.ln()), &BinaryOperation::Mul),
                                 _ => {return Err(format!("Evaluation of {:?} is not of type `float`.", lhs));},
                             }?,

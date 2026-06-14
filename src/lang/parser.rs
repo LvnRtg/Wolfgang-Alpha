@@ -81,7 +81,7 @@ impl Parser {
     fn expect_token(&mut self, token: Token, context: Option<&str>) -> Result<(), String> {
         let next = self.next()?;
         if next != token {
-            Err(format!("Expected {}{}, got {}.", token, if let Some(c) = context {c} else {""}, next))
+            Err(format!("Expected {}{}, got {}.", token, context.unwrap_or_default(), next))
         } else {
             Ok(())
         }
@@ -168,7 +168,7 @@ impl Parser {
                             argnames = identifiers.into_iter().collect::<Vec<String>>();
                             argnames.sort_unstable();
                         }
-                        self.next();
+                        self.next()?;
                         self.parse_comma_expression(&Token::RParenthesis, env)?
                     }
                     // The following case is only valid if `function_expr` is a `Expression::Function(f, x)`, in which case `x` is the actual point
@@ -182,7 +182,7 @@ impl Parser {
                         };
                         std::mem::replace(args, argnames.iter().map(|x| Expression::Identifier(x.clone())).collect())
                     }
-                    _ => return Err(format!("Missing point to differentiate at in total derivative expression."))
+                    _ => return Err("Missing point to differentiate at in total derivative expression.".to_string())
 
                 };
                 self.expect_token(Token::LBracket, None)?;
@@ -218,7 +218,7 @@ impl Parser {
                 // this case will be handled afterwards by 'eval'. So, we only have to check the case:
                 match self.peek()? {
                     Token::LParenthesis if env.functions.contains_key(&x) || x.starts_with("___diff_num_") => {
-                        self.next();
+                        self.next()?;
                         Expression::Function(x, self.parse_comma_expression(&Token::RParenthesis, env)?)
                     }
                     _ => Expression::Identifier(x)
@@ -284,7 +284,7 @@ impl Parser {
                 match self.peek()? {
                     Token::Identifier(ident) if ident.starts_with('_') => {
                         let norm_type = if ident == "_" {
-                            self.next();
+                            self.next()?;
                             match self.next()? {
                                 Token::Identifier(a) => Expression::Identifier(a),
                                 Token::Number(a) => Expression::Number(a),
@@ -298,7 +298,7 @@ impl Parser {
                         } else {
                             let cloned_ident = ident.clone();
                             let mut chars = cloned_ident.chars(); chars.next();
-                            self.next();
+                            self.next()?;
                             Expression::Identifier(chars.collect::<String>())
                         };
                         Expression::UnaryOperation(UnaryOperation::Norm(Some(Box::new(norm_type))), Box::new(inner))
@@ -425,7 +425,7 @@ impl Parser {
             exprs.push(expr);
             match self.peek()? {
                 Token::EOF => {return Ok(exprs);},
-                Token::Semicolon => {self.next(); continue;}
+                Token::Semicolon => {self.next()?; continue;}
                 other => return Err(format!("Unexpected trailing token: {:?}", other))
             }
         }

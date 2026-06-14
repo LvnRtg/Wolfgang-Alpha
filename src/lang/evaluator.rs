@@ -268,7 +268,7 @@ pub fn eval(
                         Object::Success => Ok(Object::Success),
                         Object::Float(x) => Ok(Object::Float({
                             let r = x.round();
-                            if approx_eq(&x, &r) && r >= 0.0 { // Avoid calling the gamma function if unnecessary
+                            if approx_eq(x, r) && r >= 0.0 { // Avoid calling the gamma function if unnecessary
                                 let n = r as u64;
                                 (1..=n).try_fold(1, u64::checked_mul).ok_or(format!("Overflow occured while computing {n}!"))? as f64
                             } else {
@@ -375,10 +375,8 @@ pub fn eval(
             let lhs_eval = eval(lhs, extra_vars, env)?;
             // If the LHS is evaluated to zero and `op` is a multiplication, we can skip evaluating the RHS.
             // Furthermore, we actually SHOULD skip it, since this enables us to use indicator functions smartly.
-            if let Object::Float(x) = &lhs_eval {
-                if approx_eq(x, &0.0) && *op == BinaryOperation::Mul {
-                    return Ok(Object::Float(0.0));
-                }
+            if let Object::Float(x) = &lhs_eval && approx_eq(*x, 0.0) && *op == BinaryOperation::Mul {
+                return Ok(Object::Float(0.0));
             }
             try_operation(&lhs_eval, &eval(rhs, extra_vars, env)?, op)
         },
