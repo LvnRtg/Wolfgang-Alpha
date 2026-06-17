@@ -502,6 +502,9 @@ impl Vector {
     pub fn len(&self) -> usize {
         self.values.len()
     }
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
 
     /// Replaces every component `x` of the vector by `f(x)`.
     pub fn transform_in_place<F>(&mut self, f: F) where F: Fn(f64) -> f64 {
