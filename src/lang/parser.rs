@@ -59,10 +59,10 @@ impl Parser {
         Parser { tokens: tokens.into_iter().peekable() }
     }
     fn peek(&mut self) -> Result<&Token, String> {
-        self.tokens.peek().ok_or("Expected token, encountered EOF.".to_string())
+        self.tokens.peek().ok_or("Expected token but none was found.".to_string())
     }
     fn next(&mut self) -> Result<Token, String> {
-        self.tokens.next().ok_or("Expected token, encountered EOF.".to_string())
+        self.tokens.next().ok_or("Expected token but none was found.".to_string())
     }
 
     // This approach is slightly more inefficient, but I keep this code in case a future syntax requires looking further ahead.
@@ -344,6 +344,7 @@ impl Parser {
                 Token::DoubleAmpersand => (BinaryOperation::And, 2, true),
 
                 Token::ExclamationMark => { // An exclamation mark after an expression signifies a factorial operation
+                    self.next()?; // Consume exclamation mark
                     lhs = Expression::UnaryOperation(UnaryOperation::Factorial, Box::new(lhs));
                     continue;
                 }
@@ -354,7 +355,7 @@ impl Parser {
                 Token::Number(_) | Token::Comma | Token::Semicolon | Token::Backslash | Token::LBrace | Token::Ampersand
                 | Token::If | Token::Else | Token::EOF
                 | Token::RParenthesis | Token::RBracket | Token::RBrace | Token::Pipe
-                    => { break; }
+                => { break; }
             };
 
             // If we encountered an operator of lower precedence, the current expression ends here.
@@ -423,9 +424,9 @@ impl Parser {
         loop {
             let expr = self.parse_expression(0, None, env)?;
             exprs.push(expr);
-            match self.peek()? {
+            match self.next()? {
                 Token::EOF => {return Ok(exprs);},
-                Token::Semicolon => {self.next()?; continue;}
+                Token::Semicolon => {continue;}
                 other => return Err(format!("Unexpected trailing token: {:?}", other))
             }
         }

@@ -269,8 +269,12 @@ pub fn eval(
                         Object::Float(x) => Ok(Object::Float({
                             let r = x.round();
                             if approx_eq(x, r) && r >= 0.0 { // Avoid calling the gamma function if unnecessary
-                                let n = r as u64;
-                                (1..=n).try_fold(1, u64::checked_mul).ok_or(format!("Overflow occured while computing {n}!"))? as f64
+                                if r <= 1.0 {
+                                    1.0
+                                } else {
+                                    let n = r as u64;
+                                    (1..=n).try_fold(1, u64::checked_mul).ok_or(format!("Overflow occured while computing {n}!"))? as f64
+                                }
                             } else {
                                 gamma::gamma(x)
                             }
