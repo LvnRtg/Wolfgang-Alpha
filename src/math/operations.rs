@@ -15,11 +15,12 @@ pub fn format_optional_subscript(opt: &Option<Box<Expression>>) -> String {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-pub enum Comparison { Eq, Gt, Ge, Lt, Le }
+pub enum Comparison { Eq, Neq, Gt, Ge, Lt, Le }
 impl Comparison {
     pub fn as_str(&self) -> &str {
         match self {
             Comparison::Eq => "=",
+            Comparison::Neq => "!=",
             Comparison::Gt => ">",
             Comparison::Ge => ">=",
             Comparison::Lt => "<",

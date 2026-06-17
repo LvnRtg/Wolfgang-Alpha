@@ -191,7 +191,15 @@ fn tokenize_recursive(chars: &mut Peekable<Chars>, return_early: Vec<char>) -> R
             '}' => { chars.next(); tokens.push(Token::RBrace); }
             ',' => { chars.next(); tokens.push(Token::Comma); }
             ';' => { chars.next(); tokens.push(Token::Semicolon); }
-            '!' => { chars.next(); tokens.push(Token::ExclamationMark); }
+            '!' => {
+                chars.next();
+                if let Some('=') = chars.peek() {
+                    chars.next();
+                    tokens.push(Token::Comparison(Comparison::Neq, parse_comparison_parameter(chars)?));
+                } else {
+                    tokens.push(Token::ExclamationMark);
+                }
+            }
             '\\' => { chars.next(); tokens.push(Token::Backslash); }
             '&' => {
                 chars.next();

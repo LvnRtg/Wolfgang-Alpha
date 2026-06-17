@@ -215,6 +215,7 @@ where T: std::ops::Mul<U, Output=V> + std::ops::Div<U, Output=V> + std::ops::Rem
 fn compare(x: &f64, y: &f64, comp: &Comparison) -> bool {
     match comp {
         Comparison::Eq => approx_eq(*x, *y),
+        Comparison::Neq => !approx_eq(*x, *y),
         Comparison::Gt => x > y,
         Comparison::Lt => x < y,
         Comparison::Ge => x >= y || approx_eq(*x, *y),
