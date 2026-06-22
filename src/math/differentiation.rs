@@ -167,8 +167,15 @@ pub fn analytic_partial_derivative(
             Box::new(analytic_partial_derivative(inner, wrt, extra_vars, env)?)
         )),
         Expression::FoldedOperation(FoldedOperation::Product, varname, from, conditions, to, inner) => {
-            // TODO
-            unimplemented!()
+            if let (Expression::Number(f_a), Expression::Number(f_b)) = (&**from, &**to) && conditions.is_empty() {
+                let (a, b) = (f_a.round() as usize, f_b.round() as usize);
+                Ok(Expression::Function("___helper_prod_rule".to_string(), vec![
+                    Expression::Vector((a..b).map(|i| analytic_partial_derivative(&inner.replace_identifiers(varname, &Expression::Number(i as f64)), wrt, extra_vars, env)).collect::<Result<Vec<_>, _>>()?),
+                    Expression::Vector((a..b).map(|i| inner.replace_identifiers(varname, &Expression::Number(i as f64))).collect())
+                ]))
+            } else {
+                Err("Differentiation of product over non-constant range not implemented yet.".to_string())
+            }
         }
         Expression::Function(function_name, g_exprs) => {
             // Standard trick. To be able to create mutable references of `functions` within the `match` block, we don't call
@@ -213,7 +220,7 @@ fn analytic_partial_derivative_for_function(
             // not as a value.
             if g_exprs.len() == 1 {
                 let mut diff_f = analytic_partial_derivative(f_expr, &f_argnames[0], extra_vars, env)?;
-                diff_f.replace_identifiers(&f_argnames[0], &g_exprs[0]); // Plug in g(x) into f'
+                diff_f.replace_identifiers_in_place(&f_argnames[0], &g_exprs[0]); // Plug in g(x) into f'
                 // If g only outputs one value, we can simply apply the 1d chain rule, (f \circ g)'(x) = g'(x) * f'(g(x)).
                 Ok(simplify_mul(
                     analytic_partial_derivative(&g_exprs[0], wrt, extra_vars, env)?,

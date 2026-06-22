@@ -100,6 +100,15 @@ pub fn default_functions() -> HashMap<String, FunctionRepr> {
                 Expression::Number(0.0)
             )
         )),
+        expect_n_args!(sign, 1, |args: &[Object]| {
+            match &args[0] {
+                Object::Float(x) => Ok(Object::Float(if *x >= 0.0 {1.0} else {-1.0})),
+                Object::Vector(v) => Ok(Object::Vector(v.transform(|x| if x >= 0.0 {1.0} else {-1.0}))),
+                Object::Matrix(m) => Ok(Object::Matrix(m.transform(|x| if x >= 0.0 {1.0} else {-1.0}))),
+                other => Err(format!("Undefined operation `sign` for operand {:?}.", other))
+            }
+        }),
+
         float_1_function!(exp),
         float_1_function!(ln),
         expect_n_args!(log, 2, |args: &[Object]| {
@@ -111,25 +120,18 @@ pub fn default_functions() -> HashMap<String, FunctionRepr> {
             }
             else { Err("Wrong type for second argument (base) of function 'log' (expected float).".to_string()) }
         }),
-        expect_n_args!(sign, 1, |args: &[Object]| {
-            match &args[0] {
-                Object::Float(x) => Ok(Object::Float(if *x >= 0.0 {1.0} else {-1.0})),
-                Object::Vector(v) => Ok(Object::Vector(v.transform(|x| if x >= 0.0 {1.0} else {-1.0}))),
-                Object::Matrix(m) => Ok(Object::Matrix(m.transform(|x| if x >= 0.0 {1.0} else {-1.0}))),
-                other => Err(format!("Undefined operation `sign` for operand {:?}.", other))
-            }
-        }),
         float_1_function!(sqrt),
+
         float_1_function!(cos), float_1_function!(cosh), float_1_function!(acos), float_1_function!(acosh),
         float_1_function!(sin), float_1_function!(sinh), float_1_function!(asin), float_1_function!(asinh),
         float_1_function!(tan), float_1_function!(tanh), float_1_function!(atan), float_1_function!(atanh),
+
         expect_n_args!(eig, 1, |args: &[Object]| {
             if let Object::Matrix(mat) = &args[0] {
                 match mat.qr_decomposition() {
                     Some((eig, ..)) => Ok(Object::Vector(Vector{values: eig})),
                     None => Err(format!("Matrix must be quadratic (got size {}x{}).", mat.m, mat.n))
                 }
-                
             }
             else { Err("Wrong type for argument of function 'eig' (expected Matrix).".to_string()) }
         }),
@@ -142,6 +144,24 @@ pub fn default_functions() -> HashMap<String, FunctionRepr> {
             None => Err(format!("Matrix must be quadratic (got size {}x{}).", mat.m, mat.n))
         }),
         apply_matrix_fn!(tr, |r, _| {Ok(Object::Float(r))}),
+
+        // Takes two vectors (x_1, ..., x_n) and (y_1, ..., y_n) and returns \sum_{i=1}^n x_i \prod_{j \neq i} y_j.
+        ("___helper_prod_rule".to_string(), FunctionRepr::Direct(
+            Box::new(|args|
+                if args.len() == 2
+                && let (Object::Vector(x), Object::Vector(y)) = (&args[0], &args[1])
+                && x.len() == y.len() {
+                    let n = x.len();
+                    Ok(Object::Float((0..n).map(|i|
+                        x[i]
+                        * if i > 0 {(0..i).map(|j| y[j]).product()} else {1.0}
+                        * if i < n-1 {(i..n).map(|j| y[j]).product()} else {1.0}
+                    ).sum()))
+                } else {
+                    Err("Arguments to `___helper_prod_rule` must be two vectors of equal length.".to_string())
+                }
+            )
+        ))
     ])
 }
 

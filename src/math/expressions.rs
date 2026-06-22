@@ -337,25 +337,62 @@ pub fn simplify_pow(lhs: Expression, rhs: Expression) -> Expression {
 
 impl Expression {
     /// Parses itself recursively and replaces every encountered `ident` by `by`. Ignores the LHS of assignment operators.
-    pub fn replace_identifiers(&mut self, ident: &String, by: &Expression) {
+    pub fn replace_identifiers_in_place(&mut self, ident: &String, by: &Expression) {
         match self {
             Expression::Identifier(x) if x == ident => {
                 *self = by.clone();
             }
-            Expression::Vector(v) | Expression::Matrix(.., v) | Expression::Function(_, v)
-                => {v.iter_mut().for_each(|x| x.replace_identifiers(ident, by));}
+            Expression::Tuple(v) | Expression::Vector(v) | Expression::Matrix(.., v) | Expression::Function(_, v)
+                => {v.iter_mut().for_each(|x| x.replace_identifiers_in_place(ident, by));}
             Expression::UnaryOperation(_, x) | Expression::PartialDerivative(_, x) | Expression::Assignment(_, x) // Ignore LHS of assigment operator
-                => x.replace_identifiers(ident, by),
+                => x.replace_identifiers_in_place(ident, by),
             Expression::BinaryOperation(x, _, y)
-                => {x.replace_identifiers(ident, by); y.replace_identifiers(ident, by);}
+                => {x.replace_identifiers_in_place(ident, by); y.replace_identifiers_in_place(ident, by);}
             Expression::DirectionalDerivative(_, x, point, direction) => {
-                x.replace_identifiers(ident, by);
-                point.iter_mut().for_each(|y| y.replace_identifiers(ident, by));
-                direction.iter_mut().for_each(|y| y.replace_identifiers(ident, by));
+                x.replace_identifiers_in_place(ident, by);
+                point.iter_mut().for_each(|y| y.replace_identifiers_in_place(ident, by));
+                direction.iter_mut().for_each(|y| y.replace_identifiers_in_place(ident, by));
             }
             Expression::IfElse(x, y, z)
-                => {x.replace_identifiers(ident, by); y.replace_identifiers(ident, by); z.replace_identifiers(ident, by);}
+                => {x.replace_identifiers_in_place(ident, by); y.replace_identifiers_in_place(ident, by); z.replace_identifiers_in_place(ident, by);}
             _ => {}
+        }
+    }
+
+    /// Clones `self` while replacing every encountered `ident` by `by`. Ignores the LHS of assignment operators.
+    pub fn replace_identifiers(&self, ident: &String, by: &Expression) -> Expression {
+        match self {
+            Expression::None => Expression::None,
+            Expression::Identifier(x) => if x == ident {by.clone()} else {Expression::Identifier(x.clone())},
+            Expression::Number(x) => Expression::Number(*x),
+            Expression::Tuple(v) => Expression::Tuple(v.iter().map(|x| x.replace_identifiers(ident, by)).collect()),
+            Expression::Vector(v) => Expression::Vector(v.iter().map(|x| x.replace_identifiers(ident, by)).collect()),
+            Expression::Matrix(m, n, v) => Expression::Matrix(*m, *n, v.iter().map(|x| x.replace_identifiers(ident, by)).collect()),
+            Expression::Function(name, v) => Expression::Function(name.clone(), v.iter().map(|x| x.replace_identifiers(ident, by)).collect()),
+            Expression::UnaryOperation(op, x) => Expression::UnaryOperation(op.clone(), Box::new(x.replace_identifiers(ident, by))),
+            Expression::PartialDerivative(wrt, x) => Expression::PartialDerivative(wrt.clone(), Box::new(x.replace_identifiers(ident, by))),
+            Expression::Assignment(lhs, rhs) => Expression::Assignment(lhs.clone(), Box::new(rhs.replace_identifiers(ident, by))),
+            Expression::BinaryOperation(lhs, op, rhs)
+                => Expression::BinaryOperation(Box::new(lhs.replace_identifiers(ident, by)), op.clone(), Box::new(rhs.replace_identifiers(ident, by))),
+            Expression::DirectionalDerivative(vars, expr, point, direction) => Expression::DirectionalDerivative(
+                vars.clone(),
+                Box::new(expr.replace_identifiers(ident, by)),
+                point.iter().map(|x| x.replace_identifiers(ident, by)).collect(),
+                direction.iter().map(|x| x.replace_identifiers(ident, by)).collect()
+            ),
+            Expression::IfElse(x, y, z) => Expression::IfElse(
+                Box::new(x.replace_identifiers(ident, by)),
+                Box::new(y.replace_identifiers(ident, by)),
+                Box::new(z.replace_identifiers(ident, by))
+            ),
+            Expression::FoldedOperation(op, varname, from, conditions, to, inner) => Expression::FoldedOperation(
+                op.clone(),
+                varname.clone(),
+                Box::new(from.replace_identifiers(ident, by)),
+                conditions.iter().map(|x| x.replace_identifiers(ident, by)).collect(),
+                Box::new(to.replace_identifiers(ident, by)),
+                Box::new(inner.replace_identifiers(ident, by))
+            )
         }
     }
 }
