@@ -47,6 +47,17 @@ The basic syntax is the natural one with usual operator precedence. A few specia
   If one wants to include a constant from the current environment, simply type `f(y) := 2x + y` where `x` is a pre-defined constant. Note that the
   current value of `x` will be captured at the time of the definition; if you change `x` later on, `f` will still use its old value.
 
+### Built-in constants and functions
+- The built-in constants currently are `pi` and `e`.
+- The built-in functions are:
+  - `1` (indicator function)
+  - `exp`, `ln` and `log(x, base)`
+  - `sign` (with the convention `sign(0) = 1`)
+  - `sqrt`
+  - `cos`, `sin`, `tan` as well as hyperbolic versions (e.g. `cosh`) and all inverses (e.g. `acos`, `acosh`)
+  - Matrix functions `eig`, `adj`, `det`, `tr`
+- There are some helper functions prefixed with `___helper_` to increase efficiency. These don't have built-in derivatives.
+
 ### Comparisons
 - Test if two values are equal: `expr = other_expr` where both expressions must be evaluable to an `Object`. Very small errors are tolerated.
 - The same works for `<`, `<=`, `>` and `>=`. The strict comparison signs do _not_ tolerate small errors.
