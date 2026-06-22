@@ -26,8 +26,10 @@ fn get_unknown_identifiers(expr: &Expression, identifiers: &mut HashSet<String>,
             get_unknown_identifiers(x, identifiers, env);
             get_unknown_identifiers(y, identifiers, env);
         }
-        Expression::FoldedOperation(.., x, y, z) => {
-            get_unknown_identifiers(x, identifiers, env);
+        Expression::FoldedOperation(.., v, y, z) => {
+            for x in v {
+                get_unknown_identifiers(x, identifiers, env);
+            }
             get_unknown_identifiers(y, identifiers, env);
             get_unknown_identifiers(z, identifiers, env);
         }
@@ -197,10 +199,10 @@ impl Parser {
                 //     Vec<Token> | (Identifier | Number),
                 // RBrace | None,
                 // Vec<Token>
-                let subscript = self.expect_brace_expr(env)?;
-                let (index_var_name, index_var_init) = match subscript {
+                let mut subscript = self.expect_brace_expr_with_commas(env)?; // Should be ["i = ...", *conditions]
+                let (index_var_name, index_var_init, conditions) = match subscript.remove(0) {
                     Expression::BinaryOperation(lhs, BinaryOperation::Comp(Comparison::Eq, None), rhs) => match *lhs {
-                        Expression::Identifier(s) => (s, *rhs),
+                        Expression::Identifier(s) => (s, *rhs, subscript), // Notice "i = ..." was removed from `subscript` already
                         other => return Err(format!("Expected an identifier as LHS of `=`, got {:?}.", other))
                     }
                     other => return Err(format!("Expected an expression of the form `Identifier(...) = ...`, got {:?}.", other))
@@ -209,7 +211,7 @@ impl Parser {
                 let superscript = self.expect_brace_expr(env)?;
                 // 
                 let inner = self.parse_expression(op.priority() + 1, None, env)?;
-                Expression::FoldedOperation(op, index_var_name, Box::new(index_var_init), Box::new(superscript), Box::new(inner))
+                Expression::FoldedOperation(op, index_var_name, Box::new(index_var_init), conditions, Box::new(superscript), Box::new(inner))
             }
             Token::Identifier(x) => {
                 // We have to check whether this will be a function call: we judge this to be the case iff the next token is an LParenthesis and

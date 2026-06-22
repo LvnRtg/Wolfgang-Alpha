@@ -102,10 +102,11 @@ pub fn parse_function_definition(
             op.clone(),
             Box::new(parse_function_definition(rhs, argument_names, extra_vars, env)?)
         ),
-        Expression::FoldedOperation(op, varname, from, to, inner) => Expression::FoldedOperation(
+        Expression::FoldedOperation(op, varname, from, conditions, to, inner) => Expression::FoldedOperation(
             op.clone(),
             varname.clone(),
             Box::new(parse_function_definition(from, argument_names, extra_vars, env)?),
+            conditions.iter().map(|x| parse_function_definition(x, argument_names, extra_vars, env)).collect::<Result<Vec<_>, _>>()?,
             Box::new(parse_function_definition(to, argument_names, extra_vars, env)?),
             Box::new(parse_function_definition(inner, argument_names, extra_vars, env)?)
         ),
@@ -160,9 +161,10 @@ fn list_unknown_identifiers(
             list_unknown_identifiers(lhs, extra_vars, env, modified_identifiers, modified_anything)
             || list_unknown_identifiers(rhs, extra_vars, env, modified_identifiers, modified_anything)
         }
-        Expression::FoldedOperation(_, varname, from, to, inner) => {
+        Expression::FoldedOperation(_, varname, from, conditions, to, inner) => {
             // Important: `varname` is no longer unknown within `inner`; however, it is still unknown within `from` and `to`.
             list_unknown_identifiers(from, extra_vars, env, modified_identifiers, modified_anything) // Here, use old `extra_vars`
+            || conditions.iter().map(|v| list_unknown_identifiers(v, extra_vars, env, modified_identifiers, modified_anything)).collect::<Vec<_>>().iter().any(|x| *x)
             || list_unknown_identifiers(to, extra_vars, env, modified_identifiers, modified_anything) // Here too
             || list_unknown_identifiers( // But here, declare `varname` as known (temporarily for this function call)
                 inner,
@@ -384,17 +386,28 @@ pub fn eval(
             }
             try_operation(&lhs_eval, &eval(rhs, extra_vars, env)?, op)
         },
-        Expression::FoldedOperation(op, varname, from, to, inner) => {
+        Expression::FoldedOperation(op, varname, from, conditions, to, inner) => {
             let mut i = eval(from, extra_vars, env)?.expect_int()?;
             // If i is more than `to` rightaway, return the default value for a folded operator over an empty range.
             if i > eval(to, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars }, env)?.expect_float()? {
                 // TODO check type using extra function `checktype(expr)` and return 0 of the appropriate space.
                 return Ok(op.if_empty());
             }
-            let mut res = eval(inner, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars }, env)?;
-            i += 1.0;
+            let mut res = op.if_empty(); // TODO also change type here
             let binop = op.underlying_binop();
-            while i <= eval(to, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars }, env)?.expect_float()? {
+            'outer: while i <= eval(to, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars }, env)?.expect_float()? {
+                // Check if all conditions are met. If not, skip this `i`.
+                for cond in conditions {
+                    match eval(cond, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars }, env)? {
+                        Object::Float(1.0) => {} // Condition met; ignore
+                        Object::Float(0.0) => { // Condition not met; skip `i`
+                            i += 1.0;
+                            continue 'outer;
+                        }
+                        other => return Err(format!("Expected 1 or 0 when evaluating condition, got {:?}.", other))
+                    }
+                }
+                // At this point, all conditions are met.
                 let next_term = eval(inner, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars }, env)?;
                 res = try_operation(&res, &next_term, &binop)?;
                 i += 1.0;

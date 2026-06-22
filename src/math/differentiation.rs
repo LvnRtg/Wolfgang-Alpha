@@ -143,14 +143,15 @@ pub fn analytic_partial_derivative(
                 BinaryOperation::Comp(..) => Err(format!("Cannot differentiate comparison {:?}", expr)),
             }
         }
-        Expression::FoldedOperation(FoldedOperation::Sum, varname, from, to, inner) => Ok(Expression::FoldedOperation(
+        Expression::FoldedOperation(FoldedOperation::Sum, varname, from, conditions, to, inner) => Ok(Expression::FoldedOperation(
             FoldedOperation::Sum,
             varname.clone(),
             from.clone(),
+            conditions.clone(),
             to.clone(),
             Box::new(analytic_partial_derivative(inner, wrt, extra_vars, env)?)
         )),
-        Expression::FoldedOperation(FoldedOperation::Product, varname, from, to, inner) => {
+        Expression::FoldedOperation(FoldedOperation::Product, varname, from, conditions, to, inner) => {
             // TODO
             unimplemented!()
         }
@@ -382,7 +383,7 @@ pub fn analytic_directional_derivative(
                 BinaryOperation::Comp(..) => Err(format!("Cannot differentiate comparison {:?}", expr)),
             }
         }
-        Expression::FoldedOperation(FoldedOperation::Sum, varname, from, to, inner) => {
+        Expression::FoldedOperation(FoldedOperation::Sum, varname, from, conditions, to, inner) => {
             // Note: since the bounds of the sum must be integers, taking them into consideration when differentiating is useless.
             // Therefore, we simply treat `D sum_{i=a}^b ...(p)[d]` as `sum_{i=a(p)}^{b(p)} D ... (p)[d]`.
             // The following code is adapted from lang::evaluator::eval (case Expression::FoldedOperation).
@@ -393,15 +394,16 @@ pub fn analytic_directional_derivative(
                 // TODO when the corresponding TODO in eval is done
                 return Ok(Object::Float(0.0));
             }
-            let mut res = analytic_directional_derivative( // Compute D inner (point)[direction] knowing the current value of `i`
-                vars, inner, point, direction,
-                // Note: we use `extra_vars` instead of `&varstack` as parent stack since here, we do NOT want `vars` to have concrete values.
-                &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars },
-                env
-            )?;
-            i += 1.0;
-            while i <= lang::eval(to, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: &varstack }, env)?.expect_float()? {
-                let next_term = analytic_directional_derivative( // As above
+            let mut res = Object::Float(0.0); // TODO same
+            'outer: while i <= lang::eval(to, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: &varstack }, env)?.expect_float()? {
+                for cond in conditions {
+                    match lang::eval(cond, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars }, env)? {
+                        Object::Float(1.0) => {}
+                        Object::Float(0.0) => { i += 1.0; continue 'outer; }
+                        other => return Err(format!("Expected 1 or 0 when evaluating condition, got {:?}.", other))
+                    }
+                }
+                let next_term = analytic_directional_derivative(
                     vars, inner, point, direction,
                     &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars },
                     env
@@ -411,7 +413,7 @@ pub fn analytic_directional_derivative(
             }
             Ok(res)
         }
-        Expression::FoldedOperation(FoldedOperation::Product, varname, from, to, inner) => {
+        Expression::FoldedOperation(FoldedOperation::Product, varname, from, conditions, to, inner) => {
             // TODO
             unimplemented!()
         }

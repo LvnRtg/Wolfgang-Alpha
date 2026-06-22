@@ -14,8 +14,9 @@ pub enum Expression {
     UnaryOperation(UnaryOperation, Box<Expression>),
     /// Comparisons are interpreted as binary operations too.
     BinaryOperation(Box<Expression>, BinaryOperation, Box<Expression>),
-    /// E.g. `sum_{i=1}^n f(i)` will become `FoldedOperation(Sum, "i", 1, n, f(i))`.
-    FoldedOperation(FoldedOperation, String, Box<Expression>, Box<Expression>, Box<Expression>),
+    /// E.g. `sum_{i=1, i != 3}^n f(i)` will become `FoldedOperation(Sum, "i", 1, [i != j], n, f(i))`.
+    /// There can be as many conditions as desired, including none at all.
+    FoldedOperation(FoldedOperation, String, Box<Expression>, Vec<Expression>, Box<Expression>, Box<Expression>),
     /// Respectively: function's name and list of arguments passed.
     Function(String, Vec<Expression>),
     /// A collection of comma-separated expressions between parentheses.
@@ -52,8 +53,8 @@ impl fmt::Display for Expression {
                 }
             },
             Expression::BinaryOperation(l, op, r) => write!(f, "({} {} {})", l, op, r),
-            Expression::FoldedOperation(op, ident, from, to, inner_operand)
-                => write!(f, "{}_{{{}={}}}^{{{}}} {}", op, ident, from, to, inner_operand),
+            Expression::FoldedOperation(op, ident, from, conditions, to, inner_operand)
+                => write!(f, "{}_{{{}={}{}{}}}^{{{}}} {}", op, ident, from, if conditions.is_empty() {""} else {", "}, conditions.iter().map(|e| format!("{}", e)).collect::<Vec<_>>().join(", "), to, inner_operand),
             Expression::Function(name, args)
                 => write!(f, "{}({})", name, args.iter().map(|x| format!("{}", x)).collect::<Vec<String>>().join(", ")),
             Expression::Assignment(lhs, rhs) => write!(f, "{} := {}", lhs, rhs),
@@ -180,7 +181,7 @@ impl Expression {
                 multlined_left.extend(right_iter);
                 multlined_left
             }
-            Expression::FoldedOperation(op, ident, from, to, inner_operand) => {
+            Expression::FoldedOperation(op, ident, from, conditions, to, inner_operand) => {
                 let mut multlined_inner = inner_operand.to_multline();
                 // The inner operand only needs extra parentheses around it if it is a BinaryOperation of lower or equal priority to `op`.
                 if let Expression::BinaryOperation(_, inner_op, _) = &**inner_operand && inner_op.priority() <= op.priority() {
@@ -190,9 +191,9 @@ impl Expression {
                 // Notice that for `from` and `to`, we use `fmt::Display` instead of `to_multline()` since we don't want sub- and superscripts
                 // of the folded operator to span several lines.
                 if multlined_inner.len() > 1 {
-                    multlined_inner.insert(0, format!("{}_{{{}={}}}^{{{}}}", op, ident, from, to));
+                    multlined_inner.insert(0, format!("{}_{{{}={}{}{}}}^{{{}}}", op, ident, from, if conditions.is_empty() {""} else {", "}, conditions.iter().map(|e| format!("{}", e)).collect::<Vec<_>>().join(", "), to));
                 } else {
-                    multlined_inner.first_mut().unwrap().insert_str(0, format!("{}_{{{}={}}}^{{{}}} ", op, ident, from, to).as_str());
+                    multlined_inner.first_mut().unwrap().insert_str(0, format!("{}_{{{}={}{}{}}}^{{{}}} ", op, ident, from, if conditions.is_empty() {""} else {", "}, conditions.iter().map(|e| format!("{}", e)).collect::<Vec<_>>().join(", "), to).as_str());
                 }
                 multlined_inner
             }
