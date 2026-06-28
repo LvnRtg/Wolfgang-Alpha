@@ -12,8 +12,7 @@ use std::cmp::min;
 use std::f64::consts::PI;
 
 use crate::lang;
-use crate::math::utils;
-use crate::math::{Env, Expression, Object};
+use crate::math::{Env, Expression, Object, utils, VarStack};
 
 /// Set this constant such that `BLOCK^2 * 8` fits in your L1 Cache. Find out the capacity of the latter by running `sudo lshw -C memory`.
 /// 
@@ -451,7 +450,7 @@ pub enum VectorNorm {
 impl VectorNorm {
     /// If `opt` is `None`, use the euclidian 2-norm. If `opt` is "inf" or "infty", use the supremum norm.
     /// Otherwise, evaluate `opt` and use the corresponding p-norm.
-    pub fn from_expr(opt: &Option<Box<Expression>>, extra_vars: &lang::evaluator::VarStack, env: &mut Env) -> Result<VectorNorm, String> {
+    pub fn from_expr(opt: &Option<Box<Expression>>, extra_vars: &VarStack, env: &mut Env) -> Result<VectorNorm, String> {
         if let Some(inner) = opt {match &**inner {
             Expression::Identifier(ident) if ident == "inf" || ident == "infty"
                 => Ok(VectorNorm::P(f64::INFINITY)),
@@ -475,7 +474,7 @@ impl MatrixNorm {
     /// If `opt` is `None`, use the spectral norm. If `opt` is "inf" or "infty", use the supremum norm.
     /// If it is a string starting with f, use the Frobenius norm.
     /// Otherwise, evaluate `opt` and use the corresponding p-norm.
-    pub fn from_expr(opt: &Option<Box<Expression>>, extra_vars: &lang::evaluator::VarStack, env: &mut Env) -> Result<MatrixNorm, String> {
+    pub fn from_expr(opt: &Option<Box<Expression>>, extra_vars: &VarStack, env: &mut Env) -> Result<MatrixNorm, String> {
         if let Some(inner) = opt {match &**inner {
             Expression::Identifier(ident) if ident == "inf" || ident == "infty"
                 => Ok(MatrixNorm::P(f64::INFINITY)),

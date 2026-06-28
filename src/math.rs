@@ -12,6 +12,7 @@ use std::collections::HashMap;
 
 pub mod differentiation;
 pub mod expressions;
+pub mod integration;
 pub mod matrices_and_vectors;
 pub mod objects;
 pub mod operations;
@@ -26,4 +27,24 @@ pub use crate::math::operations::{Comparison, BinaryOperation, UnaryOperation, F
 pub struct Env {
     pub constants: HashMap<String, Object>,
     pub functions: HashMap<String, FunctionRepr>
+}
+
+#[derive(Debug)]
+pub enum VarStack<'a> {
+    Empty,
+    Frame {
+        vars: &'a HashMap<&'a String, &'a Object>,
+        parent: &'a VarStack<'a>,
+    },
+}
+
+impl<'a> VarStack<'a> {
+    pub fn lookup(&self, key: &String) -> Option<&Object> {
+        match self {
+            VarStack::Empty => None,
+            VarStack::Frame { vars, parent } => {
+                vars.get(key).copied().or_else(|| parent.lookup(key))
+            }
+        }
+    }
 }

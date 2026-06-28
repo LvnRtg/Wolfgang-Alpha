@@ -1,5 +1,7 @@
 use std::fmt;
+use std::collections::{HashMap, HashSet};
 
+use crate::math::{Env, Object, VarStack};
 use crate::math::operations::*;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -395,7 +397,69 @@ impl Expression {
             )
         }
     }
+
+    /// Parses the expression `expr` recursively and collects all identifiers that are neither in `constants` nor in `extra_vars` into a HashSet `modified_identifiers`.
+    /// 
+    /// Returns whether or not anything was modified. The parameter `modified_anything` should be set to `false` for the first call and will then be passed down recursively.
+    pub fn list_unknown_identifiers(
+        &self,
+        extra_vars: &VarStack,
+        env: &Env,
+        modified_identifiers: &mut HashSet<String>,
+        modified_anything: bool
+    ) -> bool {
+        match self {
+            Expression::None | Expression::Number(_) => modified_anything,
+            Expression::Identifier(x) => {
+                if !env.constants.contains_key(x) && extra_vars.lookup(x).is_none() {
+                    modified_identifiers.insert(x.clone());
+                    true
+                }
+                else { modified_anything }
+            }
+            Expression::Tuple(v) | Expression::Vector(v) | Expression::Matrix(.., v)
+                => v.iter().map(|e| e.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)).collect::<Vec<_>>().iter().any(|x| *x),
+            Expression::UnaryOperation(_, expr) => expr.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything),
+            Expression::BinaryOperation(lhs, _, rhs) => {
+                // This will modify something iff at least either LHS or RHS is modified.
+                lhs.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)
+                || rhs.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)
+            }
+            Expression::FoldedOperation(_, varname, from, conditions, to, inner) => {
+                // Important: `varname` is no longer unknown within `inner`; however, it is still unknown within `from` and `to`.
+                from.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything) // Here, use old `extra_vars`
+                || conditions.iter().map(|v| v.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)).collect::<Vec<_>>().iter().any(|x| *x)
+                || to.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything) // Here too
+                || inner.list_unknown_identifiers( // But here, declare `varname` as known (temporarily for this function call)
+                    &VarStack::Frame {
+                        vars: &HashMap::from([(varname, &Object::Success)]),
+                        parent: extra_vars
+                    },
+                    env,
+                    modified_identifiers,
+                    modified_anything
+                )
+            }
+            Expression::Function(_, args) => {
+                args.iter().map(|arg| arg.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)).collect::<Vec<_>>().iter().any(|x| *x)
+            }
+            Expression::Assignment(_, rhs) => rhs.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything), // Do not modify the LHS of assignment expressions
+            Expression::PartialDerivative(_, expr) => expr.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything),
+            Expression::DirectionalDerivative(_, expr, point, direction) => {
+                expr.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)
+                || point.iter().map(|v| v.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)).collect::<Vec<_>>().iter().any(|x| *x)
+                || direction.iter().map(|v| v.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)).collect::<Vec<_>>().iter().any(|x| *x)
+            },
+            Expression::IfElse(x, y, z) => {
+                // This will modify something iff at least either LHS or RHS is modified.
+                x.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)
+                || y.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)
+                || z.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)
+            }
+        }
+    }
 }
+
 
 // The following macros simplify typing and enhance readability by a LOT. I only add these that are actively used.
 #[macro_export]

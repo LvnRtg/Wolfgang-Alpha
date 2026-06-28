@@ -8,31 +8,10 @@ use itertools::Itertools;
 use crate::math;
 use crate::math::utils::{approx_eq, linspace_as_objects};
 use crate::math::objects::try_operation;
-use crate::math::{BinaryOperation, Env, UnaryOperation, Object, Expression, FunctionRepr}; // Common types that will be used several times
+use crate::math::{BinaryOperation, Env, Expression, FunctionRepr, Object, UnaryOperation, VarStack}; // Common types that will be used several times
 
 
 const DEFAULT_TESTEQ_REPETITIONS: usize = 20;
-
-
-#[derive(Debug)]
-pub enum VarStack<'a> {
-    Empty,
-    Frame {
-        vars: &'a HashMap<&'a String, &'a Object>,
-        parent: &'a VarStack<'a>,
-    },
-}
-
-impl<'a> VarStack<'a> {
-    pub fn lookup(&self, key: &String) -> Option<&Object> {
-        match self {
-            VarStack::Empty => None,
-            VarStack::Frame { vars, parent } => {
-                vars.get(key).copied().or_else(|| parent.lookup(key))
-            }
-        }
-    }
-}
 
 
 /// When an function definition is encountered, the expression on the RHS is processed in a special way.
@@ -132,68 +111,6 @@ pub fn parse_function_definition(
             Box::new(parse_function_definition(z, argument_names, extra_vars, env)?),
         )
     })
-}
-
-/// Parses the expression `expr` recursively and collects all identifiers that are neither in `constants` nor in `extra_vars` into a HashSet `modified_identifiers`.
-/// 
-/// Returns whether or not anything was modified. The parameter `modified_anything` should be set to `false` for the first call and will then be passed down recursively.
-fn list_unknown_identifiers(
-    expr: &Expression,
-    extra_vars: &VarStack,
-    env: &Env,
-    modified_identifiers: &mut HashSet<String>,
-    modified_anything: bool
-) -> bool {
-    match expr {
-        Expression::None | Expression::Number(_) => modified_anything,
-        Expression::Identifier(x) => {
-            if !env.constants.contains_key(x) && extra_vars.lookup(x).is_none() {
-                modified_identifiers.insert(x.clone());
-                true
-            }
-            else { modified_anything }
-        }
-        Expression::Tuple(v) | Expression::Vector(v) | Expression::Matrix(.., v)
-            => v.iter().map(|e| list_unknown_identifiers(e, extra_vars, env, modified_identifiers, modified_anything)).collect::<Vec<_>>().iter().any(|x| *x),
-        Expression::UnaryOperation(_, expr) => list_unknown_identifiers(expr, extra_vars, env, modified_identifiers, modified_anything),
-        Expression::BinaryOperation(lhs, _, rhs) => {
-            // This will modify something iff at least either LHS or RHS is modified.
-            list_unknown_identifiers(lhs, extra_vars, env, modified_identifiers, modified_anything)
-            || list_unknown_identifiers(rhs, extra_vars, env, modified_identifiers, modified_anything)
-        }
-        Expression::FoldedOperation(_, varname, from, conditions, to, inner) => {
-            // Important: `varname` is no longer unknown within `inner`; however, it is still unknown within `from` and `to`.
-            list_unknown_identifiers(from, extra_vars, env, modified_identifiers, modified_anything) // Here, use old `extra_vars`
-            || conditions.iter().map(|v| list_unknown_identifiers(v, extra_vars, env, modified_identifiers, modified_anything)).collect::<Vec<_>>().iter().any(|x| *x)
-            || list_unknown_identifiers(to, extra_vars, env, modified_identifiers, modified_anything) // Here too
-            || list_unknown_identifiers( // But here, declare `varname` as known (temporarily for this function call)
-                inner,
-                &VarStack::Frame {
-                    vars: &HashMap::from([(varname, &Object::Success)]),
-                    parent: extra_vars
-                },
-                env,
-                modified_identifiers,
-                modified_anything
-            )
-        }
-        Expression::Function(_, args) => {
-            args.iter().map(|arg| list_unknown_identifiers(arg, extra_vars, env, modified_identifiers, modified_anything)).collect::<Vec<_>>().iter().any(|x| *x)
-        }
-        Expression::Assignment(_, rhs) => list_unknown_identifiers(rhs, extra_vars, env, modified_identifiers, modified_anything), // Do not modify the LHS of assignment expressions
-        Expression::PartialDerivative(_, expr) => list_unknown_identifiers(expr, extra_vars, env, modified_identifiers, modified_anything),
-        Expression::DirectionalDerivative(_, expr, point, direction) => {
-            list_unknown_identifiers(expr, extra_vars, env, modified_identifiers, modified_anything)
-            || point.iter().map(|v| list_unknown_identifiers(v, extra_vars, env, modified_identifiers, modified_anything)).collect::<Vec<_>>().iter().any(|x| *x)
-            || direction.iter().map(|v| list_unknown_identifiers(v, extra_vars, env, modified_identifiers, modified_anything)).collect::<Vec<_>>().iter().any(|x| *x)
-        },
-        Expression::IfElse(x, y, z) => {
-            // This will modify something iff at least either LHS or RHS is modified.
-            list_unknown_identifiers(x, extra_vars, env, modified_identifiers, modified_anything)
-            || list_unknown_identifiers(y, extra_vars, env, modified_identifiers, modified_anything)
-            || list_unknown_identifiers(z, extra_vars, env, modified_identifiers, modified_anything)
-        }
-    }
 }
 
 
@@ -314,9 +231,9 @@ pub fn eval(
             // Here, being a function means having unknown identifiers within.
             if let BinaryOperation::Comp(_, param) = op {
                 let mut lhs_free_variables = HashSet::<String>::new();
-                list_unknown_identifiers(lhs, extra_vars, env, &mut lhs_free_variables, false);
+                lhs.list_unknown_identifiers(extra_vars, env, &mut lhs_free_variables, false);
                 let mut rhs_free_variables = HashSet::<String>::new();
-                list_unknown_identifiers(rhs, extra_vars, env, &mut rhs_free_variables, false);
+                rhs.list_unknown_identifiers(extra_vars, env, &mut rhs_free_variables, false);
                 if let Some((this, other, param)) = if !lhs_free_variables.is_empty() {
                     Some((*lhs.clone(), *rhs.clone(), param))
                 } else if !rhs_free_variables.is_empty() {

@@ -5,10 +5,9 @@ use crate::math::matrices_and_vectors::VectorNorm;
 use crate::math::objects::{try_operation};
 use crate::math::expressions::*;
 use crate::math::utils::approx_eq;
-use crate::math::{Env, Object, DirectFunction, FunctionRepr, Vector, Matrix};
+use crate::math::{Env, Object, DirectFunction, FunctionRepr, VarStack, Vector, Matrix};
 use crate::math::operations::{BinaryOperation, FoldedOperation, UnaryOperation};
 use crate::{defaults, expr_compare, expr_if_else, expr_sub, expr_mul, expr_div, expr_pow, expr_neg, expr_1arg_func, lang};
-use lang::evaluator::VarStack;
 
 /// Differentiates the given expression w.r.t. the variable `wrt` analytically, that is, by parsing the expression recursively and
 /// applying known differentiation rules (e.g. product rule, chain rule).

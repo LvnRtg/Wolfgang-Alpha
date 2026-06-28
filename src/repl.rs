@@ -17,7 +17,7 @@ pub fn eval_line(input: &str, env: &mut math::Env) -> Vec<String> {
                     output.push(format!("Constants: {:?}", env.constants));
                     output.push(format!("Functions: {:?}", env.functions));
                 } else {
-                    match lang::eval(&expr, &lang::evaluator::VarStack::Empty, env) {
+                    match lang::eval(&expr, &math::VarStack::Empty, env) {
                         Ok(obj) => {
                             output = obj.to_multline();
                         }
