@@ -127,7 +127,6 @@ impl Object {
         }
     }
 }
-/// This operation is only derived to simplify typing in `directional_derivative`.
 impl<'a> ops::Mul<&'a Object> for f64 {
     type Output = Object;
     fn mul(self, rhs: &'a Object) -> Self::Output {
@@ -146,7 +145,18 @@ impl<'a> ops::Mul<&'a Object> for f64 {
         }
     }
 }
-
+impl ops::Mul<f64> for Object {
+    type Output = Object;
+    fn mul(self, rhs: f64) -> Self::Output {
+        rhs * &self
+    }
+}
+impl ops::Add<Object> for Object {
+    type Output = Result<Object, String>;
+    fn add(self, rhs: Object) -> Self::Output {
+        try_operation(&self, &rhs, &BinaryOperation::Add)
+    }
+}
 impl ops::Neg for &Object {
     type Output = Result<Object, String>;
     fn neg(self) -> Self::Output {
@@ -159,6 +169,12 @@ impl ops::Neg for &Object {
             Object::Matrix(x) => Ok(Object::Matrix(-x)),
             Object::LiteralExpression(expr) => Ok(Object::LiteralExpression(crate::expr_neg!(expr.clone()))),
         }
+    }
+}
+impl ops::Neg for Object {
+    type Output = Result<Object, String>;
+    fn neg(self) -> Self::Output {
+        (&self).neg()
     }
 }
 impl ops::Not for &Object {
