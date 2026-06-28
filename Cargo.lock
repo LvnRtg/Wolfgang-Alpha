@@ -6452,6 +6452,7 @@ dependencies = [
  "dioxus-logger 0.5.1",
  "getrandom 0.2.17",
  "itertools",
+ "num-traits",
  "rand 0.8.6",
  "statrs",
  "tracing-wasm",
