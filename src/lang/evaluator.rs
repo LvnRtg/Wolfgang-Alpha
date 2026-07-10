@@ -238,9 +238,9 @@ pub fn eval(
             // Here, being a function means having unknown identifiers within.
             if let BinaryOperation::Comp(_, param) = op {
                 let mut lhs_free_variables = HashSet::<String>::new();
-                lhs.list_unknown_identifiers(extra_vars, env, &mut lhs_free_variables, false);
+                lhs.list_unknown_identifiers(extra_vars, env, &mut lhs_free_variables);
                 let mut rhs_free_variables = HashSet::<String>::new();
-                rhs.list_unknown_identifiers(extra_vars, env, &mut rhs_free_variables, false);
+                rhs.list_unknown_identifiers(extra_vars, env, &mut rhs_free_variables);
                 if let Some((this, other, param)) = if !lhs_free_variables.is_empty() {
                     Some((*lhs.clone(), *rhs.clone(), param))
                 } else if !rhs_free_variables.is_empty() {

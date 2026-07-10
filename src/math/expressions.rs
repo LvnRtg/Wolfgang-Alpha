@@ -436,53 +436,47 @@ impl Expression {
         &self,
         extra_vars: &VarStack,
         env: &Env,
-        modified_identifiers: &mut HashSet<String>,
-        modified_anything: bool
-    ) -> bool {
+        modified_identifiers: &mut HashSet<String>
+    ) {
         match self {
-            Expression::None | Expression::Number(_) => modified_anything,
+            Expression::None | Expression::Number(_) => {},
             Expression::Identifier(x) => {
                 if !env.constants.contains_key(x) && extra_vars.lookup(x).is_none() {
                     modified_identifiers.insert(x.clone());
-                    true
                 }
-                else { modified_anything }
             }
             Expression::Tuple(v) | Expression::Vector(v) | Expression::Matrix(.., v)
-                => v.iter().map(|e| e.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)).collect::<Vec<_>>().iter().any(|x| *x),
-            Expression::UnaryOperation(_, expr) => expr.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything),
+                => v.iter().for_each(|e| e.list_unknown_identifiers(extra_vars, env, modified_identifiers)),
+            Expression::UnaryOperation(_, expr) => expr.list_unknown_identifiers(extra_vars, env, modified_identifiers),
             Expression::BinaryOperation(lhs, _, rhs) => {
-                // This will modify something iff at least either LHS or RHS is modified.
-                lhs.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)
-                || rhs.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)
+                lhs.list_unknown_identifiers(extra_vars, env, modified_identifiers);
+                rhs.list_unknown_identifiers(extra_vars, env, modified_identifiers);
             }
             Expression::FoldedOperation(_, varname, from, conditions, to, inner) => {
                 // Important: `varname` is no longer unknown within `inner`; however, it is still unknown within `from` and `to`.
-                from.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything) // Here, use old `extra_vars`
-                || conditions.iter().map(|v| v.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)).collect::<Vec<_>>().iter().any(|x| *x)
-                || to.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything) // Here too
-                || inner.list_unknown_identifiers( // But here, declare `varname` as known (temporarily for this function call)
+                from.list_unknown_identifiers(extra_vars, env, modified_identifiers); // Here, use old `extra_vars`
+                conditions.iter().for_each(|v| v.list_unknown_identifiers(extra_vars, env, modified_identifiers));
+                to.list_unknown_identifiers(extra_vars, env, modified_identifiers); // Here too
+                inner.list_unknown_identifiers( // But here, declare `varname` as known (temporarily for this function call)
                     &VarStack::Frame {
                         vars: &HashMap::from([(varname, &Object::Success)]),
                         parent: extra_vars
                     },
                     env,
-                    modified_identifiers,
-                    modified_anything
+                    modified_identifiers
                 )
             }
             Expression::Function(_, args) => {
-                args.iter().map(|arg| arg.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)).collect::<Vec<_>>().iter().any(|x| *x)
+                args.iter().for_each(|arg| arg.list_unknown_identifiers(extra_vars, env, modified_identifiers));
             }
-            Expression::Assignment(_, rhs) => rhs.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything), // Do not modify the LHS of assignment expressions
+            Expression::Assignment(_, rhs) => rhs.list_unknown_identifiers(extra_vars, env, modified_identifiers), // Do not modify the LHS of assignment expressions
             Expression::PartialDerivative(wrt, expr) => expr.list_unknown_identifiers(
                 &VarStack::Frame { // Same proceeding as in `Expression::FoldedOperation`
                     vars: &HashMap::from([(wrt, &Object::Success)]),
                     parent: extra_vars
                 },
                 env,
-                modified_identifiers,
-                modified_anything
+                modified_identifiers
             ),
             Expression::DirectionalDerivative(vars, expr, point, direction) => {
                 expr.list_unknown_identifiers(
@@ -491,17 +485,15 @@ impl Expression {
                         parent: extra_vars
                     },
                     env,
-                    modified_identifiers,
-                    modified_anything
-                )
-                || point.iter().map(|v| v.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)).collect::<Vec<_>>().iter().any(|x| *x)
-                || direction.iter().map(|v| v.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)).collect::<Vec<_>>().iter().any(|x| *x)
+                    modified_identifiers
+                );
+                point.iter().for_each(|v| v.list_unknown_identifiers(extra_vars, env, modified_identifiers));
+                direction.iter().for_each(|v| v.list_unknown_identifiers(extra_vars, env, modified_identifiers));
             }
             Expression::IfElse(x, y, z) => {
-                // This will modify something iff at least either LHS or RHS is modified.
-                x.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)
-                || y.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)
-                || z.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)
+                x.list_unknown_identifiers(extra_vars, env, modified_identifiers);
+                y.list_unknown_identifiers(extra_vars, env, modified_identifiers);
+                z.list_unknown_identifiers(extra_vars, env, modified_identifiers);
             }
             Expression::Integral(func, a, b, wrt) => {
                 func.list_unknown_identifiers(
@@ -510,11 +502,10 @@ impl Expression {
                         parent: extra_vars
                     },
                     env,
-                    modified_identifiers,
-                    modified_anything
-                )
-                || a.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)
-                || b.list_unknown_identifiers(extra_vars, env, modified_identifiers, modified_anything)
+                    modified_identifiers
+                );
+                a.list_unknown_identifiers(extra_vars, env, modified_identifiers);
+                b.list_unknown_identifiers(extra_vars, env, modified_identifiers);
             }
         }
     }

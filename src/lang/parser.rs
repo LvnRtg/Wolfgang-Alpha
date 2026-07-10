@@ -124,7 +124,7 @@ impl Parser {
                     (Token::LParenthesis, _) => {
                         if id == "D" { // Then, only parse arguments now (since we need to know `function_expr` for this)
                             let mut identifiers = HashSet::<String>::new();
-                            function_expr.list_unknown_identifiers(&VarStack::Empty, env, &mut identifiers, false);
+                            function_expr.list_unknown_identifiers(&VarStack::Empty, env, &mut identifiers);
                             argnames = identifiers.into_iter().collect::<Vec<String>>();
                             argnames.sort_unstable();
                         }
