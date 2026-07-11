@@ -8,7 +8,7 @@ use itertools::Itertools;
 use crate::math;
 use crate::math::utils::{approx_eq, linspace_as_objects};
 use crate::math::objects::try_operation;
-use crate::math::{BinaryOperation, Env, Expression, FunctionRepr, Object, UnaryOperation, VarStack}; // Common types that will be used several times
+use crate::math::{BinaryOperation, DirectFunction, Env, Expression, FunctionRepr, Object, UnaryOperation, VarStack}; // Common types that will be used several times
 
 
 const DEFAULT_TESTEQ_REPETITIONS: usize = 20;
@@ -379,15 +379,7 @@ pub fn eval(
                 let mut rm = env.functions.remove(real_function_name);
                 let res = match rm {
                     Some(FunctionRepr::Direct(ref mut f)) => {
-                        // The given arguments should then have the format `point <concat> direction`, so we have to split the arguments
-                        // into two parts (splitting in the middle of the array which we ensured has even size).
-                        let point = (0..arg_exprs.len()/2)
-                            .map(|i| eval(&arg_exprs[i], extra_vars, env))
-                            .collect::<Result<Vec<_>, _>>()?;
-                        let direction = (arg_exprs.len()/2..arg_exprs.len())
-                            .map(|i| eval(&arg_exprs[i], extra_vars, env))
-                            .collect::<Result<Vec<_>, _>>()?;
-                        math::differentiation::numerical_directional_derivative(f, point, direction)
+                        eval_diff_num(f, arg_exprs, extra_vars, env)
                     }
                     Some(FunctionRepr::ByExpression(..)) => {
                         Err("Don't use ___diff_num_ to differentiate a function that has an explicit defining expression.".to_string())
@@ -474,6 +466,18 @@ fn eval_function(
                 .collect::<Result<Vec<_>, _>>()?)
         }
     }
+}
+
+fn eval_diff_num(f: &mut DirectFunction, arg_exprs: &[Expression], extra_vars: &VarStack, env: &mut Env) -> Result<Object, String> {
+    // The given arguments should then have the format `point <concat> direction`, so we have to split the arguments
+    // into two parts (splitting in the middle of the array which we ensured has even size).
+    let point = (0..arg_exprs.len()/2)
+        .map(|i| eval(&arg_exprs[i], extra_vars, env))
+        .collect::<Result<Vec<_>, _>>()?;
+    let direction = (arg_exprs.len()/2..arg_exprs.len())
+        .map(|i| eval(&arg_exprs[i], extra_vars, env))
+        .collect::<Result<Vec<_>, _>>()?;
+    math::differentiation::numerical_directional_derivative(f, point, direction)
 }
 
 fn eval_assignment(
