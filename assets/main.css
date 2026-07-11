@@ -155,8 +155,8 @@ input:focus-visible {
 
 .workspace {
     width: min(1480px, 100%);
-    min-height: calc(100vh - 134px);
-    min-height: calc(100dvh - 134px);
+    height: max(660px, calc(100vh - 134px));
+    height: max(660px, calc(100dvh - 134px));
     margin: 0 auto;
     display: grid;
     grid-template-columns: minmax(260px, 330px) minmax(0, 1fr);
@@ -362,9 +362,10 @@ input:focus-visible {
 
 .calculator-panel {
     min-width: 0;
-    min-height: 660px;
+    min-height: 0;
+    height: 100%;
     display: grid;
-    grid-template-rows: auto minmax(280px, 1fr) auto;
+    grid-template-rows: auto minmax(0, 1fr) auto;
     overflow: hidden;
     border: 1px solid rgb(24 49 48 / 10%);
     background: var(--surface);
@@ -549,14 +550,14 @@ input:focus-visible {
 }
 
 .calculation-list {
-    padding: 10px clamp(22px, 3vw, 36px) 28px;
+    padding: 6px clamp(22px, 3vw, 36px) 16px;
 }
 
 .calculation {
-    padding: 22px 0;
+    padding: 11px 0;
     display: grid;
-    grid-template-columns: 36px minmax(0, 1fr);
-    gap: 14px;
+    grid-template-columns: 30px minmax(0, 1fr);
+    gap: 12px;
     border-bottom: 1px solid var(--line);
     animation: calculation-in 280ms ease both;
 }
@@ -566,7 +567,7 @@ input:focus-visible {
 }
 
 .calculation-index {
-    padding-top: 14px;
+    padding-top: 9px;
     color: #9aa8a3;
     font-family: var(--mono);
     font-size: 9px;
@@ -580,27 +581,27 @@ input:focus-visible {
 
 .query-row {
     min-width: 0;
-    min-height: 48px;
-    padding: 10px 10px 10px 12px;
+    min-height: 38px;
+    padding: 5px 8px 5px 9px;
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
-    gap: 11px;
+    gap: 8px;
     border: 1px solid var(--line);
-    border-radius: 13px 13px 5px 5px;
+    border-radius: 10px 10px 4px 4px;
     background: var(--surface-muted);
 }
 
 .query-prompt {
-    width: 27px;
-    height: 27px;
+    width: 23px;
+    height: 23px;
     display: grid;
     place-items: center;
     color: var(--forest);
-    border-radius: 8px;
+    border-radius: 7px;
     background: var(--lime);
     font-family: Georgia, serif;
-    font-size: 16px;
+    font-size: 14px;
     font-style: italic;
 }
 
@@ -610,7 +611,7 @@ input:focus-visible {
     color: var(--ink);
     font-family: var(--mono);
     font-size: 12px;
-    line-height: 1.5;
+    line-height: 1.35;
 }
 
 .reuse-button {
@@ -639,25 +640,25 @@ input:focus-visible {
 
 .result-row {
     position: relative;
-    margin: 5px 0 0 18px;
-    padding: 14px 16px 14px 28px;
+    margin: 3px 0 0 14px;
+    padding: 7px 12px 6px 22px;
     border-left: 1px solid var(--line-strong);
 }
 
 .result-row::before {
     content: "";
     position: absolute;
-    top: -5px;
+    top: -3px;
     left: -1px;
-    width: 16px;
-    height: 20px;
+    width: 13px;
+    height: 14px;
     border-bottom: 1px solid var(--line-strong);
     border-left: 1px solid var(--line-strong);
-    border-radius: 0 0 0 10px;
+    border-radius: 0 0 0 7px;
 }
 
 .result-meta {
-    margin-bottom: 6px;
+    margin-bottom: 3px;
     display: flex;
     align-items: center;
     gap: 7px;
@@ -682,9 +683,9 @@ input:focus-visible {
     overflow-x: auto;
     color: var(--forest);
     font-family: var(--mono);
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 700;
-    line-height: 1.6;
+    line-height: 1.35;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
 }
@@ -906,6 +907,7 @@ kbd {
     }
 
     .workspace {
+        height: auto;
         min-height: 0;
         grid-template-columns: 1fr;
     }
@@ -935,7 +937,8 @@ kbd {
     }
 
     .calculator-panel {
-        min-height: 650px;
+        height: 650px;
+        min-height: 0;
         border-radius: 22px;
     }
 }
@@ -981,7 +984,7 @@ kbd {
     }
 
     .calculation-list {
-        padding: 8px 18px 24px;
+        padding: 6px 18px 14px;
     }
 
     .calculation {
