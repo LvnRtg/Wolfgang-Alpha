@@ -5,7 +5,7 @@ use crate::math::Expression;
 use crate::math::expressions;
 use crate::math::{Matrix, Vector, Object, FunctionRepr};
 use crate::math::operations::{UnaryOperation, BinaryOperation};
-use crate::{expr_if_else, expr_and, expr_compare, expr_add, expr_sub, expr_mul, expr_div, expr_inv, expr_square, expr_neg, expr_1arg_func};
+use crate::{expr_if_else, expr_and, expr_compare, expr_add, expr_sub, expr_mul, expr_div, expr_square, expr_neg, expr_1arg_func};
 
 /// Wrapped in a function because const hashmaps aren't available yet.
 pub fn default_constants() -> HashMap<String, Object> {
@@ -51,7 +51,7 @@ macro_rules! expect_n_args {
         (
             stringify!($name).to_string(),
             FunctionRepr::Direct(Box::new(|args| {
-                if args.len() != 1 {
+                if args.len() != $n {
                     Err(format!(
                         "Wrong number of arguments provided for function '{}' (expected {}, got {}).",
                         stringify!($name),
@@ -174,21 +174,32 @@ pub const FUNCTIONS_WITH_PROVIDED_DERIVATIVE: [&str; 19] = [
     "det", "tr"
 ];
 
-/// Example: (exp, point) => Ok(Expression::Function("exp", point[0].clone())) if point has length 1 otherwise Err
-macro_rules! apply_to_first_arg {
-    ($name:ident, $point:expr, $direction:expr) => {
-        if $point.len() != 1 {
+/// Ensures that both `point` and `direction` have length `n`.
+macro_rules! assert_length {
+    ($n:expr, $name:ident, $point:expr, $direction:expr, $and_then:expr) => {
+        if $point.len() != $n || $direction.len() != $n {
             Err(format!(
-                "Wrong number of arguments provided for derivative of '{}' (expected 1, got {}).",
+                "Wrong number of arguments provided for derivative of '{}' (expected both point and direction of length {}, got ({}, {})).",
                 stringify!($name),
-                $point.len()
+                $n,
+                $point.len(),
+                $direction.len()
             ))
         } else {
-            Ok(expressions::simplify_mul(Expression::Function(
+            Ok($and_then)
+        }
+    };
+}
+
+/// Example: `(exp, point) => Ok(Expression::Function("exp", point[0].clone()))` if `point` and `direction` both have length 1, otherwise `Err`.
+macro_rules! apply_to_first_arg {
+    ($name:ident, $point:expr, $direction:expr) => {
+        assert_length!(1, $name, $point, $direction,
+            expressions::simplify_mul(Expression::Function(
                 stringify!($name).to_string(),
                 vec![$point[0].clone()]
-            ), $direction[0].clone()))
-        }
+            ), $direction[0].clone())
+        )
     };
 }
 
@@ -201,26 +212,16 @@ macro_rules! apply_to_first_arg {
 pub fn get_default_derivative(function_name: &str, point: &[Expression], direction: &[Expression]) -> Result<Expression, String> {
     match function_name {
         "exp" => apply_to_first_arg!(exp, point, direction),
-        "ln" => {
-            if point.len() != 1 {
-                Err(format!(
-                    "Wrong number of arguments provided for derivative (expected 1, got {}).",
-                    point.len()
-                ))
-            } else {
-                Ok(expr_if_else!(
-                    expr_compare!(point[0].clone(), Gt, Expression::Number(0.0)),
-                    expr_div!(direction[0].clone(), point[0].clone()),
-                    Expression::None
-                ))
-            }
-        }
-        "log" => {
-            // D log(x, b)[s, t] = s \partial_x log(x, b) + t \partial_b log(x, b) = s/(x*ln(y)) - (t*ln(x))/(b*ln(b)²)     for x, b > 0
-            if point.len() != 2 || direction.len() != 2 {
-                return Err("Both point and direction for derivative of log must have exactly two arguments.".to_string())
-            }
-            Ok(expr_if_else!(
+        "ln" => assert_length!(1, ln, point, direction,
+            expr_if_else!(
+                expr_compare!(point[0].clone(), Gt, Expression::Number(0.0)),
+                expr_div!(direction[0].clone(), point[0].clone()),
+                Expression::None
+            )
+        ),
+        "log" => assert_length!(2, log, point, direction,
+            // D log(x, b)[s, t] = s \partial_x log(x, b) + t \partial_b log(x, b) = s/(x*ln(y)) - (t*ln(x))/(b*ln(b)²)     for x, b > 0expr_if_else!(
+            expr_if_else!(
                 expr_and!(expr_compare!(point[0].clone(), Gt, Expression::Number(0.0)), expr_compare!(point[1].clone(), Gt, Expression::Number(0.0))),
                 expr_sub!(
                     expr_div!(
@@ -242,102 +243,137 @@ pub fn get_default_derivative(function_name: &str, point: &[Expression], directi
                     )
                 ),
                 Expression::None
-            ))
-        }
-        "sign" => Ok(expr_if_else!(
-            expr_compare!(point[0].clone(), Eq, Expression::Number(0.0)),
-            Expression::None,
-            direction[0].clone()
-        )),
-        "sqrt" => {
-            if point.len() != 1 {
-                Err(format!(
-                    "Wrong number of arguments provided for derivative (expected 1, got {}).",
-                    point.len()
+            )
+        ),
+        "sign" => assert_length!(1, sign, point, direction,
+            expr_if_else!(
+                expr_compare!(point[0].clone(), Eq, Expression::Number(0.0)),
+                Expression::None,
+                Expression::Number(0.0)
+            )
+        ),
+        "sqrt" => assert_length!(1, sqrt, point, direction,
+            expr_if_else!(
+                expr_compare!(point[0].clone(), Gt, Expression::Number(0.0)),
+                expr_div!(
+                    direction[0].clone(),
+                    expr_mul!(Expression::Number(2.0), expr_1arg_func!("sqrt", point[0].clone()))
+                ),
+                Expression::None
+            )
+        ),
+        "cos" => assert_length!(1, cos, point, direction,
+            expr_neg!(apply_to_first_arg!(sin, point, direction)?)
+        ),
+        "sin" => assert_length!(1, sin, point, direction,
+            apply_to_first_arg!(cos, point, direction)?
+        ),
+        "tan" => assert_length!(1, tan, point, direction,
+            expr_div!(
+                direction[0].clone(),
+                expr_square!(Expression::Function(
+                    "cos".to_string(),
+                    vec![point[0].clone()]
                 ))
-            } else {
-                Ok(expr_if_else!(
-                    expr_compare!(point[0].clone(), Gt, Expression::Number(0.0)),
-                    expr_div!(
-                        direction[0].clone(),
-                        expr_mul!(Expression::Number(2.0), expr_1arg_func!("sqrt", point[0].clone()))
-                    ),
-                    Expression::None
-                ))
-            }
-        }
-        "cos" => Ok(expr_neg!(apply_to_first_arg!(sin, point, direction)?)),
-        "sin" => apply_to_first_arg!(cos, point, direction),
-        "tan" => Ok(expr_inv!(expr_square!(apply_to_first_arg!(cos, point, direction)?))),
-        "acos" => Ok(expr_div!(
-            Expression::Number(-1.0),
-            expr_1arg_func!(
-                "sqrt",
-                expr_sub!(
+            )
+        ),
+        "acos" => assert_length!(1, acos, point, direction,
+            expr_div!(
+                expr_neg!(direction[0].clone()),
+                expr_1arg_func!(
+                    "sqrt",
+                    expr_sub!(
+                        Expression::Number(1.0),
+                        expr_square!(point[0].clone())
+                    )
+                )
+            )
+        ),
+        "asin" => assert_length!(1, asin, point, direction,
+            expr_div!(
+                direction[0].clone(),
+                expr_1arg_func!(
+                    "sqrt",
+                    expr_sub!(
+                        Expression::Number(1.0),
+                        expr_square!(point[0].clone())
+                    )
+                )
+            )
+        ),
+        "atan" => assert_length!(1, atan, point, direction,
+            expr_div!(
+                direction[0].clone(),
+                expr_add!(
                     Expression::Number(1.0),
                     expr_square!(point[0].clone())
                 )
             )
-        )),
-        "asin" => Ok(expr_inv!(
-            expr_1arg_func!(
-                "sqrt",
-                expr_sub!(
-                    Expression::Number(1.0),
-                    expr_square!(point[0].clone())
-                )
-            )
-        )),
-        "atan" => Ok(expr_inv!(
-            expr_add!(
-                Expression::Number(1.0),
-                expr_square!(point[0].clone())
-            )
-        )),
+        ),
         "cosh" => apply_to_first_arg!(sinh, point, direction),
         "sinh" => apply_to_first_arg!(cosh, point, direction),
-        "tanh" => Ok(expr_sub!(
-            Expression::Number(1.0),
-            expr_square!(apply_to_first_arg!(tanh, point, direction)?)
-        )),
-        "acosh" => Ok(expr_inv!(
-            expr_1arg_func!(
-                "sqrt",
+        "tanh" => assert_length!(1, tanh, point, direction,
+            expr_mul!(
+                direction[0].clone(),
                 expr_sub!(
-                    expr_square!(point[0].clone()),
-                    Expression::Number(1.0)
+                    Expression::Number(1.0),
+                    expr_square!(
+                        Expression::Function(
+                            "tanh".to_string(),
+                            vec![point[0].clone()]
+                        )
+                    )
                 )
             )
-        )),
-        "asinh" => Ok(expr_inv!(
-            expr_1arg_func!(
-                "sqrt",
-                expr_add!(
-                    expr_square!(point[0].clone()),
-                    Expression::Number(1.0)
+        ),
+        "acosh" => assert_length!(1, acosh, point, direction,
+            expr_div!(
+                direction[0].clone(),
+                expr_1arg_func!(
+                    "sqrt",
+                    expr_sub!(
+                        expr_square!(point[0].clone()),
+                        Expression::Number(1.0)
+                    )
                 )
             )
-        )),
-        "atanh" => Ok(expr_inv!(
-            expr_sub!(
-                Expression::Number(1.0),
-                expr_square!(point[0].clone())
+        ),
+        "asinh" => assert_length!(1, asinh, point, direction,
+            expr_div!(
+                direction[0].clone(),
+                expr_1arg_func!(
+                    "sqrt",
+                    expr_add!(
+                        expr_square!(point[0].clone()),
+                        Expression::Number(1.0)
+                    )
+                )
             )
-        )),
+        ),
+        "atanh" => assert_length!(1, atanh, point, direction,
+            expr_div!(
+                direction[0].clone(),
+                expr_sub!(
+                    Expression::Number(1.0),
+                    expr_square!(point[0].clone())
+                )
+            )
+        ),
         // Jacobi's formula states `d/dt det A(t) = tr(adj(A(t)) * d/dt A(t))`.
         // Here, `A(t) = point[0]` and `d/dt A(t) = direction[0]`.
-        "det" => Ok(expr_1arg_func!(
-            "tr",
-            expr_mul!(
-                apply_to_first_arg!(adj, point, direction)?,
+        "det" => assert_length!(1, det, point, direction,
+            expr_1arg_func!(
+                "tr",
+                Expression::Function("adj".to_string(), vec![direction[0].clone()])
+            )
+        ),
+        // `tr` is linear and thus commutes with the derivative.
+        "tr" => assert_length!(1, tr, point, direction,
+            expr_1arg_func!(
+                "tr",
                 direction[0].clone()
             )
-        )),
-        // `tr` is linear and thus commutes with the derivative.
-        "tr" => Ok(expr_1arg_func!(
-            "tr",
-            direction[0].clone()
-        )),
+        ),
         _ => Err(format!("No derivative provided for '{function_name}'."))
     }
 }
