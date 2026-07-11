@@ -202,7 +202,7 @@ pub fn eval(
                                     (1..=n).try_fold(1, u64::checked_mul).ok_or(format!("Overflow occured while computing {n}!"))? as f64
                                 }
                             } else {
-                                gamma::gamma(x)
+                                gamma::gamma(x+1.0)
                             }
                         })),
                         Object::LiteralExpression(e) => Ok(Object::LiteralExpression(Expression::UnaryOperation(UnaryOperation::Factorial, Box::new(e)))),
@@ -306,7 +306,7 @@ pub fn eval(
             // If the LHS is evaluated to zero and `op` is a multiplication, we can skip evaluating the RHS.
             // Furthermore, we actually SHOULD skip it, since this enables us to use indicator functions smartly.
             if let Object::Float(x) = &lhs_eval && approx_eq(*x, 0.0) && *op == BinaryOperation::Mul {
-                return Ok(Object::Float(0.0));
+                return Ok(Object::Float(0.0)); // TODO: return the correct type when `Expression.type` is available
             }
             try_operation(&lhs_eval, &eval(rhs, extra_vars, env)?, op)
         },
@@ -524,11 +524,12 @@ fn eval_assignment(
     match lhs {
         Expression::Identifier(ident)
             => define_constant(ident, eval(rhs, extra_vars, env)?, env),
-        Expression::BinaryOperation(x, BinaryOperation::Mul, y) => {
-            match (&**x, &**y) {
-                (Expression::Identifier(function_name), Expression::Identifier(_))
+        Expression::BinaryOperation(x, BinaryOperation::Mul, y)
+        if let Expression::Identifier(function_name) = &**x => {
+            match &**y {
+                Expression::Identifier(_)
                     => define_function(function_name, std::slice::from_ref(&**y).iter(), rhs, extra_vars, env),
-                (Expression::Identifier(function_name), Expression::Vector(args))
+                Expression::Vector(args) | Expression::Tuple(args)
                     => define_function(function_name, args.iter(), rhs, extra_vars, env),
                 _ => Err(format!("Invalid LHS of assignment expression: {}", lhs))
             }
