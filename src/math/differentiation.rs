@@ -141,7 +141,7 @@ pub fn analytic_partial_derivative(
                     ),
                     simplify_pow(*rhs.clone(), Expression::Number(2.0))
                 )),
-                BinaryOperation::Pow => Ok(simplify_mul( // d/dx (f(x) ^ g(x)) = f(x)^(g(x)-1) * (f'(x)g(x) + f(x)g'(x)ln(f(x)))
+                BinaryOperation::Pow(_) => Ok(simplify_mul( // d/dx (f(x) ^ g(x)) = f(x)^(g(x)-1) * (f'(x)g(x) + f(x)g'(x)ln(f(x)))
                     simplify_pow(
                         *lhs.clone(),
                         simplify_sub(*rhs.clone(), Expression::Number(1.0))
@@ -413,11 +413,11 @@ pub fn analytic_directional_derivative(
                             &try_operation(&eval_lhs, &diff_r, &BinaryOperation::Mul)?,
                             &BinaryOperation::Sub
                         )?,
-                        &try_operation(&eval_rhs, &Object::Float(2.0), &BinaryOperation::Pow)?,
+                        &try_operation(&eval_rhs, &Object::Float(2.0), &BinaryOperation::Pow(true))?,
                         &BinaryOperation::Div
                     )
                 }
-                BinaryOperation::Pow => {
+                BinaryOperation::Pow(_) => {
                     let new_frame = (0..vars.len()).map(|i| (&vars[i], &point[i])).collect();
                     let varstack = VarStack::Frame { vars: &new_frame, parent: extra_vars };
                     let eval_lhs = lang::eval(lhs, &varstack, env)?;
@@ -426,7 +426,7 @@ pub fn analytic_directional_derivative(
                         &try_operation(
                             &eval_lhs,
                             &try_operation(&eval_rhs, &Object::Float(1.0), &BinaryOperation::Sub)?,
-                            &BinaryOperation::Pow
+                            &BinaryOperation::Pow(true)
                         )?,
                         &try_operation(
                             &try_operation(&diff_l, &eval_rhs, &BinaryOperation::Mul)?,

@@ -222,7 +222,7 @@ where T: std::ops::Mul<U, Output=V> + std::ops::Div<U, Output=V> + std::ops::Rem
         BinaryOperation::Div => Ok(lhs / rhs),
         BinaryOperation::Rem => Ok(lhs % rhs),
         // All other operations are not possible (again, I write them out explicitely to be forced to review this snippet if I add new operations)
-        BinaryOperation::Add | BinaryOperation::Sub | BinaryOperation::Quo | BinaryOperation::Pow | BinaryOperation::And | BinaryOperation::Or | BinaryOperation::Comp(..)
+        BinaryOperation::Add | BinaryOperation::Sub | BinaryOperation::Quo | BinaryOperation::Pow(_) | BinaryOperation::And | BinaryOperation::Or | BinaryOperation::Comp(..)
             => Err(format!("Operation {} invalid for operands {:?} and {:?}.", op, lhs, rhs))
     }
 }
@@ -261,7 +261,7 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
                         BinaryOperation::Rem => x.rem_euclid(*y),
                         // The following result should in fact already be an integer, the `.round()` only converts it to int while accounting for small errors.
                         BinaryOperation::Quo => ((x - (x.rem_euclid(*y))) / y).round(),
-                        BinaryOperation::Pow => x.powf(*y),
+                        BinaryOperation::Pow(_) => x.powf(*y),
                         BinaryOperation::Comp(comp, _) => compare(x, y, comp) as i8 as f64,
                         BinaryOperation::Or => if *x != 0.0 || *y != 0.0 {1.0} else {0.0},
                         BinaryOperation::And => if *x != 0.0 && *y != 0.0 {1.0} else {0.0},
@@ -313,7 +313,7 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
         Object::Matrix(x) => {
             match rhs {
                 Object::Float(y) => {
-                    if let BinaryOperation::Pow = op {
+                    if let BinaryOperation::Pow(_) = op {
                         // Matrix exponentiation is only accepted when the exponent is an integer (a.k.a. approximately equal to an integer)
                         let exponent = y.round();
                         if x.m == x.n && approx_eq(exponent, *y) {

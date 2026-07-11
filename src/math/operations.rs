@@ -47,7 +47,10 @@ pub enum BinaryOperation {
     Div,
     Quo,
     Rem,
-    Pow,
+    /// The bool is only needed during parsing and is completely disregarded afterwards.
+    /// It signifies whether this power operation is supposed to be right-associative (true)
+    /// or left-associative (false).
+    Pow(bool),
     And,
     Or,
     Comp(Comparison, Option<Box<Expression>>)
@@ -61,7 +64,7 @@ impl BinaryOperation {
             BinaryOperation::Div => "/",
             BinaryOperation::Quo => "//",
             BinaryOperation::Rem => "%",
-            BinaryOperation::Pow => "^",
+            BinaryOperation::Pow(_) => "^",
             BinaryOperation::And => "&&",
             BinaryOperation::Or => "||",
             BinaryOperation::Comp(c, _) => c.as_str(),
@@ -75,7 +78,7 @@ impl BinaryOperation {
             BinaryOperation::Div => 6,
             BinaryOperation::Quo => 6,
             BinaryOperation::Rem => 6,
-            BinaryOperation::Pow => 7,
+            BinaryOperation::Pow(_) => 7,
             BinaryOperation::And => 2,
             BinaryOperation::Or => 1,
             BinaryOperation::Comp(..) => 4,

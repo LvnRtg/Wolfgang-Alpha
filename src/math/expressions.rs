@@ -187,7 +187,7 @@ impl Expression {
                 multlined_left.last_mut().unwrap().push_str(format!(
                     "{}{}",
                     match op {
-                        BinaryOperation::Pow => op.as_str().to_string(),
+                        BinaryOperation::Pow(_) => op.as_str().to_string(),
                         BinaryOperation::Mul if matches!(&**l, Expression::Number(_)) && !matches!(&**r, Expression::Number(_) | Expression::IfElse(..)) => String::new(),
                         _ => format!(" {} ", op.as_str())
                     },
@@ -357,7 +357,7 @@ pub fn simplify_pow(lhs: Expression, rhs: Expression) -> Expression {
         lhs
     }
     else {
-        Expression::BinaryOperation(Box::new(lhs), BinaryOperation::Pow, Box::new(rhs))
+        Expression::BinaryOperation(Box::new(lhs), BinaryOperation::Pow(true), Box::new(rhs))
     }
 }
 
@@ -618,7 +618,7 @@ macro_rules! expr_pow {
     ($lhs:expr, $rhs:expr) => {
         Expression::BinaryOperation(
             Box::new($lhs),
-            BinaryOperation::Pow,
+            BinaryOperation::Pow(true),
             Box::new($rhs)
         )
     };
@@ -638,7 +638,7 @@ macro_rules! expr_square {
     ($lhs:expr) => {
         Expression::BinaryOperation(
             Box::new($lhs),
-            BinaryOperation::Pow,
+            BinaryOperation::Pow(true),
             Box::new(Expression::Number(2.0))
         )
     };

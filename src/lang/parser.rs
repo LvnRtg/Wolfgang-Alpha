@@ -101,7 +101,7 @@ impl Parser {
         // First, determine the LHS of the next operation to execute.
         // This is either an identifier, a number or a further expression between parentheses.
         let mut lhs = match self.next()? {
-            Token::Minus => Expression::UnaryOperation(UnaryOperation::Neg, Box::new(self.parse_expression(5, None, env)?)),
+            Token::Minus => Expression::UnaryOperation(UnaryOperation::Neg, Box::new(self.parse_expression(6, None, env)?)),
             Token::ExclamationMark // An exclamation mark before an expected expression signifies a `not` operator
                 => Expression::UnaryOperation(UnaryOperation::Not, Box::new(self.parse_expression(3, None, env)?)),
             Token::Identifier(id) if id == "D" || id == "D_" => { // Total derivative
@@ -321,7 +321,7 @@ impl Parser {
                 Token::Slash => (BinaryOperation::Div, 6, true),
                 Token::DoubleSlash => (BinaryOperation::Quo, 6, true),
                 Token::Percent => (BinaryOperation::Rem, 6, true),
-                Token::Circumflex => (BinaryOperation::Pow, 7, true),
+                Token::Circumflex => (BinaryOperation::Pow(true), 7, true),
                 Token::Assign => (BinaryOperation::Add, 0, true), // We don't need any operation here, so 'Add' is just a placeholder to simplify notation
                 // Importantly, we only fetch the comparison's optional parameter later, when we actually consume the operator (avoids cloning).
                 Token::Comparison(c, _) => (BinaryOperation::Comp(*c, None), 4, true),
@@ -359,27 +359,45 @@ impl Parser {
 
             // The RHS can only contain operators of strictly larger precedence, so we parse it with parameter 'prec+1'.
             let rhs = self.parse_expression(prec + 1, return_early_if, env)?;
-            lhs = match (lhs, &op, &rhs) {
+
+            if let BinaryOperation::Pow(_) = op {
                 // Special case: the `^` operator is traditionally right-associative and not left-associative, i.e. 2^3^2 = 2^(3^2) and not (2^3)^2.
-                (Expression::BinaryOperation(a, BinaryOperation::Pow, b), ..) if op == BinaryOperation::Pow
-                    => Expression::BinaryOperation(
-                        a,
-                        op,
-                        Box::new(Expression::BinaryOperation(b, BinaryOperation::Pow, Box::new(rhs)))
-                    ),
-                // Assignment operator
-                (lhs, ..) if prec == 0 => Expression::Assignment(Box::new(lhs), Box::new(rhs)),
-                // Partial derivative
-                (
-                    Expression::Identifier(lhs_ident),
-                    BinaryOperation::Div,
-                    Expression::Identifier(ident)
-                ) if lhs_ident == "d" && ident.len() > 1
-                    // Parse the function to differentiate recursively.
-                    => Expression::PartialDerivative(ident[1..].to_string(), Box::new(self.parse_expression(8, None, env)?)),
-                // Default
-                (lhs, ..) => Expression::BinaryOperation(Box::new(lhs), op, Box::new(rhs))
-            };
+                // Naively, we would check if `lhs = left ^ middle` and then return `left ^ (middle ^ rhs)`. However, `middle` might be an expression of
+                // type `x ^(true) y` too; in that case, we'd have to pass `^rhs` further down until we reach an expression that it not of this form.
+                let mut last_exponent_in_chain = &mut lhs;
+                // The following line is also the only spot in the entire codebase where the bool inside `BinaryOperation::Pow` matters.
+                while let Expression::BinaryOperation(_, BinaryOperation::Pow(true), next_exponent) = last_exponent_in_chain {
+                    last_exponent_in_chain = next_exponent;
+                }
+                // Now, we can replace `last_exponent_in_chain` by `last_exponent_in_chain ^ rhs`.
+                // Because of ownership reasons, we first need to move `last_exponent_in_chain` out of `lhs`, leaving a placeholder behind,
+                // and then put back in the modified version.
+                let old = std::mem::replace(last_exponent_in_chain, Expression::None);
+                *last_exponent_in_chain = Expression::BinaryOperation(Box::new(old), BinaryOperation::Pow(true), Box::new(rhs));
+            } else {
+                // Otherwise, check a few more special cases or just combine `lhs`, `op` and `rhs` as expected.
+                lhs = match (lhs, &op, &rhs) {
+                    // Assignment operator
+                    (lhs, ..) if prec == 0 => Expression::Assignment(Box::new(lhs), Box::new(rhs)),
+                    // Partial derivative
+                    (
+                        Expression::Identifier(lhs_ident),
+                        BinaryOperation::Div,
+                        Expression::Identifier(ident)
+                    ) if lhs_ident == "d" && ident.len() > 1
+                        // Parse the function to differentiate recursively.
+                        => Expression::PartialDerivative(ident[1..].to_string(), Box::new(self.parse_expression(8, None, env)?)),
+                    // Default
+                    (lhs, ..) => Expression::BinaryOperation(Box::new(lhs), op, Box::new(rhs))
+                };
+            }
+
+            // To handle the right-associative operator `^`, in case `lhs` now is of the form `a ^ b`, we need to store whether
+            // `lhs` is followed by a parenthesis (because this breaks right-associativity).
+            if let (Expression::BinaryOperation(_, _op @ BinaryOperation::Pow(_), _), Ok(Token::RParenthesis)) = (&mut lhs, self.peek()) {
+                *_op = BinaryOperation::Pow(false);
+            }
+
             // This is the second place where `return_early_if` is checked. It was passed down when parsing the
             // RHS recursively, so maybe, this recursive call was interrupted by `return_early_if`. However,
             // this only stops the recursive call in `let rhs = ...`, not this current function call, which
@@ -408,8 +426,8 @@ impl Parser {
     /// <trd> <td>&&<td/> <td>2<td/> </tr>
     /// <trd> <td>! (not)<td/> <td>3<td/> </tr>
     /// <trd> <td><, >, <=, >=, ==<td/> <td>4<td/> </tr>
-    /// <tr> <td>+, -<td/> <td>5<td/> </tr>
-    /// <tr> <td>*, /, //, %<td/> <td>6<td/> </tr>
+    /// <tr> <td>+, - (binary)<td/> <td>5<td/> </tr>
+    /// <tr> <td>*, /, //, %, - (unary)<td/> <td>6<td/> </tr>
     /// <tr> <td>^<td/> <td>7<td/> </tr>
     /// <tr> <td>d/dx, D<td/> <td>8<td/> </tr>
     /// </table>
