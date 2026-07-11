@@ -155,7 +155,7 @@ pub fn default_functions() -> HashMap<String, FunctionRepr> {
                     Ok(Object::Float((0..n).map(|i|
                         x[i]
                         * if i > 0 {(0..i).map(|j| y[j]).product()} else {1.0}
-                        * if i < n-1 {(i..n).map(|j| y[j]).product()} else {1.0}
+                        * if i < n-1 {(i+1..n).map(|j| y[j]).product()} else {1.0}
                     ).sum()))
                 } else {
                     Err("Arguments to `___helper_prod_rule` must be two vectors of equal length.".to_string())

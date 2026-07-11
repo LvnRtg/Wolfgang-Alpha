@@ -169,8 +169,8 @@ pub fn analytic_partial_derivative(
             if let (Expression::Number(f_a), Expression::Number(f_b)) = (&**from, &**to) && conditions.is_empty() {
                 let (a, b) = (f_a.round() as usize, f_b.round() as usize);
                 Ok(Expression::Function("___helper_prod_rule".to_string(), vec![
-                    Expression::Vector((a..b).map(|i| analytic_partial_derivative(&inner.replace_identifiers(varname, &Expression::Number(i as f64)), wrt, extra_vars, env)).collect::<Result<Vec<_>, _>>()?),
-                    Expression::Vector((a..b).map(|i| inner.replace_identifiers(varname, &Expression::Number(i as f64))).collect())
+                    Expression::Vector((a..=b).map(|i| analytic_partial_derivative(&inner.replace_identifiers(varname, &Expression::Number(i as f64)), wrt, extra_vars, env)).collect::<Result<Vec<_>, _>>()?),
+                    Expression::Vector((a..=b).map(|i| inner.replace_identifiers(varname, &Expression::Number(i as f64))).collect())
                 ]))
             } else {
                 Err("Differentiation of product over non-constant range not implemented yet.".to_string())
