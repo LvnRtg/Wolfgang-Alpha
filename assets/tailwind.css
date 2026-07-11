@@ -206,9 +206,6 @@
   .rounded {
     border-radius: 0.25rem;
   }
-  .italic {
-    font-style: italic;
-  }
 }
 @property --tw-rotate-x {
   syntax: "*";
