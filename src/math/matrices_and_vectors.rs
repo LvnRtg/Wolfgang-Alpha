@@ -749,22 +749,23 @@ impl Matrix {
         let mut perm: Vec<usize> = (0..n).collect();
 
         for i in 0..n {
-            let pivot_row = (i..n).max_by(
-                |&r1, &r2| a.get(r1, i).abs().partial_cmp(&a.get(r2, i).abs()).unwrap()
-            ).unwrap();
-
-            // Swap rows `i` and `pivot_row` in `a`, `l`, and `perm`
+            // Reduced values in column i for rows i..n
+            let reduced = |r: usize| -> f64 {
+                a.get(r, i) - (0..i).map(|j| l.get(r, j) * u.get(j, i)).sum::<f64>()
+            };
+            // The `unwrap_or` below is there to avoid panicking if either compared value is NaN
+            let pivot_row = (i..n)
+                .max_by(|&r1, &r2| reduced(r1).abs().partial_cmp(&reduced(r2).abs()).unwrap_or(std::cmp::Ordering::Equal))
+                .unwrap();
             if pivot_row != i {
                 perm.swap(i, pivot_row);
                 for col in 0..n {
                     a.values.swap(i * n + col, pivot_row * n + col);
                 }
-                // Swap the already-computed `l` entries (columns `0..i`) for these two rows
                 for col in 0..i {
                     l.values.swap(i * n + col, pivot_row * n + col);
                 }
             }
-
             // Compute `i`-th row of `u` and `i`-th column of `l`
             for k in i..n {
                 u.set(i, k, a.get(i, k) - (0..i).map(|j| l.get(i, j) * u.get(j, k)).sum::<f64>());
@@ -1035,14 +1036,15 @@ impl Matrix {
     /// 
     /// Runs in 2/3 * n^3 + O(n^2).
     pub fn det(&self) -> Option<f64> {
-        if self.m != self.n { return None; }
-        if let Some((l, u)) = self.lu_decomposition() {
-            Some(l.diag_product() * u.diag_product())
-        } else {
-            // If no LU-decomposition exists, there exists some linear dependency between rows.
-            // This immediately implies that the matrix is not invertible, that is, it has determinant zero.
-            Some(0.0)
-        }
+        self.lu_decomposition_full_pivot().map(
+            |(l, u, p, q)|
+            // We now have `self = p^T * L * U * q^T` so
+            // det(self) = det(p) det(L) det(U) det(q)
+            if utils::permutation_parity(&p) {1.0} else {-1.0}
+            * if utils::permutation_parity(&q) {1.0} else {-1.0}
+            * l.diag_product()
+            * u.diag_product()
+        )
     }
 
     /// Returns the determinant of `self` assuming that `self` is an `nxn` Hessenberg matrix.
