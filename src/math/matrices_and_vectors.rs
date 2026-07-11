@@ -524,7 +524,7 @@ impl Vector {
     pub fn norm(&self, norm_type: &VectorNorm) -> f64 {
         match norm_type {
             VectorNorm::P(f64::INFINITY) => utils::max_abs(self.values.iter()),
-            VectorNorm::P(p) => self.values.iter().map(|x| x.powf(*p)).sum::<f64>().powf(1.0 / *p),
+            VectorNorm::P(p) => self.values.iter().map(|x| x.abs().powf(*p)).sum::<f64>().powf(1.0 / *p),
         }
     }
 
@@ -534,37 +534,38 @@ impl Vector {
     /// 
     /// In this function, we return that `v` with the additional constraint `||v*||_q = 1`.
     /// 
-    /// # Panics
-    /// Panics if `p<1`.
-    pub fn dual(&self, p: f64) -> Vector {
-        assert!(p >= 1.0, "p must be >= 1, got {p}");
+    /// Returns `Err` if p is strictly less than one.
+    pub fn dual(&self, p: f64) -> Result<Vector, String> {
+        if p < 1.0 {
+            return Err(format!("p must be at least 1, got p={p} instead."));
+        }
     
         let n = self.len();
         let supnorm = self.norm(&VectorNorm::P(f64::INFINITY));
         if supnorm == 0.0 {
-            return self.clone();
+            return Ok(self.clone());
         }
     
         if p == 1.0 {
             // Then, `q = \infty`, so the dual is simply `self.values.map(sign)`.
-            Vector { values: self.values.iter().map(|x| x.signum()).collect() }
+            Ok(Vector { values: self.values.iter().map(|x| x.signum()).collect() })
         } else if p == f64::INFINITY {
             // Then, `q = 1`, so the dual is simply the unit vector pointing in direction `argmax_i |self[i]|`.
             let mut i: usize = 0; let mut highest_abs = 0.0;
             for (j, x) in self.values.iter().enumerate() {
-                if *x > highest_abs {
+                if x.abs() > highest_abs {
                     highest_abs = *x;
                     i = j;
                 }
             }
             let mut dual = Vector::zeros(n);
             dual[i] = self[i].signum();
-            dual
+            Ok(dual)
         } else {
             let q = 1.0 / (1.0 - 1.0 / p);
             let mut dual = Vector {values: self.values.iter().map(|x| x.signum() * (x / supnorm).abs().powf(p - 1.0)).collect()};
             dual /= dual.norm(&VectorNorm::P(q));
-            dual
+            Ok(dual)
         }
     }
 }
@@ -1075,6 +1076,8 @@ impl Matrix {
     fn givens_matrix(&self, i: usize, j: usize, col: usize) -> Matrix {
         let mut g = Matrix::identity(self.m);
         let x = (self.get(i, col).powi(2) + self.get(j, col).powi(2)).sqrt();
+        // If x == 0, then A[j][col] is already zero, so we don't have to modify `self` at all.
+        if utils::approx_eq(x, 0.0) {return g;}
         g.set(i, i, self.get(i, col) / x);
         g.set(j, j, self.get(i, col) / x);
         g.set(i, j, self.get(j, col) / x);
@@ -1205,7 +1208,7 @@ impl Matrix {
             y = (self * &x).unwrap();
             let eo = est;
             est = y.norm(&VectorNorm::P(p));
-            let dv_y = y.dual(p);
+            let dv_y = y.dual(p)?;
             // Slightly hacky; instead of `self^t * dv_y`, we write `dv_y * self`, which I implemented as `(dv_y^t * self)^t` for convenience
             // (the other operation would be undefined anyway), which in turn is mathematically exactly `self^t * dv_y`.
             let z = (&dv_y * self).unwrap();
@@ -1213,7 +1216,7 @@ impl Matrix {
             if iter > 1 && (z_q_norm < (&z * &x).unwrap() || (est - eo).abs() <= tolerance * est) {
                 break;
             }
-            x = z.dual(q);
+            x = z.dual(q)?;
         }
         Ok(est)
     }
