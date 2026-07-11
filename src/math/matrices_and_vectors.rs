@@ -1028,9 +1028,12 @@ impl Matrix {
         (0..self.m).fold(1.0, |acc, i| acc * self.get(i, i))
     }
 
-    /// Returns the sum of all diagonal entries of `self`.
-    pub fn tr(&self) -> f64 {
-        (0..self.m).map(|i| self.get(i, i)).sum()
+    /// Returns the sum of all diagonal entries of `self`. Returns `Err` if the matrix isn't square.
+    pub fn tr(&self) -> Result<f64, String> {
+        if self.m != self.n {
+            return Err("Can't compute the trace of a non-square matrix.".to_string());
+        }
+        Ok((0..self.m).map(|i| self.get(i, i)).sum())
     }
 
     /// Returns the determinant of `self` via an LU-decomposition.

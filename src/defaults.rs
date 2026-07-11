@@ -143,7 +143,7 @@ pub fn default_functions() -> HashMap<String, FunctionRepr> {
             Some(res) => Ok(Object::Matrix(res)),
             None => Err(format!("Matrix must be quadratic (got size {}x{}).", mat.m, mat.n))
         }),
-        apply_matrix_fn!(tr, |r, _| {Ok(Object::Float(r))}),
+        apply_matrix_fn!(tr, |r: Result<f64, String>, _| {r.map(Object::Float)}),
 
         // Takes two vectors (x_1, ..., x_n) and (y_1, ..., y_n) and returns \sum_{i=1}^n x_i \prod_{j \neq i} y_j.
         ("___helper_prod_rule".to_string(), FunctionRepr::Direct(
