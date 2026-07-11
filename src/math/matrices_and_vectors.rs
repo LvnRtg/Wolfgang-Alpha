@@ -1134,7 +1134,7 @@ impl Matrix {
         let mut res = Matrix::zeros(self.n, self.n);
         for i in 0..self.n {
             for j in 0..=i {
-                let value = (0..self.n)
+                let value = (0..self.m)
                     .map(|k| self.get(k, i) * self.get(k, j))
                     .sum();
                 res.set(i, j, value);
