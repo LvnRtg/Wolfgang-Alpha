@@ -26,6 +26,10 @@ The basic syntax is the natural one with usual operator precedence. A few specia
 ### Matrices and vectors
 - Matrices can be initialized by typing `[1, 2, 3 \ 4, 5, 6 \ 7, 8, 9]` where the rows will be `[1,2,3]`, `[4,5,6]` and `[7,8,9]` respectively.
   The backslash can be used interchangeably with a semicolon `;`, even within the same matrix.
+- Unlike for tuples (see below), the environment is not
+  captured before evaluation, meaning that e.g. `x := 1; [x := 2, x + 1]` returns `[2, 3]` and not `[2, 2]`. The reason for this is performance:
+  matrices aren't made to contain definitions as entries (unlike tuples in some scenarios) and capturing the environment is costly. In this regard,
+  vectors behave like matrices.
 - Vectors can be initialized by typing either `[1; 2; 3]` or `[1 \ 2 \ 3]` (as one would initialize a matrix with only one column).
 - A range of standard functions for matrices and vectors are pre-defined, such as `det`, `tr` and `adj`.
   For precise lists and explanations on the implementations, see `defaults.rs`.
@@ -42,6 +46,7 @@ The basic syntax is the natural one with usual operator precedence. A few specia
   This returns the evaluation of `expr`, so one can write e.g. `(x := 2) + 1` to obtain `3` as output and define `x` simultaneously.<br/>
   If `identifier` is already a defined constant, this will re-define it and permanently suppress the old value.
 - Tuple assignment is supported: write e.g. `(x, y) := rhs` where `rhs` can be evaluated to a tuple of the same size. Function assignment is not allowed in this way.
+  The environment is captured before evaluation such that the entire tuple is evaluated based on the same environment.
 - Definition of functions: `f(x, y) := 2x + y`. If e.g. `x` already exists as a constant/function, this will be ignored for the sake of the function's definition.
   The `x` on the RHS of the definition will always be the `x` passed as argument, not the constant.<br/>
   If one wants to include a constant from the current environment, simply type `f(y) := 2x + y` where `x` is a pre-defined constant. Note that the
