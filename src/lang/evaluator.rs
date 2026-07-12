@@ -271,10 +271,11 @@ pub fn eval(
                 lhs.list_unknown_identifiers(extra_vars, env, &mut lhs_free_variables);
                 let mut rhs_free_variables = HashSet::<String>::new();
                 rhs.list_unknown_identifiers(extra_vars, env, &mut rhs_free_variables);
-                if let Some((this, other, param)) = if !lhs_free_variables.is_empty() {
-                    Some((*lhs.clone(), *rhs.clone(), param))
+                // The following bool `mirror` expresses whether the comparison operator `op` should subsequently be mirrored or not.
+                if let Some((this, other, param, mirror)) = if !lhs_free_variables.is_empty() {
+                    Some((*lhs.clone(), *rhs.clone(), param, false))
                 } else if !rhs_free_variables.is_empty() {
-                    Some((*rhs.clone(), *lhs.clone(), param))
+                    Some((*rhs.clone(), *lhs.clone(), param, true))
                 } else {None} {
                     let other_only_needs_single_eval = rhs_free_variables.is_empty();
                     lhs_free_variables.extend(rhs_free_variables);
@@ -321,7 +322,7 @@ pub fn eval(
                                 ?;
                         }
                         // If the objects' comparison yields `false`, return that. If the objects aren't comparable, return the appropriate error. Otherwise, continue.
-                        match try_operation(&first_eval, &other_eval, op) {
+                        match if mirror {try_operation(&other_eval, &first_eval, op)} else {try_operation(&first_eval, &other_eval, op)} {
                             Ok(Object::Float(0.0)) => { return Ok(Object::Float(0.0)); }
                             Err(_) => { return Err(format!("Couldn't compare `{}` and `{}` (arising from environment {:?}).", first_eval, other_eval, env.constants)); }
                             _ => {}
