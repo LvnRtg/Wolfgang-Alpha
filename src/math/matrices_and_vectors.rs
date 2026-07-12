@@ -932,20 +932,28 @@ impl Matrix {
         // Now, apply the formula from the documentation.
         let det_p = if utils::permutation_parity(&pt) {1.0} else {-1.0};
         let det_q = if utils::permutation_parity(&qt) {1.0} else {-1.0};
-        let adj_d = d.adj_for_diagonal_matrix();
-        &(det_p * det_q
-        * &(&u.adj_for_upper_triangular_matrix().permute_rows(&utils::transpose_permutation(&qt))
-        * &adj_d)?)
-        * &l.transpose().adj_for_upper_triangular_matrix()
+        let adj_d = d.adj_for_diagonal_matrix()?;
+        &(
+            det_p
+            * det_q
+            * &(&u.adj_for_upper_triangular_matrix().permute_rows(&utils::transpose_permutation(&qt))
+            * &adj_d)?
+        ) * &l.transpose().adj_for_upper_triangular_matrix()
             .permute_rows(&utils::transpose_permutation(&pt))
             .transpose()
     }
 
     /// Returns the adjugate matrix of `self` assuming that `self` is a diagonal matrix `D`. Then, `adj(D)` is the diagonal matrix with
-    /// entries `adj(D)_{i,i} = \prod_{j \neq i} D_{j,j}`.
+    /// entries `adj(D)_{i,i} = \prod_{j \neq i} D_{j,j}`. Returns `None` if the matrix isn't square.
     /// 
     /// Interestingly enough, this function runs in only O(n) of time (see implementation).
-    pub fn adj_for_diagonal_matrix(&self) -> Matrix {
+    /// 
+    /// This forces us not to check whether the matrix is indeed diagonal (this would be O(n²)).
+    /// If the matrix is square but not diagonal, returns a matrix that probably isn't the correct adjugate.
+    pub fn adj_for_diagonal_matrix(&self) -> Option<Matrix> {
+        if self.m != self.n {return None;}
+        if self.m == 0 {return Some(Matrix{m: 0, n: 0, values: vec![]});}
+        if self.m == 1 {return Some(Matrix{m: 1, n: 1, values: vec![1.0]});} // Adjugate of 1x1 matrix is always [1]
         // Compute the prefix products p_i := \prod_{k=0}^i D_{k,k} and the suffix products s_i := \prod_{k=i}^{n-1} D_{k,k}.
         let mut p = Vec::<f64>::with_capacity(self.n);
         p.push(self.get(0, 0)); // p_0 = D_{0,0}
@@ -964,7 +972,7 @@ impl Matrix {
             diag.push(p[i-1] * s_reverse[self.n - i - 2]);
         }
         diag.push(p[self.n-2]);
-        Matrix::diag(&diag)
+        Some(Matrix::diag(&diag))
     }
     
     /// Returns the adjugate matrix of `self` assuming that `self` is a square upper triangular matrix `U`.
@@ -1111,10 +1119,12 @@ impl Matrix {
     fn qr_decomposition_for_hessenberg_matrix(&self) -> (Matrix, Matrix) {
         let mut r = self.clone();
         let mut q = Matrix::identity(self.m);
-        for i in 0..self.m-1 {
-            let g = r.givens_matrix(i, i+1, i);
-            q = (&g * &q).unwrap();
-            r = (&g * &r).unwrap();
+        if self.m > 0{
+            for i in 0..self.m-1 {
+                let g = r.givens_matrix(i, i+1, i);
+                q = (&g * &q).unwrap();
+                r = (&g * &r).unwrap();
+            }
         }
         (q.transpose(), r)
     }
