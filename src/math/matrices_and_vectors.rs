@@ -918,6 +918,9 @@ impl Matrix {
     /// 
     /// Then, `adj(A) = adj(Y) adj(D) adj(X) = det(P) det(Q) Q adj(U) adj(D) adj(L) P`, which can be computed in O(n^3).
     pub fn adj(&self) -> Option<Matrix> {
+        if self.m != self.n {return None;}
+        if self.m == 0 {return Some(Matrix{m: 0, n: 0, values: vec![]});}
+        if self.m == 1 {return Some(Matrix{m: 1, n: 1, values: vec![1.0]});} // Adjugate of 1x1 matrix is always [1]
         let (l, mut u, pt, qt) = self.lu_decomposition_full_pivot()?;
         let n = self.n;
         // Currently, U doesn't necessarily have diagonal entries (1, ..., 1). We still have to extract D.
