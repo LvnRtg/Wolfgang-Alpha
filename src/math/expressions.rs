@@ -363,7 +363,8 @@ pub fn simplify_pow(lhs: Expression, rhs: Expression) -> Expression {
 
 
 impl Expression {
-    /// Parses itself recursively and replaces every encountered `ident` by `by`. Ignores the LHS of assignment operators.
+    /// Parses itself recursively and replaces every encountered `ident` by `by`. Ignores the LHS of assignment operators
+    /// and the insides of FoldedOperations/Integrals of which the running variable is also named `ident`.
     pub fn replace_identifiers_in_place(&mut self, ident: &String, by: &Expression) {
         match self {
             Expression::Identifier(x) if x == ident => {
@@ -375,14 +376,29 @@ impl Expression {
                 => x.replace_identifiers_in_place(ident, by),
             Expression::BinaryOperation(x, _, y)
                 => {x.replace_identifiers_in_place(ident, by); y.replace_identifiers_in_place(ident, by);}
+            Expression::FoldedOperation(_, varname, from, conditions, to, inner) => {
+                from.replace_identifiers_in_place(ident, by);
+                conditions.iter_mut().for_each(|x| x.replace_identifiers_in_place(ident, by));
+                to.replace_identifiers_in_place(ident, by);
+                if varname != ident {
+                    inner.replace_identifiers_in_place(ident, by);
+                }
+            }
             Expression::DirectionalDerivative(_, x, point, direction) => {
                 x.replace_identifiers_in_place(ident, by);
                 point.iter_mut().for_each(|y| y.replace_identifiers_in_place(ident, by));
                 direction.iter_mut().for_each(|y| y.replace_identifiers_in_place(ident, by));
             }
+            Expression::Integral(from, to, inner, varname) => {
+                from.replace_identifiers_in_place(ident, by);
+                to.replace_identifiers_in_place(ident, by);
+                if varname != ident {
+                    inner.replace_identifiers_in_place(ident, by);
+                }
+            }
             Expression::IfElse(x, y, z)
                 => {x.replace_identifiers_in_place(ident, by); y.replace_identifiers_in_place(ident, by); z.replace_identifiers_in_place(ident, by);}
-            _ => {}
+            Expression::None | Expression::Number(_) | Expression::Identifier(_) => {}
         }
     }
 
