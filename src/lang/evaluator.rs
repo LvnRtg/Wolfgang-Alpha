@@ -8,7 +8,7 @@ use itertools::Itertools;
 use crate::math;
 use crate::math::utils::{approx_eq, linspace_as_objects};
 use crate::math::objects::try_operation;
-use crate::math::{BinaryOperation, DirectFunction, Env, Expression, FunctionRepr, Object, UnaryOperation, VarStack}; // Common types that will be used several times
+use crate::math::{BinaryOperation, Env, Expression, FunctionRepr, Object, UnaryOperation, VarStack}; // Common types that will be used several times
 
 
 const DEFAULT_TESTEQ_REPETITIONS: usize = 20;
@@ -393,10 +393,31 @@ pub fn eval(
                 let rm = env.functions.remove(real_function_name);
                 let res = match rm {
                     Some(FunctionRepr::Direct(f_ref)) => {
-                        eval_diff_num(f_ref, arg_exprs, extra_vars, env)
+                        let (point, direction) = parse_diff_num_args(arg_exprs, extra_vars, env)?;
+                        let mut mutable_version = |args: &[Object]| f_ref(args);
+                        math::differentiation::numerical_directional_derivative(&mut mutable_version, point, direction)
                     }
-                    Some(FunctionRepr::ByExpression(..)) => {
-                        Err("Don't use ___diff_num_ to differentiate a function that has an explicit defining expression.".to_string())
+                    Some(FunctionRepr::ByExpression(ref f_varnames, ref f_expr)) => {
+                        // This is rare, but if e.g. an integral should be differentiated, then we need this case
+                        // (cf. `math::differentiation::analytic_partial_derivative`, case `Expression::Integral`).
+                        let (point, direction) = parse_diff_num_args(arg_exprs, extra_vars, env)?;
+                        // This following closure is also the reason why we need `parse_diff_num_args` in a separate function.
+                        #[allow(clippy::type_complexity)] 
+                        let mut f_as_direct: Box<dyn for<'a> FnMut(&'a [Object]) -> Result<Object, String>> = Box::new(|args: &[Object]| {
+                            if args.len() != f_varnames.len() {
+                                Err(format!("Wrong number of arguments for {} (expected {}, got {}).", real_function_name, f_varnames.len(), args.len()))
+                            } else {
+                                eval(
+                                    f_expr,
+                                    &VarStack::Frame {
+                                        vars: &(0..f_varnames.len()).map(|i| (&f_varnames[i], &args[i])).collect(),
+                                        parent: extra_vars
+                                    },
+                                    env
+                                )
+                            }
+                        });
+                        math::differentiation::numerical_directional_derivative(&mut f_as_direct, point, direction)
                     }
                     None => Err(format!("No such function: {:?}", function_name))
                 };
@@ -482,7 +503,12 @@ fn eval_function(
     }
 }
 
-fn eval_diff_num(f: &DirectFunction, arg_exprs: &[Expression], extra_vars: &VarStack, env: &mut Env) -> Result<Object, String> {
+/// Takes a vector of `Expression`s the format `point <concat> direction` and decomposes it into point and direction.
+/// Also evaluates each expression.
+/// 
+/// Note: this needs to be a separate function to avoid passing `env` to `eval_diff_num`. This would create a conflict
+/// because `env` is also captured by a closure when numerically differentiating a function defined by an expression.
+fn parse_diff_num_args(arg_exprs: &[Expression], extra_vars: &VarStack, env: &mut Env) -> Result<(Vec<Object>, Vec<Object>), String> {
     // The given arguments should then have the format `point <concat> direction`, so we have to split the arguments
     // into two parts (splitting in the middle of the array which we ensured has even size).
     let point = (0..arg_exprs.len()/2)
@@ -491,8 +517,7 @@ fn eval_diff_num(f: &DirectFunction, arg_exprs: &[Expression], extra_vars: &VarS
     let direction = (arg_exprs.len()/2..arg_exprs.len())
         .map(|i| eval(&arg_exprs[i], extra_vars, env))
         .collect::<Result<Vec<_>, _>>()?;
-    let mut mutable_version = Box::new(|args: &[Object]| f(args));
-    math::differentiation::numerical_directional_derivative(&mut mutable_version, point, direction)
+    Ok((point, direction))
 }
 
 fn eval_assignment(

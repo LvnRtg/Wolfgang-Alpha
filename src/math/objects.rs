@@ -192,7 +192,8 @@ impl ops::Not for &Object {
     }
 }
 
-pub type DirectFunction = Box<dyn Fn(&[Object]) -> Result<Object, String> + Send + Sync>;
+/// Type abbreviation, nothing special to say about its definition.
+pub type DirectFunction = Box<dyn for<'a> Fn(&'a [Object]) -> Result<Object, String> + Send + Sync>;
 
 /// Different representations for a function
 #[derive(Clone)]

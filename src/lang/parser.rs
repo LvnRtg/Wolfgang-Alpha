@@ -97,7 +97,8 @@ impl Parser {
     /// If `return_early_if` is `Some(f)` and a token `x` with `f(x) == true` is encountered in a place of an operator, the function returns early instead.
     /// This is usually unnecessary (e.g. expressions between parentheses are parsed just fine without this), but is strictly required
     /// when parsing an expression between e.g. double pipes (`||`), because this token cannot necessarily be distinguished from the "or" operator.
-    #[allow(clippy::type_complexity)] fn parse_expression(&mut self, min_precedence: u8, return_early_if: Option<&Box<dyn Fn(&Token) -> bool>>, env: &mut Env) -> Result<Expression, String> {
+    #[allow(clippy::type_complexity)]
+    fn parse_expression(&mut self, min_precedence: u8, return_early_if: Option<&Box<dyn Fn(&Token) -> bool>>, env: &mut Env) -> Result<Expression, String> {
         // First, determine the LHS of the next operation to execute.
         // This is either an identifier, a number or a further expression between parentheses.
         let mut lhs = match self.next()? {
