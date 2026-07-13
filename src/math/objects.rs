@@ -1,11 +1,15 @@
 use std::ops;
 use std::fmt;
 
+use crate::expr_add;
+use crate::expr_mul;
+use crate::math::Complex;
 use crate::math::matrices_and_vectors::{Matrix, Vector};
 use crate::math::expressions::Expression;
 use crate::math::operations::*;
 use crate::math::utils;
 use crate::math::utils::approx_eq;
+
 
 /// Here, objects are things an identifier (e.g. "x") can represent, that is:
 /// - A numerical constant (in the type we always use, f64)
@@ -18,6 +22,7 @@ pub enum Object {
     /// May be returned by a derivative if the given expression is not differentiable.
     Undefined,
     Float(f64),
+    Complex(Complex),
     Tuple(Vec<Object>),
     /// Vector/matrix operations are implemented for references to vectors/matrices anyway, so only
     /// using references to Vector/Matrix makes sense here.
@@ -31,6 +36,7 @@ impl fmt::Display for Object {
             Object::Success => write!(f, "Object::Success"),
             Object::Undefined => write!(f, "Undefined"),
             Object::Float(x) => write!(f, "{}", x),
+            Object::Complex(x) => write!(f, "{}", x),
             Object::Tuple(x) => write!(f, "({})", x.iter().map(|o| format!("{:?}", o)).collect::<Vec<String>>().join(", ")),
             Object::Vector(x) => write!(f, "{:?}", x),
             Object::Matrix(x) => write!(f, "{:?}", x),
@@ -46,6 +52,7 @@ impl Object {
             Object::Success => vec!["Success".to_string()],
             Object::Undefined => vec!["Undefined".to_string()],
             Object::Float(x) => vec![x.to_string()],
+            Object::Complex(x) => vec![format!("{x}")],
             Object::Tuple(x) => {
                 let multlined_inner = x.iter().map(|o| o.to_multline()).collect::<Vec<Vec<String>>>();
                 if multlined_inner.iter().all(|v| v.len() == 1) {
@@ -100,6 +107,7 @@ impl Object {
         match self {
             Object::Success | Object::Undefined => Expression::None, // This would be a syntax error
             Object::Float(x) => Expression::Number(*x),
+            Object::Complex(x) => expr_add!(Expression::Number(x.real), expr_mul!(Expression::Number(x.imag), Expression::Identifier("i".to_string()))),
             Object::Tuple(v) => Expression::Tuple(v.iter().map(|o| o.to_expression()).collect()),
             Object::Vector(v) => Expression::Vector(v.values.iter().map(|entry| Expression::Number(*entry)).collect()),
             Object::Matrix(x) => Expression::Matrix(
@@ -134,6 +142,7 @@ impl<'a> ops::Mul<&'a Object> for f64 {
             Object::Success => Object::Success,
             Object::Undefined => Object::Undefined,
             Object::Float(x) => Object::Float(self * x),
+            Object::Complex(x) => Object::Complex(Complex{real: self * x.real, imag: self * x.imag}),
             Object::Tuple(x) => Object::Tuple(x.iter().map(|o| self * o).collect()),
             Object::Vector(x) => Object::Vector(self * x),
             Object::Matrix(x) => Object::Matrix(self * x),
@@ -164,6 +173,7 @@ impl ops::Neg for &Object {
             Object::Success => Ok(Object::Success),
             Object::Undefined => Err("Operation 'Neg' not valid for undefined operand.".to_string()),
             Object::Float(x) => Ok(Object::Float(-x)),
+            Object::Complex(x) => Ok(Object::Complex(-x)),
             Object::Tuple(x) => Ok(Object::Tuple(x.iter().map(|o| -o).collect::<Result<Vec<_>, _>>()?)),
             Object::Vector(x) => Ok(Object::Vector(-x)),
             Object::Matrix(x) => Ok(Object::Matrix(-x)),
@@ -184,6 +194,7 @@ impl ops::Not for &Object {
             Object::Success => Ok(Object::Success),
             Object::Undefined => Err("Operation 'Not' not valid for undefined operand.".to_string()),
             Object::Float(x) => Ok(Object::Float(if *x == 0.0 {1.0} else {0.0})),
+            Object::Complex(x) => Ok(Object::Float(if x.real == 0.0 && x.imag == 0.0 {1.0} else {0.0})),
             Object::Tuple(v) => Ok(Object::Tuple(v.iter().map(|o| !o).collect::<Result<Vec<_>, _>>()?)),
             Object::Vector(v) => Ok(Object::Vector(v.transform(|x| if x == 0.0 {1.0} else {0.0}))),
             Object::Matrix(m) => Ok(Object::Matrix(m.transform(|x| if x == 0.0 {1.0} else {0.0}))),
@@ -230,14 +241,22 @@ where T: std::ops::Mul<U, Output=V> + std::ops::Div<U, Output=V> + std::ops::Rem
 }
 
 /// Returns 1 if the comparison succeeds, 0 otherwise
-fn compare(x: &f64, y: &f64, comp: &Comparison) -> bool {
+fn compare(x: f64, y: f64, comp: &Comparison) -> bool {
     match comp {
-        Comparison::Eq => approx_eq(*x, *y),
-        Comparison::Neq => !approx_eq(*x, *y),
+        Comparison::Eq => approx_eq(x, y),
+        Comparison::Neq => !approx_eq(x, y),
         Comparison::Gt => x > y,
         Comparison::Lt => x < y,
-        Comparison::Ge => x >= y || approx_eq(*x, *y),
-        Comparison::Le => x < y || approx_eq(*x, *y)
+        Comparison::Ge => x >= y || approx_eq(x, y),
+        Comparison::Le => x < y || approx_eq(x, y)
+    }
+}
+/// Returns Object::Float(1) if the comparison succeeds, Object::Float(0) if it doesn't, Object::Undefined if e.g. trying `z_1 < z_2`.
+fn compare_complex(x: &Complex, y: &Complex, comp: &Comparison) -> Object {
+    match comp {
+        Comparison::Eq => Object::Float((approx_eq(x.real, y.real) && approx_eq(x.imag, y.imag)) as i8 as f64),
+        Comparison::Neq => Object::Float(!(approx_eq(x.real, y.real) && approx_eq(x.imag, y.imag)) as i8 as f64),
+        Comparison::Gt | Comparison::Lt | Comparison::Ge | Comparison::Le => Object::Undefined
     }
 }
 
@@ -252,37 +271,85 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
     let err = || Err(err_msg());
     match lhs {
         Object::Success | Object::Undefined | Object::Tuple(_) => err(), // You can't do any operation with 'Success'
-        Object::Float(x) => {
-            match rhs {
-                Object::Float(y) => Ok(Object::Float(
-                    match op {
-                        BinaryOperation::Add => x+y,
-                        BinaryOperation::Sub => x-y,
-                        BinaryOperation::Mul => x*y,
-                        BinaryOperation::Div => x/y,
-                        BinaryOperation::Rem => x.rem_euclid(*y),
-                        // The following result should in fact already be an integer, the `.round()` only converts it to int while accounting for small errors.
-                        BinaryOperation::Quo => ((x - (x.rem_euclid(*y))) / y).round(),
-                        BinaryOperation::Pow(_) => x.powf(*y),
-                        BinaryOperation::Comp(comp, _) => compare(x, y, comp) as i8 as f64,
-                        BinaryOperation::Or => if *x != 0.0 || *y != 0.0 {1.0} else {0.0},
-                        BinaryOperation::And => if *x != 0.0 && *y != 0.0 {1.0} else {0.0},
-                    }
-                )),
-                Object::Vector(y) => {
-                    Ok(Object::Vector(_op_mv_float(*x, y, op)?))
+        Object::Float(x) => match rhs {
+            Object::Float(y) => Ok(Object::Float(
+                match op {
+                    BinaryOperation::Add => x+y,
+                    BinaryOperation::Sub => x-y,
+                    BinaryOperation::Mul => x*y,
+                    BinaryOperation::Div => x/y,
+                    BinaryOperation::Rem => x.rem_euclid(*y),
+                    // The following result should in fact already be an integer, the `.round()` only converts it to int while accounting for small errors.
+                    BinaryOperation::Quo => utils::quo(*x, *y),
+                    BinaryOperation::Pow(_) => x.powf(*y),
+                    BinaryOperation::Comp(comp, _) => compare(*x, *y, comp) as i8 as f64,
+                    BinaryOperation::Or => if *x != 0.0 || *y != 0.0 {1.0} else {0.0},
+                    BinaryOperation::And => if *x != 0.0 && *y != 0.0 {1.0} else {0.0},
                 }
-                Object::Matrix(y) => {
-                    Ok(Object::Matrix(_op_mv_float(*x, y, op)?))
+            )),
+            // For the following code, we could just call `try_operation(lhs, Complex(rhs, 0), op)`, but this
+            // little bit of additional codes spares us the overhead at runtime.
+            Object::Complex(z) => Ok(
+                match op {
+                    BinaryOperation::Add => Object::Complex(Complex { real: x + z.real, imag: z.imag }),
+                    BinaryOperation::Sub => Object::Complex(Complex { real: x - z.real, imag: -z.imag }),
+                    BinaryOperation::Mul => Object::Complex(Complex { real: x * z.real, imag: x * z.imag }),
+                    BinaryOperation::Div => {let inv = z.inv(); Object::Complex(Complex { real: x * inv.real, imag: x * inv.imag })},
+                    BinaryOperation::Rem | BinaryOperation::Quo => return Err(format!("Operation {} undefined for complex RHS.", op)),
+                    BinaryOperation::Pow(_) => Object::Complex(Complex { real: *x, imag: 0.0 }.pow(z)),
+                    BinaryOperation::Comp(comp, _) => compare_complex(&Complex { real: *x, imag: 0.0 }, z, comp),
+                    BinaryOperation::Or => Object::Float(if *x != 0.0 || z.real != 0.0 || z.imag != 0.0 {1.0} else {0.0}),
+                    BinaryOperation::And => Object::Float(if *x != 0.0 && z.real != 0.0 && z.imag != 0.0 {1.0} else {0.0}),
                 }
-                Object::Tuple(_) | Object::Success | Object::Undefined | Object::LiteralExpression(_) => err()
+            ),
+            Object::Vector(y) => {
+                Ok(Object::Vector(_op_mv_float(*x, y, op)?))
             }
+            Object::Matrix(y) => {
+                Ok(Object::Matrix(_op_mv_float(*x, y, op)?))
+            }
+            Object::Tuple(_) | Object::Success | Object::Undefined | Object::LiteralExpression(_) => err()
+        }
+        Object::Complex(z) => match rhs {
+            Object::Float(x) => Ok(
+                match op {
+                    BinaryOperation::Add => Object::Complex(Complex { real: x + z.real, imag: z.imag }),
+                    BinaryOperation::Sub => Object::Complex(Complex { real: z.real - x, imag: z.imag }),
+                    BinaryOperation::Mul => Object::Complex(Complex { real: x * z.real, imag: x * z.imag }),
+                    BinaryOperation::Div => Object::Complex(Complex { real: z.real / x, imag: z.imag / x }),
+                    BinaryOperation::Rem => Object::Complex(Complex { real: z.real.rem_euclid(*x), imag: z.imag.rem_euclid(*x) }),
+                    BinaryOperation::Quo => Object::Complex(Complex { real: utils::quo(z.real, *x), imag: utils::quo(z.imag, *x) }),
+                    BinaryOperation::Pow(_) => Object::Complex(z.pow(&Complex { real: *x, imag: 0.0 })),
+                    BinaryOperation::Comp(comp, _) => compare_complex(z, &Complex { real: *x, imag: 0.0 }, comp),
+                    BinaryOperation::Or => Object::Float(if *x != 0.0 || z.real != 0.0 || z.imag != 0.0 {1.0} else {0.0}),
+                    BinaryOperation::And => Object::Float(if *x != 0.0 && z.real != 0.0 && z.imag != 0.0 {1.0} else {0.0}),
+                }
+            ),
+            // For the following code, we could just call `try_operation(lhs, Complex(rhs, 0), op)`, but this
+            // little bit of additional codes spares us the overhead at runtime.
+            Object::Complex(w) => Ok(
+                match op {
+                    BinaryOperation::Add => Object::Complex(z+w),
+                    BinaryOperation::Sub => Object::Complex(z-w),
+                    BinaryOperation::Mul => Object::Complex(z*w),
+                    BinaryOperation::Div => Object::Complex(z/w),
+                    BinaryOperation::Rem | BinaryOperation::Quo
+                        => return Err(format!("Operation {} undefined for complex RHS.", op)),
+                    BinaryOperation::Pow(_) => Object::Complex(z.pow(w)),
+                    BinaryOperation::Comp(comp, _) => compare_complex(z, w, comp),
+                    BinaryOperation::Or => Object::Float(if w.real != 0.0 || w.imag != 0.0 || z.real != 0.0 || z.imag != 0.0 {1.0} else {0.0}),
+                    BinaryOperation::And => Object::Float(if w.real != 0.0 && w.imag != 0.0 && z.real != 0.0 && z.imag != 0.0 {1.0} else {0.0}),
+                }
+            ),
+            Object::Vector(_) | Object::Matrix(_) => Err("Complex vectors aren't supported yet.".to_string()),
+            Object::Tuple(_) | Object::Success | Object::Undefined | Object::LiteralExpression(_) => err()
         }
         Object::Vector(x) => {
             match rhs {
                 Object::Float(y) => {
                     Ok(Object::Vector(_op_mv_float(x, *y, op)?))
                 }
+                Object::Complex(_) => Err("Complex vectors aren't supported yet.".to_string()),
                 Object::Vector(y) => {
                     match op { // Shorter, since Vector operations have different return types including Option<...>
                         BinaryOperation::Add => {
@@ -299,9 +366,9 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
                             if n == y.len() {
                                 Ok(Object::Float(
                                     if c.check_all() {
-                                        (0..n).all(|i| compare(&x[i], &y[i], c))
+                                        (0..n).all(|i| compare(x[i], y[i], c))
                                     } else {
-                                        (0..n).any(|i| compare(&x[i], &y[i], c))
+                                        (0..n).any(|i| compare(x[i], y[i], c))
                                     } as i8 as f64
                                 ))
                             }
@@ -338,6 +405,7 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
                         Ok(Object::Matrix(_op_mv_float(x, *y, op)?))
                     }
                 }
+                Object::Complex(_) => Err("Complex matrices aren't supported yet.".to_string()),
                 Object::Vector(y) if *op == BinaryOperation::Mul => {
                     (x*y).map(Object::Vector).ok_or_else(err_msg)
                 }
@@ -349,13 +417,13 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
                                 if c.check_all() {
                                     (0..m).all(
                                         |i| (0..n).all(
-                                            |j| compare(&x.get(i, j), &y.get(i, j), c)
+                                            |j| compare(x.get(i, j), y.get(i, j), c)
                                         )
                                     )
                                 } else {
                                     (0..m).any(
                                         |i| (0..n).any(
-                                            |j| compare(&x.get(i, j), &y.get(i, j), c)
+                                            |j| compare(x.get(i, j), y.get(i, j), c)
                                         )
                                     )
                                 } as i8 as f64

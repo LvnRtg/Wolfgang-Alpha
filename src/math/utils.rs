@@ -6,6 +6,10 @@ pub fn approx_eq(x: f64, y: f64) -> bool {
     (x-y).abs() <= 1e-10
 }
 
+pub fn quo(x: f64, y: f64) -> f64 {
+    ((x - (x.rem_euclid(y))) / y).round()
+}
+
 #[inline]
 /// Returns the maximum of the given iterator of floats. If the iterator is empty, returns 0.0.
 pub fn max(iter: impl Iterator<Item=f64>) -> f64 {

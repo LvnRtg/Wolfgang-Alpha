@@ -12,7 +12,7 @@ use std::cmp::min;
 use std::f64::consts::PI;
 
 use crate::lang;
-use crate::math::{Env, Expression, Object, utils, VarStack};
+use crate::math::{Complex, Env, Expression, Object, utils, VarStack};
 
 /// Set this constant such that `BLOCK^2 * 8` fits in your L1 Cache. Find out the capacity of the latter by running `sudo lshw -C memory`.
 /// 
@@ -1221,7 +1221,7 @@ impl Matrix {
         } else {
             let re = tr / 2.0;
             let im = (-disc).sqrt() / 2.0;
-            Some((Object::Complex(re, im), Object::Complex(re, -im)))
+            Some((Object::Complex(Complex { real: re, imag: im }), Object::Complex(Complex { real: re, imag: -im })))
         }
     }
 
@@ -1456,7 +1456,7 @@ impl Matrix {
                     Some((eigenvalues, ..)) => Ok(utils::max(eigenvalues.into_iter().map(
                         |obj| match obj {
                             Object::Float(x) => x.abs(),
-                            Object::Complex(a, b) => (a.powi(2) + b.powi(2)).sqrt(),
+                            Object::Complex(x) => x.modulus(),
                             _ => 0.0 // Will never happen anyway, `qr_decomposition[0]` only consists of floats and complex values
                         }
                     )).sqrt()),

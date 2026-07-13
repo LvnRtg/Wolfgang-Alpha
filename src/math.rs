@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 
+pub mod complex;
 pub mod differentiation;
 pub mod expressions;
 pub mod integration;
@@ -19,6 +20,7 @@ pub mod operations;
 pub mod optimization;
 pub mod utils;
 
+pub use crate::math::complex::Complex;
 pub use crate::math::expressions::Expression;
 pub use crate::math::matrices_and_vectors::{Matrix, Vector};
 pub use crate::math::objects::{Object, DirectFunction, FunctionRepr};

@@ -2,10 +2,8 @@ use std::collections::HashMap;
 use std::f64::consts;
 use std::sync::LazyLock;
 
-use crate::math::DirectFunction;
-use crate::math::Expression;
 use crate::math::expressions;
-use crate::math::{Matrix, Vector, Object, FunctionRepr};
+use crate::math::{Complex, DirectFunction, Expression, Matrix, Object, FunctionRepr};
 use crate::math::operations::{UnaryOperation, BinaryOperation};
 use crate::{expr_if_else, expr_and, expr_compare, expr_add, expr_sub, expr_mul, expr_div, expr_square, expr_neg, expr_1arg_func};
 
@@ -14,6 +12,7 @@ pub fn default_constants() -> HashMap<String, Object> {
     HashMap::<String, Object>::from([
         ("e".to_string(), Object::Float(consts::E)),
         ("pi".to_string(), Object::Float(consts::PI)),
+        ("i".to_string(), Object::Complex(Complex { real: 0.0, imag: 1.0 })),
     ])
 }
 
@@ -117,7 +116,7 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[DirectFunction; 22]> = LazyLock::
     expect_n_args!(eig, 1, |args: &[Object]| {
         if let Object::Matrix(mat) = &args[0] {
             match mat.qr_decomposition() {
-                Some((eig, ..)) => Ok(Object::Vector(Vector{values: eig})),
+                Some((eig, ..)) => Ok(Object::Tuple(eig)),
                 None => Err(format!("Matrix must be quadratic (got size {}x{}).", mat.m, mat.n))
             }
         }
