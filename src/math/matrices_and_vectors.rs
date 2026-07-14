@@ -10,6 +10,9 @@ use std::slice::SliceIndex;
 use std::fmt;
 use std::cmp::min;
 use std::f64::consts::PI;
+use rayon::prelude::*;
+
+mod transposition;
 
 use crate::lang;
 use crate::math::{Complex, Env, Expression, Object, utils, VarStack};
@@ -18,6 +21,8 @@ use crate::math::{Complex, Env, Expression, Object, utils, VarStack};
 /// 
 /// My L1 Cache is 512 KiB bit, so I set the constant to 128 (256 would theoretically fit, but I want to leave some space for potential other things).
 const BLOCK: usize = 64;
+/// Tiling will only be used if the dimension exceeds this threshold, i.e. `max(m, n) >= TILING_THRESHOLD`.
+const TILING_THRESHOLD: usize = 256;
 
 
 #[derive(Clone, PartialEq)]
@@ -399,7 +404,7 @@ impl ops::Mul<&Vector> for &Matrix {
 /// This is mathematically not perfectly accurate, because one can only multiply a flipped vector with a matrix,
 /// but this slight lack of rigorousness is less expensive than re-implementing all functions for a new type 'FlippedVector' or using a 1xn-matrix.
 /// 
-/// Returns None in case the dimensions mismatch.
+/// Returns `None` in case the dimensions mismatch.
 impl ops::Mul<&Matrix> for &Vector {
     type Output = Option<Vector>;
     fn mul(self, rhs: &Matrix) -> Self::Output {
@@ -407,9 +412,13 @@ impl ops::Mul<&Matrix> for &Vector {
             None
         }
         else {
-            Some(Vector{ values: (0..rhs.n).map(
-                |i| (0..rhs.m).map(|k| self.values[k] * rhs.get(k, i)).sum()
-            ).collect()})
+            let mut res = Vector::zeros(rhs.n);
+            for k in 0..rhs.m { // Iterate in this order for better cache locality
+                for i in 0..rhs.n {
+                    res.values[i] += self.values[k] * rhs.get(k, i);
+                }
+            }
+            Some(res)
         }
     }
 }
@@ -418,28 +427,18 @@ impl ops::Mul<&Matrix> for &Matrix {
     type Output = Option<Matrix>;
     fn mul(self, rhs: &Matrix) -> Self::Output {
         if self.n != rhs.m {
-            None
+            return None;
         }
-        else {
-            let rhs_transposed = rhs.transpose(); // Improves Cache locality, only O(n²)
-            let mut values = Vec::<f64>::with_capacity(self.m * rhs.n);
-            for i in 0..self.m {
-                for j in 0..rhs.n {
-                    values.push(
-                        (0..self.n)
-                            .map(|k| {
-                                self.get(i, k) * rhs_transposed.get(j, k)
-                            })
-                            .sum(),
-                    )
-                }
-            }
-            Some(Matrix {
-                m: self.m,
-                n: rhs.n,
-                values,
-            })
+        let rhs_t = rhs.transpose(); // Improves cache locality and is only O(n²)
+        let m = self.m;
+        let n = rhs.n;
+        let mut values = vec![0.0_f64; m * n];
+        if m.max(n).max(self.n) >= TILING_THRESHOLD {
+            self.mul_tiled_parallel(&rhs_t, &mut values);
+        } else {
+            self.mul_simple_parallel(&rhs_t, &mut values);
         }
+        Some(Matrix { m, n, values })
     }
 }
 
@@ -518,6 +517,12 @@ impl Vector {
     /// Creates a new vector by applying f to every element of `self` while consuming `self`.
     pub fn into_new<F>(self, f: F) -> Vector where F: Fn(f64) -> f64 {
         Vector{values: self.values.into_iter().map(f).collect()}
+    }
+
+    /// Contiguous slice dot product. Does not check if the dimensions of `a, b` match.
+    #[inline]
+    fn unchecked_dot(a: &[f64], b: &[f64]) -> f64 {
+        a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
     }
 
     /// Returns the norm of this vector (w.r.t. the given norm).
@@ -650,31 +655,14 @@ impl Matrix {
     pub fn row(&self, i: usize) -> Vector {
         Vector { values: self.values[(i*self.n)..(i+1)*self.n].to_vec() }
     }
+    #[inline]
+    pub fn row_slice(&self, i: usize) -> &[f64] {
+        &self.values[i * self.n .. (i+1) * self.n]
+    }
     pub fn col(&self, j: usize) -> Vector {
         Vector { values: (0..self.m).map(|i| self.get(i, j)).collect() }
     }
-
-    pub fn transpose(&self) -> Matrix {
-        // Cache friendly. By definition, a `BLOCK x BLOCK` tile of the matrix fits into the L1 cache entirely.
-        // Hence, we transpose tile by tile.
-        let mut values = vec![0.0f64; self.values.len()];
-        for i_block in (0..self.m).step_by(BLOCK) {
-            for j_block in (0..self.n).step_by(BLOCK) {
-                let i_end = (i_block + BLOCK).min(self.m);
-                let j_end = (j_block + BLOCK).min(self.n);
-                for i in i_block..i_end {
-                    for j in j_block..j_end {
-                        // Read: row-major access within tile (sequential)
-                        // Write: row-major in output (sequential within tile)
-                        values[j * self.m + i] = self.values[i * self.n + j];
-                    }
-                }
-            }
-        }
-
-        Matrix { m: self.n, n: self.m, values }
-    }
-
+    
     /// Multiplies `self` with `rhs^t`. Returns `None` if the dimensions don't match.
     pub fn mul_with_transposed(self, rhs: &Matrix) -> Option<Matrix> {
         if self.n != rhs.n {
@@ -1347,19 +1335,19 @@ impl Matrix {
 
     /// Returns `self^t * self`.
     pub fn gram_matrix(&self) -> Matrix {
-        let mut res = Matrix::zeros(self.n, self.n);
-        for i in 0..self.n {
-            for j in 0..=i {
-                let value = (0..self.m)
-                    .map(|k| self.get(k, i) * self.get(k, j))
-                    .sum();
-                res.set(i, j, value);
-                if i != j {
-                    res.set(j, i, value);
+        let mut values = vec![0.0; self.n * self.n];
+        for k in 0..self.m {
+            for i in 0..self.n {
+                for j in 0..=i {
+                    let value = self.get(k, i) * self.get(k, j);
+                    values[i * self.n + j] += value;
+                    if i != j {
+                        values[j * self.n + i] += value;
+                    }
                 }
             }
         }
-        res
+        Matrix { m: self.n, n: self.n, values }
     }
 
     /// Approximates the operator norm of `self` induced by the `p`-norm up to an error of at most `tolerance`.
@@ -1469,5 +1457,55 @@ impl Matrix {
             MatrixNorm::P(other) => Err(format!("Parameter `p` must be at least 1 (got {other}).")),
             MatrixNorm::Frobenius => Ok(self.values.iter().map(|x| x.powi(2)).sum::<f64>().sqrt())
         }
+    }
+
+    /// Computes `self * rhs` in the natural way using parallelization.
+    /// 
+    /// This method is used when matrices are small enough that pairs `self.row(i), rhs.row(i)`
+    /// fit comfortably in the cache without explicit blocking.
+    fn mul_simple_parallel(
+        &self,
+        rhs_t: &Matrix,
+        out: &mut [f64]
+    ) {
+        out.par_chunks_mut(rhs_t.m).enumerate().for_each(|(i, out_row)| {
+            let ith_row = self.row_slice(i);
+            out_row.iter_mut().enumerate().for_each(
+                |(j, out_elem)|
+                *out_elem = Vector::unchecked_dot(ith_row, rhs_t.row_slice(j))
+            );
+        });
+    }
+
+    /// Computes `self * rhs` using parallelization and tiling: the output is
+    /// processed in tiles so that the working set of `self` rows and `rhs_t`
+    /// rows involved in a tile stays resident in cache across the inner iterations,
+    /// cutting down on repeated DRAM traffic for `rhs_t`.
+    /// 
+    /// This method is used for large matrices.
+    fn mul_tiled_parallel(
+        &self,
+        rhs_t: &Matrix,
+        out: &mut [f64],
+    ) {
+        let l = rhs_t.m;
+        out.par_chunks_mut(l * BLOCK.min(self.m).max(1))
+            .enumerate()
+            .for_each(|(block_idx, out_block)| {
+                let i_start = block_idx * BLOCK.min(self.m).max(1);
+                let rows_in_block = out_block.len() / l;
+                for jj in (0..l).step_by(BLOCK) {
+                    let j_end = (jj + BLOCK).min(l);
+                    for bi in 0..rows_in_block {
+                        let i = i_start + bi;
+                        let a_row = self.row_slice(i);
+                        let out_row = &mut out_block[bi * l..(bi + 1) * l];
+                        out_row[jj..j_end].iter_mut().enumerate().for_each(
+                            |(j, out_elem)|
+                            *out_elem = Vector::unchecked_dot(a_row, rhs_t.row_slice(j))
+                        );
+                    }
+                }
+            });
     }
 }
