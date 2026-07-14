@@ -174,7 +174,11 @@ fn App() -> Element {
                     div { class: "reference-glow", aria_hidden: "true" }
                     div { class: "intro-copy",
                         p { class: "eyebrow", "Math, without the busywork" }
-                        h1 { "Think in", br {}, em { "expressions." } }
+                        h1 {
+                            "Think in"
+                            br {}
+                            em { "expressions." }
+                        }
                         p { class: "intro-text",
                             "Evaluate, simplify, differentiate, and explore — all from one focused workspace."
                         }
@@ -198,7 +202,11 @@ fn App() -> Element {
                                     },
                                     span { class: "example-label", "{example.label}" }
                                     code { "{example.expression}" }
-                                    span { class: "example-arrow", aria_hidden: "true", "↗" }
+                                    span {
+                                        class: "example-arrow",
+                                        aria_hidden: "true",
+                                        "↗"
+                                    }
                                 }
                             }
                         }
@@ -220,16 +228,16 @@ fn App() -> Element {
                     }
                 }
 
-                section { class: "calculator-panel", aria_label: "Calculator workspace",
+                section {
+                    class: "calculator-panel",
+                    aria_label: "Calculator workspace",
                     header { class: "panel-header",
                         div {
                             p { class: "panel-kicker", "Current session" }
                             h2 { "Calculation workspace" }
                         }
                         div { class: "panel-actions",
-                            span { class: "calculation-count",
-                                "{calculation_count} {calculation_label}"
-                            }
+                            span { class: "calculation-count", "{calculation_count} {calculation_label}" }
                             button {
                                 class: "clear-button",
                                 r#type: "button",
@@ -257,7 +265,9 @@ fn App() -> Element {
                                 div { class: "empty-orbit", aria_hidden: "true",
                                     span { class: "orbit-symbol orbit-symbol-one", "∑" }
                                     span { class: "orbit-symbol orbit-symbol-two", "π" }
-                                    span { class: "orbit-symbol orbit-symbol-three", "√" }
+                                    span { class: "orbit-symbol orbit-symbol-three",
+                                        "√"
+                                    }
                                     div { class: "orbit-core", "=" }
                                 }
                                 h3 { "Ready when you are." }
@@ -267,7 +277,7 @@ fn App() -> Element {
                             }
                         } else {
                             div { class: "calculation-list",
-                                for (index, calculation) in calculations().into_iter().enumerate() {
+                                for (index , calculation) in calculations().into_iter().enumerate() {
                                     {
                                         let query = calculation.query.clone();
                                         let output = calculation.output.join("\n");
@@ -296,11 +306,16 @@ fn App() -> Element {
                                                     div { class: "result-row",
                                                         div { class: "result-meta",
                                                             span { class: "result-dot", aria_hidden: "true" }
-                                                            span { if calculation.is_error { "Error" } else { "Result" } }
+                                                            span {
+                                                                if calculation.is_error {
+                                                                    "Error"
+                                                                }
+                                                            }
+                                                            "Result"
                                                         }
-                                                        pre { "{output}" }
                                                     }
                                                 }
+                                                pre { "{output}" }
                                             }
                                         }
                                     }
@@ -312,7 +327,11 @@ fn App() -> Element {
                     footer { class: "composer",
                         div { class: "composer-heading",
                             label { r#for: "Display 1 Input", "Enter an expression" }
-                            span { "Press " kbd { "Enter" } " to calculate" }
+                            span {
+                                "Press "
+                                kbd { "Enter" }
+                                " to calculate"
+                            }
                         }
                         form {
                             class: "input-form",
@@ -401,9 +420,19 @@ fn App() -> Element {
                             }
                         }
                         div { class: "composer-footer",
-                            span { kbd { "↑" } kbd { "↓" } " command history" }
+                            span {
+                                kbd { "↑" }
+                                kbd { "↓" }
+                                " command history"
+                            }
                             span { class: "footer-divider", aria_hidden: "true" }
-                            span { kbd { "Ctrl" } "+" kbd { "←" } kbd { "→" } " jump to edge" }
+                            span {
+                                kbd { "Ctrl" }
+                                "+"
+                                kbd { "←" }
+                                kbd { "→" }
+                                " jump to edge"
+                            }
                         }
                     }
                 }
