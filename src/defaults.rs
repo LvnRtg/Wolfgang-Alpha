@@ -86,7 +86,7 @@ macro_rules! apply_matrix_fn {
 /// to be permanently stored at a fixed location. This location is here.
 /// 
 /// Note that the user can't create new direct functions, so this approach works.
-pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[DirectFunction; 22]> = LazyLock::new(|| [
+pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[DirectFunction; 23]> = LazyLock::new(|| [
     expect_n_args!(sign, 1, |args: &[Object]| {
         match &args[0] {
             Object::Float(x) => Ok(Object::Float(if *x >= 0.0 {1.0} else {-1.0})),
@@ -131,6 +131,7 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[DirectFunction; 22]> = LazyLock::
         None => Err(format!("Matrix must be quadratic (got size {}x{}).", mat.m, mat.n))
     }),
     apply_matrix_fn!(tr, |r: Result<f64, String>, _| {r.map(Object::Float)}),
+    apply_matrix_fn!(transpose, |r: Matrix, _| {Ok(Object::Matrix(r))}),
     Box::new(|args|
         if args.len() == 2
         && let (Object::Vector(x), Object::Vector(y)) = (&args[0], &args[1])
@@ -155,7 +156,7 @@ pub fn default_functions() -> HashMap<String, FunctionRepr> {
         "cos", "cosh", "acos", "acosh",
         "sin", "sinh", "asin", "asinh",
         "tan", "tanh", "atan", "atanh",
-        "eig", "det", "adj", "tr",
+        "eig", "det", "adj", "tr", "transpose",
         "___helper_prod_rule"
     ].into_iter().enumerate().map(
         |(i, n)|
@@ -172,13 +173,13 @@ pub fn default_functions() -> HashMap<String, FunctionRepr> {
     res
 }
 
-pub const FUNCTIONS_WITH_PROVIDED_DERIVATIVE: [&str; 19] = [
+pub const FUNCTIONS_WITH_PROVIDED_DERIVATIVE: [&str; 20] = [
     "exp", "ln", "log",
     "sign", "sqrt",
     "cos", "cosh", "acos", "acosh",
     "sin", "sinh", "asin", "asinh",
     "tan", "tanh", "atan", "atanh",
-    "det", "tr"
+    "det", "tr", "transpose"
 ];
 
 /// Ensures that both `point` and `direction` have length `n`.
@@ -378,6 +379,13 @@ pub fn get_default_derivative(function_name: &str, point: &[Expression], directi
         "tr" => assert_length!(1, tr, point, direction,
             expr_1arg_func!(
                 "tr",
+                direction[0].clone()
+            )
+        ),
+        // `transpose` is linear and thus commutes with the derivative.
+        "transpose" => assert_length!(1, transpose, point, direction,
+            expr_1arg_func!(
+                "transpose",
                 direction[0].clone()
             )
         ),
