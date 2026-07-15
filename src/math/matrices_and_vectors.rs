@@ -84,7 +84,7 @@ impl ops::Add<&Vector> for &Vector {
             return None;
         }
         Some(Vector {
-            values: (0..self.values.len()).map(|i| self.values[i] + rhs.values[i]).collect::<Vec<f64>>()
+            values: self.values.iter().zip(&rhs.values).map(|(x, y)| x+y).collect::<Vec<f64>>()
         })
     }
 }
@@ -105,7 +105,7 @@ impl ops::Sub<&Vector> for &Vector {
             return None;
         }
         Some(Vector {
-            values: (0..self.values.len()).map(|i| self.values[i] - rhs.values[i]).collect::<Vec<f64>>()
+            values: self.values.iter().zip(&rhs.values).map(|(x, y)| x-y).collect::<Vec<f64>>()
         })
     }
 }
@@ -240,8 +240,7 @@ impl ops::Add<&Matrix> for &Matrix {
         Some(Matrix {
             m: self.m,
             n: self.n,
-            // `self.values.len()` is faster than `self.m * self.n` since the length is already stored in the vector's metadata
-            values: (0..self.values.len()).map(|i| self.values[i] + rhs.values[i]).collect()
+            values: self.values.iter().zip(&rhs.values).map(|(x, y)| x+y).collect()
         })
     }
 }
@@ -263,7 +262,7 @@ impl ops::Sub<&Matrix> for &Matrix {
         Some(Matrix {
             m: self.m,
             n: self.n,
-            values: (0..self.values.len()).map(|i| self.values[i] - rhs.values[i]).collect()
+            values: self.values.iter().zip(&rhs.values).map(|(x, y)| x-y).collect()
         })
     }
 }
@@ -383,7 +382,7 @@ impl ops::Mul<&Vector> for &Vector {
             None
         }
         else {
-            Some((0..self.values.len()).map(|i| self.values[i] * rhs.values[i]).sum())
+            Some(self.values.iter().zip(&rhs.values).map(|(x, y)| x*y).sum())
         }
     }
 }
@@ -395,8 +394,8 @@ impl ops::Mul<&Vector> for &Matrix {
             None
         }
         else {
-            Some(Vector{ values: (0..self.m).map(
-                |i| (0..self.n).map(|k| self.get(i, k) * rhs.values[k]).sum()
+            Some(Vector{ values: (0..self.m).map(|i|
+                Vector::unchecked_dot(self.row_slice(i), &rhs.values)
             ).collect()})
         }
     }
@@ -492,6 +491,23 @@ impl MatrixNorm {
 }
 
 
+/// Returns the `i`-th row of `v` as slice where `n` is the length of a row.
+/// 
+/// The returned slice therefore has length `n`.
+#[inline]
+fn row(v: &[f64], i: usize, n: usize) -> &[f64] {
+    &v[i * n .. (i+1) * n]
+}
+/// Returns the `j`-th column of `v` as iterator where `m` is the number of rows to take
+/// and `n` is the length of each row.
+/// 
+/// The returned iterator therefore iterates over `m` elements.
+#[inline]
+fn col(v: &[f64], j: usize, m: usize, n: usize) -> std::iter::Map<ops::Range<usize>, impl FnMut(usize) -> f64> {
+    (0..m).map(move |i| v[i * n + j])
+}
+
+
 impl Vector {
     pub fn zeros(n: usize) -> Vector {
         Vector { values: vec![0.0; n] }
@@ -523,6 +539,11 @@ impl Vector {
     #[inline]
     fn unchecked_dot(a: &[f64], b: &[f64]) -> f64 {
         a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+    }
+    /// Contiguous slice dot product. Does not check if the dimensions of `a, b` match.
+    #[inline]
+    fn unchecked_dot_iter(a: std::iter::Map<std::ops::Range<usize>, impl FnMut(usize) -> f64>, b: &[f64]) -> f64 {
+        a.zip(b.iter()).map(|(x, y)| x * y).sum()
     }
 
     /// Returns the norm of this vector (w.r.t. the given norm).
@@ -660,7 +681,8 @@ impl Matrix {
         &self.values[i * self.n .. (i+1) * self.n]
     }
     pub fn col(&self, j: usize) -> Vector {
-        Vector { values: (0..self.m).map(|i| self.get(i, j)).collect() }
+        // Impossible to do in a cache-friendly way without changing the method by which `Matrix` stores its values.
+        Vector { values: col(&self.values, j, self.m, self.n).collect() }
     }
     
     /// Multiplies `self` with `rhs^t`. Returns `None` if the dimensions don't match.
@@ -672,13 +694,7 @@ impl Matrix {
             let mut values = Vec::<f64>::with_capacity(self.m * rhs.m);
             for i in 0..self.m {
                 for j in 0..rhs.m {
-                    values.push(
-                        (0..self.n)
-                            .map(|k| {
-                                self.get(i, k) * rhs.get(j, k)
-                            })
-                            .sum(),
-                    )
+                    values.push(Vector::unchecked_dot(self.row_slice(i), rhs.row_slice(j)))
                 }
             }
             Some(Matrix {
@@ -691,7 +707,7 @@ impl Matrix {
 
     /// Applies the given permutation to the rows of `self`.
     /// 
-    /// `permutation` should be a permutation of the vector `[0, ..., n-1]` for some `n`.
+    /// `permutation` should be a permutation of the vector `[0, ..., self.m-1]`.
     /// Effectively, the row `i` of the new matrix will be the row `permutation[i]` of `self`.
     /// 
     /// Returns `None` if the permutation's size doesn't match the matrices size.
@@ -699,19 +715,27 @@ impl Matrix {
         if permutation.len() != self.m || permutation.iter().any(|p| *p + 1 > self.m) {return None;}
         let mut values = Vec::<f64>::with_capacity(self.values.len());
         for p in permutation {
+            // Writes are sequential and reads are sequential within each row. By the nature
+            // of permutations, this is optimal in the sense that even with tiling, you may
+            // have to jump between rows either when reading or when writing.
             values.extend(&self.values[p * self.n .. (p + 1) * self.n]);
         }
         Some(Matrix { m: self.m, n: self.n, values })
     }
     /// Applies the given permutation to columns of `self`.
     /// 
-    /// `permutation` should be a permutation of the vector `[0, ..., n-1]` for some `n`.
-    /// Effectively, the column `i` of the new matrix will be the column `permutation[i]` of `self`.
+    /// `permutation` should be a permutation of the vector `[0, ..., self.n-1]`.
+    /// Effectively, the column `j` of the new matrix will be the column `permutation[j]` of `self`.
+    /// 
+    /// Returns `None` if the permutation's size doesn't match the matrices size.
     pub fn permute_columns(&self, permutation: &[usize]) -> Option<Matrix> {
-        // To avoid cache thrashing (inevitable in a naive implementation), we first transpose `self`,
-        // apply the inversed permutation as row permutation to it, and finally transpose back.
-        // Mathematically, this works because A*P = (P^t * A^t)^t.
-        Some(self.transpose().permute_rows(&utils::transpose_permutation(permutation))?.transpose())
+        if permutation.len() != self.n || permutation.iter().any(|p| *p + 1 > self.n) {return None;}
+        let mut values = Vec::<f64>::with_capacity(self.values.len());
+        for i in 0..self.m {
+            // As for row permutations, writes are sequential and reads are sequential within each row.
+            permutation.iter().for_each(|p| values.push(self.get(i, *p)));
+        }
+        Some(Matrix { m: self.m, n: self.n, values })
     }
 
     /// Computes the LU decomposition of `self`.
@@ -728,7 +752,8 @@ impl Matrix {
             u.extend(std::iter::repeat_n(0.0, i));
             for k in i..self.m {
                 let newval = if i > 0 {
-                    self.get(i, k) - (0..i).map(|j| l[i*self.m + j] * u[j * self.m + k]).sum::<f64>()
+                    // Compute self[i, k] - dot(u.col(k), l.row(i))
+                    self.get(i, k) - Vector::unchecked_dot_iter(col(&u, k, i, self.m), row(&l, i, self.m))
                 } else { self.get(i, k) };
                 u.push(newval); // Can't condense into single line because of ownership of u
             }
@@ -737,7 +762,8 @@ impl Matrix {
                     return None; // No LU decomposition
                 }
                 l[k*self.m + i] = (if i > 0 {
-                    self.get(k, i) - (0..i).map(|j| l[k*self.m + j] * u[j*self.m + i]).sum::<f64>()
+                    self.get(k, i) - Vector::unchecked_dot_iter(col(&u, i, i, self.m), &row(&l, k, self.m)[0..i])
+                    //                  = (0..i).map(|j| l[k*self.m + j] * u[j*self.m + i]).sum::<f64>()
                 } else { self.get(k, i) }) / u[i*self.m + i];
             }
         }
@@ -762,7 +788,8 @@ impl Matrix {
         for i in 0..n {
             // Reduced values in column i for rows i..n
             let reduced = |r: usize| -> f64 {
-                a.get(r, i) - (0..i).map(|j| l.get(r, j) * u.get(j, i)).sum::<f64>()
+                a.get(r, i) - Vector::unchecked_dot_iter(col(&u.values, i, i, u.n), l.row_slice(r))
+                //               = (0..i).map(|j| l.get(r, j) * u.get(j, i)).sum::<f64>()
             };
             // The `unwrap_or` below is there to avoid panicking if either compared value is NaN
             let pivot_row = (i..n)
@@ -779,13 +806,15 @@ impl Matrix {
             }
             // Compute `i`-th row of `u` and `i`-th column of `l`
             for k in i..n {
-                u.set(i, k, a.get(i, k) - (0..i).map(|j| l.get(i, j) * u.get(j, k)).sum::<f64>());
+                u.set(i, k, a.get(i, k) - Vector::unchecked_dot_iter(col(&u.values, k, i, u.n), l.row_slice(i)));
+                //                                 = (0..i).map(|j| l.get(i, j) * u.get(j, k)).sum::<f64>()
             }
             if utils::approx_eq(u.get(i, i), 0.0) {
                 return None; // Matrix is singular
             }
             for k in i..n {
-                l.set(k, i, (a.get(k, i) - (0..i).map(|j| l.get(k, j) * u.get(j, i)).sum::<f64>()) / u.get(i, i));
+                l.set(k, i, (a.get(k, i) - Vector::unchecked_dot_iter(col(&u.values, i, i, u.n), l.row_slice(k))) / u.get(i, i));
+                //                                       = (0..i).map(|j| l.get(k, j) * u.get(j, i)).sum::<f64>()
             }
         }
 
@@ -900,7 +929,8 @@ impl Matrix {
         for j in 0..n {
             res.set(j, j, 1.0 / self.get(j, j));
             for i in (0..j).rev() {
-                res.set(i, j, -(i+1..n).map(|k| self.get(i, k) * res.get(k, j)).sum::<f64>() / self.get(i, i));
+                res.set(i, j, -Vector::unchecked_dot_iter((i+1..n).map(|k| res.get(k, j)), &self.row_slice(i)[i+1..n]) / self.get(i, i));
+                //                  = (i+1..n).map(|k| self.get(i, k) * res.get(k, j)).sum::<f64>()
             }
         }
         Some(res)
@@ -915,7 +945,8 @@ impl Matrix {
         for j in 0..n {
             res.set(j, j, 1.0 / self.get(j, j));
             for i in j+1..n {
-                res.set(i, j, -(0..i).map(|k| self.get(i, k) * res.get(k, j)).sum::<f64>() / self.get(i, i));
+                res.set(i, j, -Vector::unchecked_dot_iter(col(&res.values, j, i, res.n), &self.row_slice(i)[0..i]) / self.get(i, i));
+                //                  = (0..i).map(|k| self.get(i, k) * res.get(k, j)).sum::<f64>()
             }
         }
         Some(res)
@@ -1371,10 +1402,10 @@ impl Matrix {
 
         // Initialisation: block power method with angle sampling.
         for k in 0..self.n {
+            let col_k = self.col(k);
             let (c, s) = if k == 0 {
                 (1.0, 0.0)
             } else {
-                let col_k = self.col(k);
                 let mut best_f = 0.0_f64;
                 let mut best_c = 1.0_f64;
                 let mut best_s = 0.0_f64;
@@ -1393,7 +1424,7 @@ impl Matrix {
                 (best_c, best_s)
             };
             x[k] = c;
-            y = (&(c * &self.col(k)) + &(s * &y)).unwrap();
+            y = (&(c * &col_k) + &(s * &y)).unwrap();
             if k > 0 {
                 for xi in x.values.iter_mut().take(k) {
                     *xi *= s;
@@ -1426,9 +1457,7 @@ impl Matrix {
             // The sup-norm is simply the highest row sum, i.e. \max_i \sum_{j=1}^n |a_{i,j}|
             MatrixNorm::P(f64::INFINITY) => Ok(utils::max(
                 (0..self.m).map(
-                    |i| (0..self.n).map(
-                        |j| self.get(i, j).abs()
-                    ).sum()
+                    |i| self.row_slice(i).iter().map(|x| x.abs()).sum()
                 )
             )),
             // The 1-norm is the highest column sum. We take a different approach than above to improve cache locality.
