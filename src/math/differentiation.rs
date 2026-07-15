@@ -1,10 +1,10 @@
 use std::iter::zip;
 use std::collections::HashMap;
 
-use crate::math::matrices_and_vectors::VectorNorm;
+use crate::math::matrices_and_vectors::{VectorNorm, MatrixNorm};
 use crate::math::objects::{try_operation};
 use crate::math::expressions::*;
-use crate::math::utils::approx_eq;
+use crate::math::utils::{approx_eq, min};
 use crate::math::{Env, Object, FunctionRepr, VarStack, Vector, Matrix};
 use crate::math::operations::{BinaryOperation, FoldedOperation, UnaryOperation};
 use crate::{defaults, expr_compare, expr_if_else, expr_sub, expr_mul, expr_div, expr_pow, expr_neg, expr_1arg_func, lang};
@@ -585,7 +585,15 @@ pub fn numerical_directional_derivative<F: FnMut(&[Object]) -> Result<Object, St
     if point.len() != direction.len() {
         return Err("`point` and `direction` for derivative must be vectors of the same length (possibly 1).".to_string());
     }
-    let h = 1e-9;
+    // We use h = 1e-6 * (1 + |point|)
+    let norm_of_point = point.iter().map(|x| match x {
+        Object::Undefined | Object::Success | Object::LiteralExpression(_) | Object::Tuple(_) => Err(format!("Point can't contain object of type {:?}.", x)),
+        Object::Float(x) => Ok(x.abs()),
+        Object::Complex(x) => Ok(x.modulus()),
+        Object::Vector(x) => Ok(x.norm(&VectorNorm::P(2.0))),
+        Object::Matrix(x) => x.norm(&MatrixNorm::Frobenius)
+    }).collect::<Result<Vec<_>, _>>()?;
+    let h = 1e-6 * (1.0 + min(norm_of_point.into_iter()));
     for (i, coord) in point.iter_mut().enumerate() {
         direction[i] = h * &direction[i]; // Spares us another operation later
         *coord = try_operation(coord, &direction[i], &BinaryOperation::Add)?; // point + h*direction
