@@ -1,12 +1,15 @@
 # Wolfgang Alpha
 
-A web and CLI symbolic/numeric calculator with a terminal-style interface.
+A web and CLI symbolic/numeric calculator.
+
+## Disclaimer
+The UI was made using GPT 5.6 and Claube Fable 5 because I am terrible at graphic design.
 
 ## Usage
 
 ### Web / Desktop
 ```sh
-dx serve      # web (default)
+dx serve          # web (default)
 dx serve --platform desktop
 ```
 
@@ -33,6 +36,9 @@ The basic syntax is the natural one with usual operator precedence. A few specia
 - Vectors can be initialized by typing either `[1; 2; 3]` or `[1 \ 2 \ 3]` (as one would initialize a matrix with only one column).
 - A range of standard functions for matrices and vectors are pre-defined, such as `det`, `tr` and `adj`.
   For precise lists and explanations on the implementations, see `defaults.rs`.
+- Many matrix functions (e.g. matrix multiplication, transposition) are written with view to efficiency for large matrices
+  (using optimization strategies like tiling for better cache locality and parallelization using the `raylib` crate),
+  even though in this specific application, most matrices are likely small.
 
 ### Folded operations
 - `sum_{i=a}^b ...` acts as one would expect. `i` has to be an identifier, `a` must be evaluable to an integer and `b` to a float (`a`, `b` need not to be constants).
