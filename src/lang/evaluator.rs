@@ -349,11 +349,15 @@ pub fn eval(
             }
             let mut res = op.if_empty(); // TODO also change type here
             let binop = op.underlying_binop();
+            // We will rebuild the following varstack in every iteration (I didn't find a way to make it modify itself when i changes).
+            let mut i_as_obj = Object::Float(i);
+            let mut varstack_top_frame = HashMap::from([(varname, &i_as_obj)]);
+            let mut varstack = VarStack::Frame { vars: &varstack_top_frame, parent: extra_vars };
             // The below condition `i + 1.0 != i` is required because for too large floats, adding 1.0 becomes a non-op and prevents the loop from ever finishing.
-            'outer: while i + 1.0 != i && i <= eval(to, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars }, env)?.expect_float()? {
+            'outer: while i + 1.0 != i && i <= eval(to, &varstack, env)?.expect_float()? {
                 // Check if all conditions are met. If not, skip this `i`.
                 for cond in conditions {
-                    match eval(cond, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars }, env)? {
+                    match eval(cond, &varstack, env)? {
                         Object::Float(1.0) => {} // Condition met; ignore
                         Object::Float(0.0) => { // Condition not met; skip `i`
                             i += 1.0;
@@ -363,9 +367,13 @@ pub fn eval(
                     }
                 }
                 // At this point, all conditions are met.
-                let next_term = eval(inner, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars }, env)?;
+                let next_term = eval(inner, &varstack, env)?;
                 res = try_operation(&res, &next_term, &binop)?;
                 i += 1.0;
+                // Rebuild varstack
+                i_as_obj = Object::Float(i);
+                varstack_top_frame = HashMap::from([(varname, &i_as_obj)]);
+                varstack = VarStack::Frame { vars: &varstack_top_frame, parent: extra_vars };
             }
             Ok(res)
         }

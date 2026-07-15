@@ -206,7 +206,17 @@ impl Parser {
                     _ => Expression::Identifier(x)
                 }
             }
-            Token::Number(x) => Expression::Number(x),
+            Token::Number(x) => {
+                // The only case where this isn't simply an `Expression::Number` is when writing "1(...";
+                // then, it should be parsed as `Expression::Function("1", ...)`.
+                match self.peek()? {
+                    Token::LParenthesis => {
+                        self.next()?;
+                        Expression::Function("1".to_string(), self.parse_comma_expression(&Token::RParenthesis, env)?)
+                    }
+                    _ => Expression::Number(x)
+                }
+            }
             Token::LParenthesis => {
                 // Parse expression between parentheses recursively. It could just be a single expression of multiple entries separated by commas.
                 let mut entries = self.parse_comma_expression(&Token::RParenthesis, env)?;

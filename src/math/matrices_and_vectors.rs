@@ -686,11 +686,10 @@ impl Matrix {
     }
     
     /// Multiplies `self` with `rhs^t`. Returns `None` if the dimensions don't match.
-    pub fn mul_with_transposed(self, rhs: &Matrix) -> Option<Matrix> {
+    pub fn mul_with_transposed(&self, rhs: &Matrix) -> Option<Matrix> {
         if self.n != rhs.n {
             None
-        }
-        else {
+        } else {
             let mut values = Vec::<f64>::with_capacity(self.m * rhs.m);
             for i in 0..self.m {
                 for j in 0..rhs.m {
