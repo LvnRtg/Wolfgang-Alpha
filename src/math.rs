@@ -26,6 +26,11 @@ pub use crate::math::matrices_and_vectors::{Matrix, Vector};
 pub use crate::math::objects::{Object, DirectFunction, FunctionRepr};
 pub use crate::math::operations::{Comparison, BinaryOperation, UnaryOperation, FoldedOperation};
 
+/// Set this constant such that `BLOCK^2 * 8` fits in your L1 Cache. Find out the capacity of the latter by running `sudo lshw -C memory`.
+/// 
+/// My L1 Cache is 512 KiB bit, so I set the constant to 128 (256 would theoretically fit, but I want to leave some space for potential other things).
+pub const BLOCK_SIZE: usize = 64;
+
 #[derive(Clone)]
 pub struct Env {
     pub constants: HashMap<String, Object>,

@@ -1,7 +1,10 @@
+//! Implements transpositions both in simple ways (for small matrices) and more complex approaches (for large matrices).
+//! The main optimization strategies are tiling and parallelization (using `rayon`).
+
 use rayon::prelude::*;
 
 use crate::math::{Matrix};
-use crate::math::matrices_and_vectors::BLOCK;
+use crate::math::BLOCK_SIZE;
 
 /// Somewhat arbitrary constant, no benchmarks done yet to fine-tune it.
 const PARALLELIZATION_THRESHOLD: usize = 16;
@@ -22,10 +25,10 @@ impl Matrix {
     fn transpose_simple(&self) -> Matrix {
         let (m, n) = (self.m, self.n);
         let mut out = vec![0.0f64; self.values.len()];
-        for ib_start in (0..m).step_by(BLOCK) {
-            let i_end = (ib_start + BLOCK).min(m);
-            for jb_start in (0..n).step_by(BLOCK) {
-                let jb_end = (jb_start + BLOCK).min(n);
+        for ib_start in (0..m).step_by(BLOCK_SIZE) {
+            let i_end = (ib_start + BLOCK_SIZE).min(m);
+            for jb_start in (0..n).step_by(BLOCK_SIZE) {
+                let jb_end = (jb_start + BLOCK_SIZE).min(n);
                 self.transpose_tile(&mut out, ib_start, i_end, jb_start, jb_end);
             }
         }
@@ -34,17 +37,17 @@ impl Matrix {
 
     /// Computes `self^T` using parallelization and tiling.
     ///
-    /// Splits the output into contiguous row-chunks of `BLOCK` rows each.
+    /// Splits the output into contiguous row-chunks of `BLOCK_SIZE` rows each.
     /// Each chunk is a disjoint mutable slice, so no `unsafe` is needed.
     /// 
     /// We use this method for larger matrices.
     fn transpose_parallel(&self) -> Matrix {
         let mut out = vec![0.0f64; self.values.len()];
-        out.par_chunks_mut(BLOCK * self.m)
+        out.par_chunks_mut(BLOCK_SIZE * self.m)
             .enumerate()
             .for_each(|(chunk_idx, out_chunk)| {
-                let j_start = chunk_idx * BLOCK; // First output row contained in the current `out_chunk`
-                let j_end = (j_start + BLOCK).min(self.n); // Last one
+                let j_start = chunk_idx * BLOCK_SIZE; // First output row contained in the current `out_chunk`
+                let j_end = (j_start + BLOCK_SIZE).min(self.n); // Last one
                 self.transpose_row_range_into_chunk(out_chunk, j_start, j_end);
             });
         Matrix { m: self.n, n: self.m, values: out }
@@ -59,10 +62,10 @@ impl Matrix {
         j_end: usize,
     ) {
         // `ib` stands for `i block`, similarly for `j`.
-        for ib_start in (0..self.m).step_by(BLOCK) {
-            let ib_end = (ib_start + BLOCK).min(self.m);
-            for jb_start in (j_start..j_end).step_by(BLOCK) {
-                let jb_end = (jb_start + BLOCK).min(j_end);
+        for ib_start in (0..self.m).step_by(BLOCK_SIZE) {
+            let ib_end = (ib_start + BLOCK_SIZE).min(self.m);
+            for jb_start in (j_start..j_end).step_by(BLOCK_SIZE) {
+                let jb_end = (jb_start + BLOCK_SIZE).min(j_end);
                 self.transpose_tile_into_chunk(out_chunk, ib_start, ib_end, jb_start, jb_end, j_start);
             }
         }

@@ -1,7 +1,10 @@
+//! Most functions in this module have for sole objective to simplify typing and enhance readability.
+
 use std::collections::HashSet;
 
 use crate::math::Object;
 
+#[inline]
 pub fn approx_eq(x: f64, y: f64) -> bool {
     (x-y).abs() <= 1e-10
 }
@@ -26,6 +29,22 @@ pub fn min(iter: impl Iterator<Item=f64>) -> f64 {
 /// Returns the maximum absolute value of the given iterator of floats. If the iterator is empty, returns 0.0.
 pub fn max_abs<'a>(iter: impl Iterator<Item=&'a f64>) -> f64 {
     iter.fold(0.0, |acc, x| f64::max(acc, x.abs()))
+}
+
+/// Returns the `i`-th row of `v` as slice where `n` is the length of a row.
+/// 
+/// The returned slice therefore has length `n`.
+#[inline]
+pub fn row(v: &[f64], i: usize, n: usize) -> &[f64] {
+    &v[i * n .. (i+1) * n]
+}
+/// Returns the `j`-th column of `v` as iterator where `m` is the number of rows to take
+/// and `n` is the length of each row.
+/// 
+/// The returned iterator therefore iterates over `m` elements.
+#[inline]
+pub fn col(v: &[f64], j: usize, m: usize, n: usize) -> std::iter::Map<std::ops::Range<usize>, impl FnMut(usize) -> f64> {
+    (0..m).map(move |i| v[i * n + j])
 }
 
 /// Returns whether the given permutation has even parity (`true`) or odd parity (`false`).
