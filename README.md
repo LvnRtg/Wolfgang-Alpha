@@ -39,6 +39,7 @@ The basic syntax is the natural one with usual operator precedence. A few specia
 - Many matrix functions (e.g. matrix multiplication, transposition) are written with view to efficiency for large matrices
   (using optimization strategies like tiling for better cache locality and parallelization using the `raylib` crate),
   even though in this specific application, most matrices are likely small.
+- The operation `not` (`!`) is performed component-wise. Operations `and` and `or` are currently not implemented for matrices/vectors.
 
 ### Folded operations
 - `sum_{i=a}^b ...` acts as one would expect. `i` has to be an identifier, `a` must be evaluable to an integer and `b` to a float (`a`, `b` need not to be constants).
