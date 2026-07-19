@@ -73,12 +73,12 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
         Expression::Identifier(ident) => {
             if ident == wrt {
                 // Having to compute \int_a^b x dx doesn't tell us what the type of x is supposed to be, so we treat it as a real number.
-                Ok(Object::Float((b.powi(2) - a.powi(2)) / 2.0))
+                Ok(Object::Real((b.powi(2) - a.powi(2)) / 2.0))
             } else {
                 Ok((b-a) * (extra_vars.lookup(ident).or_else(|| env.constants.get(ident)).ok_or(format!("No such variable `{}`.", ident))?))
             }
         }
-        Expression::Number(x) => Ok(Object::Float((b-a) * x)),
+        Expression::Number(x) => Ok(Object::Real((b-a) * x)),
         Expression::Vector(v) => Ok(Object::Vector(crate::math::Vector{
             values: v.iter().map(|e|
                 integrate(e, a, b, wrt, extra_vars, env).and_then(|o| o.expect_float())
@@ -94,21 +94,25 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
         Expression::UnaryOperation(UnaryOperation::Neg, e) => Ok((-&integrate(e, a, b, wrt, extra_vars, env)?)?),
         Expression::BinaryOperation(lhs, op @ (BinaryOperation::Add | BinaryOperation::Sub), rhs)
             => try_operation(&integrate(lhs, a, b, wrt, extra_vars, env)?, &integrate(rhs, a, b, wrt, extra_vars, env)?, op),
+        
         // Only consider sums if all bounds do not include the integration variable (i.e. `w.r.t.`).
-        Expression::FoldedOperation(FoldedOperation::Sum, varname, from, conditions, to, inner)
+        Expression::FoldedOperation(FoldedOperation::Sum, index_var, from, conditions, to, inner)
         if !from.contains_identifier(wrt) && !to.contains_identifier(wrt) && conditions.iter().all(|e| !e.contains_identifier(wrt)) => {
-            // This code is stolen from `lang::evaluator::eval` as well
+            // This code is _borrowed_ from `lang::evaluator::eval` as well.
             let mut i = eval(from, extra_vars, env)?.expect_int()?;
-            if i > eval(to, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars }, env)?.expect_float()? {
-                // TODO check type once done in `eval`
-                return Ok(FoldedOperation::Sum.if_empty());
+            let initial_to_eval = eval(to, &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: extra_vars }, env)?.expect_float()?;
+            let mut res = FoldedOperation::Sum.if_empty(&inner.get_type(
+                &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(initial_to_eval))]), parent: extra_vars },
+                env
+            )?);
+            if i > initial_to_eval {
+                return Ok(res);
             }
-            let mut res = FoldedOperation::Sum.if_empty(); // TODO also change type here
-            'outer: while i <= eval(to, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars }, env)?.expect_float()? {
+            'outer: while i <= eval(to, &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: extra_vars }, env)?.expect_float()? {
                 for cond in conditions {
-                    match eval(cond, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars }, env)? {
-                        Object::Float(1.0) => {}
-                        Object::Float(0.0) => {
+                    match eval(cond, &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: extra_vars }, env)? {
+                        Object::Real(1.0) => {}
+                        Object::Real(0.0) => {
                             i += 1.0;
                             continue 'outer;
                         }
@@ -119,7 +123,7 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
                     inner,
                     a, b,
                     wrt,
-                    &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars },
+                    &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: extra_vars },
                     env
                 )?;
                 res = try_operation(&res, &next_term, &BinaryOperation::Add)?;
@@ -134,12 +138,12 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
         )),
         // \int_a^b d/dx f(x) dx = f(b) - f(a)
         Expression::PartialDerivative(diff_wrt, e) if diff_wrt == wrt => try_operation(
-            &eval(e, &VarStack::Frame { vars: &HashMap::from([(wrt, &Object::Float(b))]), parent: extra_vars }, env)?,
-            &eval(e, &VarStack::Frame { vars: &HashMap::from([(wrt, &Object::Float(a))]), parent: extra_vars }, env)?,
+            &eval(e, &VarStack::Frame { vars: &HashMap::from([(wrt, &Object::Real(b))]), parent: extra_vars }, env)?,
+            &eval(e, &VarStack::Frame { vars: &HashMap::from([(wrt, &Object::Real(a))]), parent: extra_vars }, env)?,
             &BinaryOperation::Sub
         ),
         other => simpson_rule_result_variant(
-            |x| eval(other, &VarStack::Frame { vars: &HashMap::from([(wrt, &Object::Float(x))]), parent: extra_vars }, env),
+            |x| eval(other, &VarStack::Frame { vars: &HashMap::from([(wrt, &Object::Real(x))]), parent: extra_vars }, env),
             a, b,
             100
         )

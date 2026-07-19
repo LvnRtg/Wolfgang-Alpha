@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::math::{Expression, Object};
+use crate::math::{Expression, Object, ObjType};
 
 /// If `opt` is `Some(x)`, returns "_x" if x is an identifier or a number and "_{x}" otherwise.
 /// If `opt` is `None`, returns an empty string.
@@ -189,10 +189,10 @@ impl FoldedOperation {
     }
 
     /// Returns the value of an empty folded operation of type `self` (e.g. 0 for sums, 1 for products).
-    pub fn if_empty(&self) -> Object {
+    pub fn if_empty(&self, inner_type: &ObjType) -> Object {
         match self {
-            FoldedOperation::Sum => Object::Float(0.0),
-            FoldedOperation::Product => Object::Float(1.0)
+            FoldedOperation::Sum => inner_type.zero(),
+            FoldedOperation::Product => inner_type.one()
         }
     }
 }

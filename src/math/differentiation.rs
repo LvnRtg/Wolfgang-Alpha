@@ -326,9 +326,9 @@ pub fn analytic_directional_derivative(
     match expr {
         Expression::None => Err("Cannot differentiate expression `None`.".to_string()),
         Expression::Identifier(ident) => Ok(
-            if let Some(i) = vars.iter().position(|n| n == ident) { direction[i].clone() } else { Object::Float(0.0) }
+            if let Some(i) = vars.iter().position(|n| n == ident) { direction[i].clone() } else { Object::Real(0.0) }
         ),
-        Expression::Number(_) => Ok(Object::Float(0.0)),
+        Expression::Number(_) => Ok(Object::Real(0.0)),
         Expression::Tuple(entries) => {
             Ok(Object::Tuple(
                 entries
@@ -343,7 +343,7 @@ pub fn analytic_directional_derivative(
             // We instantiate this vector via a loop to allow us to return a special error message if a component can be evaluated, but not to a float.
             for x in entries {
                 match analytic_directional_derivative(vars, x, point, direction, extra_vars, env) {
-                    Ok(Object::Float(new_entry)) => { new_entries.push(new_entry); }
+                    Ok(Object::Real(new_entry)) => { new_entries.push(new_entry); }
                     Ok(_) => { return Err(format!("Derivative of entry {:?} is not of type `float`.", *x))} // Entries of vector must be f64
                     other => { return other; } // Redirect error message
                 }
@@ -354,7 +354,7 @@ pub fn analytic_directional_derivative(
             let mut new_entries = Vec::<f64>::with_capacity(entries.len());
             for x in entries {
                 match analytic_directional_derivative(vars, x, point, direction, extra_vars, env) {
-                    Ok(Object::Float(new_entry)) => { new_entries.push(new_entry); }
+                    Ok(Object::Real(new_entry)) => { new_entries.push(new_entry); }
                     Ok(_) => { return Err(format!("Derivative of entry {:?} is not of type `float`.", *x))} // Entries of vector must be f64
                     other => { return other; } // Redirect error message
                 }
@@ -373,7 +373,7 @@ pub fn analytic_directional_derivative(
             let new_frame = (0..vars.len()).map(|i| (&vars[i], &point[i])).collect();
             let varstack = VarStack::Frame { vars: &new_frame, parent: extra_vars };
             match lang::eval(rhs, &varstack, env)? {
-                Object::Float(x) => if x > 0.0 {
+                Object::Real(x) => if x > 0.0 {
                     Ok(diff_r)
                 } else if x < 0.0 {
                     -&diff_r
@@ -413,7 +413,7 @@ pub fn analytic_directional_derivative(
                             &try_operation(&eval_lhs, &diff_r, &BinaryOperation::Mul)?,
                             &BinaryOperation::Sub
                         )?,
-                        &try_operation(&eval_rhs, &Object::Float(2.0), &BinaryOperation::Pow(true))?,
+                        &try_operation(&eval_rhs, &Object::Real(2.0), &BinaryOperation::Pow(true))?,
                         &BinaryOperation::Div
                     )
                 }
@@ -425,7 +425,7 @@ pub fn analytic_directional_derivative(
                     try_operation( // d/dx (f(x) ^ g(x)) = f(x)^(g(x)-1) * (f'(x)g(x) + f(x)g'(x)ln(f(x)))
                         &try_operation(
                             &eval_lhs,
-                            &try_operation(&eval_rhs, &Object::Float(1.0), &BinaryOperation::Sub)?,
+                            &try_operation(&eval_rhs, &Object::Real(1.0), &BinaryOperation::Sub)?,
                             &BinaryOperation::Pow(true)
                         )?,
                         &try_operation(
@@ -433,8 +433,8 @@ pub fn analytic_directional_derivative(
                             // The following argument `rhs` should be f(x)g'(x)ln(f(x)). However, if g'(x) = 0, then
                             // f(x) may be negative, so we then want to avoid calling f(x).ln().
                             &match (try_operation(&eval_lhs, &diff_r, &BinaryOperation::Mul)?, eval_lhs) {
-                                (Object::Float(x), _) if approx_eq(x, 0.0) => Ok(Object::Float(0.0)),
-                                (l, Object::Float(x)) => try_operation(&l, &Object::Float(x.ln()), &BinaryOperation::Mul),
+                                (Object::Real(x), _) if approx_eq(x, 0.0) => Ok(Object::Real(0.0)),
+                                (l, Object::Real(x)) => try_operation(&l, &Object::Real(x.ln()), &BinaryOperation::Mul),
                                 _ => {return Err(format!("Evaluation of {:?} is not of type `float`.", lhs));},
                             }?,
                             &BinaryOperation::Add
@@ -452,22 +452,22 @@ pub fn analytic_directional_derivative(
             // Copying and adapting it is more efficient than to try to call `eval` instead.
             let varstack = VarStack::Frame { vars: &zip(vars, point).collect(), parent: extra_vars };
             let mut i = lang::eval(from, &varstack, env)?.expect_int()?;
-            if i > lang::eval(to, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: &varstack }, env)?.expect_float()? {
+            if i > lang::eval(to, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Real(i))]), parent: &varstack }, env)?.expect_float()? {
                 // TODO when the corresponding TODO in eval is done
-                return Ok(Object::Float(0.0));
+                return Ok(Object::Real(0.0));
             }
-            let mut res = Object::Float(0.0); // TODO same
-            'outer: while i <= lang::eval(to, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: &varstack }, env)?.expect_float()? {
+            let mut res = Object::Real(0.0); // TODO same
+            'outer: while i <= lang::eval(to, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Real(i))]), parent: &varstack }, env)?.expect_float()? {
                 for cond in conditions {
-                    match lang::eval(cond, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: &varstack }, env)? {
-                        Object::Float(1.0) => {}
-                        Object::Float(0.0) => { i += 1.0; continue 'outer; }
+                    match lang::eval(cond, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Real(i))]), parent: &varstack }, env)? {
+                        Object::Real(1.0) => {}
+                        Object::Real(0.0) => { i += 1.0; continue 'outer; }
                         other => return Err(format!("Expected 1 or 0 when evaluating condition, got {:?}.", other))
                     }
                 }
                 let next_term = analytic_directional_derivative(
                     vars, inner, point, direction,
-                    &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars },
+                    &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Real(i))]), parent: extra_vars },
                     env
                 )?;
                 res = try_operation(&res, &next_term, &BinaryOperation::Add)?;
@@ -515,7 +515,7 @@ pub fn analytic_directional_derivative(
         }
         Expression::DirectionalDerivative(..) => {
             // The directional derivative is an object, so whatever it actually is, its derivative is zero.
-            Ok(Object::Float(0.0))
+            Ok(Object::Real(0.0))
         }
         Expression::Integral(inner, a_expr, b_expr, int_var) => {
             // Proceed as in `analytic_partial_derivative`. Notice that for a, b: \R^n \to \R, we still have
@@ -562,8 +562,8 @@ pub fn analytic_directional_derivative(
             let new_frame = (0..vars.len()).map(|i| (&vars[i], &point[i])).collect();
             let varstack = VarStack::Frame { vars: &new_frame, parent: extra_vars };
             match lang::eval(condition, &varstack, env) {
-                Ok(Object::Float(1.0)) => analytic_directional_derivative(vars, iftrue, point, direction, &varstack, env),
-                Ok(Object::Float(0.0)) => analytic_directional_derivative(vars, iffalse, point, direction, &varstack, env),
+                Ok(Object::Real(1.0)) => analytic_directional_derivative(vars, iftrue, point, direction, &varstack, env),
+                Ok(Object::Real(0.0)) => analytic_directional_derivative(vars, iffalse, point, direction, &varstack, env),
                 Ok(x) => Err(format!("Couldn't evaluate condition {condition} to 0 or 1; got {x}")),
                 other => other
             }
@@ -577,7 +577,7 @@ pub fn analytic_directional_derivative(
 /// 
 /// For general `f`, we generalize this method.
 /// 
-/// Note: this can also be used for functions from `\R` to `\R` by using `direction = vec![Object::Float(1.0)]`.
+/// Note: this can also be used for functions from `\R` to `\R` by using `direction = vec![Object::Real(1.0)]`.
 /// 
 /// Unfortunately, `point` has to be owned (or we'd have to clone it) since we want to modify it and the original passed vector need not to be mutable.
 /// Moreover, also owning `direction` allows to decrease the number of required operations.
@@ -588,7 +588,7 @@ pub fn numerical_directional_derivative<F: FnMut(&[Object]) -> Result<Object, St
     // We use h = 1e-6 * (1 + |point|)
     let norm_of_point = point.iter().map(|x| match x {
         Object::Undefined | Object::Success | Object::LiteralExpression(_) | Object::Tuple(_) => Err(format!("Point can't contain object of type {:?}.", x)),
-        Object::Float(x) => Ok(x.abs()),
+        Object::Real(x) => Ok(x.abs()),
         Object::Complex(x) => Ok(x.modulus()),
         Object::Vector(x) => Ok(x.norm(&VectorNorm::P(2.0))),
         Object::Matrix(x) => x.norm(&MatrixNorm::Frobenius)
@@ -605,7 +605,7 @@ pub fn numerical_directional_derivative<F: FnMut(&[Object]) -> Result<Object, St
     }
     let right_res = f(&point)?;
     match (left_res, right_res) {
-        (Object::Float(lhs), Object::Float(rhs)) => Ok(Object::Float((lhs - rhs) / (2.0 * h))),
+        (Object::Real(lhs), Object::Real(rhs)) => Ok(Object::Real((lhs - rhs) / (2.0 * h))),
         (Object::Vector(lhs), Object::Vector(rhs)) => {
             Ok(Object::Vector(
                 &(&lhs - &rhs).ok_or("Couldn't evaluate f(x+h) - f(x-h). Traceback: Vectors of different sizes returned.")?

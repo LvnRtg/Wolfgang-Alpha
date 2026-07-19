@@ -8,7 +8,7 @@ use crate::math::matrices_and_vectors::{Matrix, Vector};
 use crate::math::expressions::Expression;
 use crate::math::operations::*;
 use crate::math::utils;
-use crate::math::utils::approx_eq;
+use crate::math::utils::{approx_eq, Quo};
 
 
 /// Here, objects are things an identifier (e.g. "x") can represent, that is:
@@ -21,7 +21,7 @@ pub enum Object {
     Success,
     /// May be returned by a derivative if the given expression is not differentiable.
     Undefined,
-    Float(f64),
+    Real(f64),
     Complex(Complex),
     Tuple(Vec<Object>),
     /// Vector/matrix operations are implemented for references to vectors/matrices anyway, so only
@@ -30,12 +30,68 @@ pub enum Object {
     Matrix(Matrix),
     LiteralExpression(Expression)
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ObjType {
+    /// `Success` or `Undefined`
+    NonObject,
+    /// Real or complex
+    Scalar,
+    Vector(usize),
+    Matrix(usize, usize),
+    Tuple(usize),
+    LiteralExpression
+}
+impl ObjType {
+    /// Returns an `Object` representative of for the given `ObjType`.
+    /// 
+    /// When recursively parsing the type of e.g. a folded operation,
+    /// this allows to inform of the type of the index variable via a `VarStack`.
+    /// We do not construct a `TypeStack` instead because we only add very few frames
+    /// to the stack meanwhile the already given initial `VarStack` could be relatively large.
+    #[inline]
+    pub fn representative(&self) -> Object {
+        // I wrapped this in this way to underline in applications when the true value really doesn't matter
+        self.zero()
+    }
+
+    /// Returns the corresponding `Object` filled with zeros.
+    pub fn zero(&self) -> Object {
+        match self {
+            ObjType::NonObject => Object::Undefined,
+            ObjType::Scalar => Object::Real(0.0),
+            ObjType::Vector(n) => Object::Vector(Vector::zeros(*n)),
+            ObjType::Matrix(m, n) => Object::Matrix(Matrix::zeros(*m, *n)),
+            ObjType::Tuple(n) => Object::Tuple(vec![Object::Undefined; *n]),
+            ObjType::LiteralExpression => Object::LiteralExpression(Expression::None)
+        }
+    }
+
+    /// Returns the corresponding multiplicative identity as `Object`.
+    pub fn one(&self) -> Object {
+        match self {
+            ObjType::NonObject => Object::Undefined,
+            ObjType::Scalar => Object::Real(1.0),
+            ObjType::Vector(n) => Object::Vector(Vector { values: vec![1.0; *n] }), // Vector doesn't really have an identity
+            ObjType::Matrix(m, n) => {
+                let mut mat = Matrix::zeros(*m, *n);
+                for i in 0..*m.min(n) {
+                    mat.set(i, i, 1.0);
+                }
+                Object::Matrix(mat)
+            }
+            ObjType::Tuple(n) => Object::Tuple(vec![Object::Undefined; *n]),
+            ObjType::LiteralExpression => Object::LiteralExpression(Expression::None)
+        }
+    }
+}
+
 impl fmt::Display for Object {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Object::Success => write!(f, "Object::Success"),
             Object::Undefined => write!(f, "Undefined"),
-            Object::Float(x) => write!(f, "{}", x),
+            Object::Real(x) => write!(f, "{}", x),
             Object::Complex(x) => write!(f, "{}", x),
             Object::Tuple(x) => write!(f, "({})", x.iter().map(|o| format!("{:?}", o)).collect::<Vec<String>>().join(", ")),
             Object::Vector(x) => write!(f, "{:?}", x),
@@ -51,7 +107,7 @@ impl Object {
         match self {
             Object::Success => vec!["Success".to_string()],
             Object::Undefined => vec!["Undefined".to_string()],
-            Object::Float(x) => vec![x.to_string()],
+            Object::Real(x) => vec![x.to_string()],
             Object::Complex(x) => vec![format!("{x}")],
             Object::Tuple(x) => {
                 let multlined_inner = x.iter().map(|o| o.to_multline()).collect::<Vec<Vec<String>>>();
@@ -106,7 +162,7 @@ impl Object {
     pub fn to_expression(&self) -> Expression {
         match self {
             Object::Success | Object::Undefined => Expression::None, // This would be a syntax error
-            Object::Float(x) => Expression::Number(*x),
+            Object::Real(x) => Expression::Number(*x),
             Object::Complex(x) => expr_add!(Expression::Number(x.real), expr_mul!(Expression::Number(x.imag), Expression::Identifier("i".to_string()))),
             Object::Tuple(v) => Expression::Tuple(v.iter().map(|o| o.to_expression()).collect()),
             Object::Vector(v) => Expression::Vector(v.values.iter().map(|entry| Expression::Number(*entry)).collect()),
@@ -120,7 +176,7 @@ impl Object {
 
     pub fn expect_float(self) -> Result<f64, String> {
         match self {
-            Object::Float(x) => Ok(x),
+            Object::Real(x) => Ok(x),
             other => Err(format!("Expected float, got {other}."))
         }
     }
@@ -134,6 +190,17 @@ impl Object {
             Err(format!("Expected number close to integer; got {f}."))
         }
     }
+
+    pub fn get_type(&self) -> ObjType {
+        match self {
+            Object::Undefined | Object::Success => ObjType::NonObject,
+            Object::Real(_) | Object::Complex(_) => ObjType::Scalar,
+            Object::Vector(v) => ObjType::Vector(v.len()),
+            Object::Matrix(x) => ObjType::Matrix(x.m, x.n),
+            Object::Tuple(t) => ObjType::Tuple(t.len()),
+            Object::LiteralExpression(_) => ObjType::LiteralExpression
+        }
+    }
 }
 impl<'a> ops::Mul<&'a Object> for f64 {
     type Output = Object;
@@ -141,7 +208,7 @@ impl<'a> ops::Mul<&'a Object> for f64 {
         match rhs {
             Object::Success => Object::Success,
             Object::Undefined => Object::Undefined,
-            Object::Float(x) => Object::Float(self * x),
+            Object::Real(x) => Object::Real(self * x),
             Object::Complex(x) => Object::Complex(Complex{real: self * x.real, imag: self * x.imag}),
             Object::Tuple(x) => Object::Tuple(x.iter().map(|o| self * o).collect()),
             Object::Vector(x) => Object::Vector(self * x),
@@ -172,7 +239,7 @@ impl ops::Neg for &Object {
         match self {
             Object::Success => Ok(Object::Success),
             Object::Undefined => Err("Operation 'Neg' not valid for undefined operand.".to_string()),
-            Object::Float(x) => Ok(Object::Float(-x)),
+            Object::Real(x) => Ok(Object::Real(-x)),
             Object::Complex(x) => Ok(Object::Complex(-x)),
             Object::Tuple(x) => Ok(Object::Tuple(x.iter().map(|o| -o).collect::<Result<Vec<_>, _>>()?)),
             Object::Vector(x) => Ok(Object::Vector(-x)),
@@ -193,8 +260,8 @@ impl ops::Not for &Object {
         match self {
             Object::Success => Ok(Object::Success),
             Object::Undefined => Err("Operation 'Not' not valid for undefined operand.".to_string()),
-            Object::Float(x) => Ok(Object::Float(if *x == 0.0 {1.0} else {0.0})),
-            Object::Complex(x) => Ok(Object::Float(if x.real == 0.0 && x.imag == 0.0 {1.0} else {0.0})),
+            Object::Real(x) => Ok(Object::Real(if *x == 0.0 {1.0} else {0.0})),
+            Object::Complex(x) => Ok(Object::Real(if x.real == 0.0 && x.imag == 0.0 {1.0} else {0.0})),
             Object::Tuple(v) => Ok(Object::Tuple(v.iter().map(|o| !o).collect::<Result<Vec<_>, _>>()?)),
             Object::Vector(v) => Ok(Object::Vector(v.transform(|x| if x == 0.0 {1.0} else {0.0}))),
             Object::Matrix(m) => Ok(Object::Matrix(m.transform(|x| if x == 0.0 {1.0} else {0.0}))),
@@ -229,14 +296,15 @@ impl fmt::Debug for FunctionRepr {
 
 /// Simplifies notation in 'try_operation'. LHS and RHS should be a float on one side and a vector/matrix on the other side.
 fn _op_mv_float<T, U, V>(lhs: T, rhs: U, op: &BinaryOperation) -> Result<V, String>
-where T: std::ops::Mul<U, Output=V> + std::ops::Div<U, Output=V> + std::ops::Rem<U, Output=V> + fmt::Debug, U: fmt::Debug {
+where T: std::ops::Mul<U, Output=V> + std::ops::Div<U, Output=V> + std::ops::Rem<U, Output=V> + Quo<U, Output=V> + fmt::Debug, U: fmt::Debug {
     match op {
         BinaryOperation::Mul => Ok(lhs * rhs),
         BinaryOperation::Div => Ok(lhs / rhs),
         BinaryOperation::Rem => Ok(lhs % rhs),
+        BinaryOperation::Quo => Ok(Quo::quo(lhs, rhs)),
         // All other operations are not possible (again, I write them out explicitely to be forced to review this snippet if I add new operations)
-        BinaryOperation::Add | BinaryOperation::Sub | BinaryOperation::Quo | BinaryOperation::Pow(_) | BinaryOperation::And | BinaryOperation::Or | BinaryOperation::Comp(..)
-            => Err(format!("Operation {} invalid for operands {:?} and {:?}.", op, lhs, rhs))
+        BinaryOperation::Add | BinaryOperation::Sub | BinaryOperation::Pow(_) | BinaryOperation::And | BinaryOperation::Or | BinaryOperation::Comp(..)
+            => Err(format!("Operation '{}' invalid for operands {:?} and {:?}.", op, lhs, rhs))
     }
 }
 
@@ -251,11 +319,11 @@ fn compare(x: f64, y: f64, comp: &Comparison) -> bool {
         Comparison::Le => x < y || approx_eq(x, y)
     }
 }
-/// Returns Object::Float(1) if the comparison succeeds, Object::Float(0) if it doesn't, Object::Undefined if e.g. trying `z_1 < z_2`.
+/// Returns Object::Real(1) if the comparison succeeds, Object::Real(0) if it doesn't, Object::Undefined if e.g. trying `z_1 < z_2`.
 fn compare_complex(x: &Complex, y: &Complex, comp: &Comparison) -> Object {
     match comp {
-        Comparison::Eq => Object::Float((approx_eq(x.real, y.real) && approx_eq(x.imag, y.imag)) as i8 as f64),
-        Comparison::Neq => Object::Float(!(approx_eq(x.real, y.real) && approx_eq(x.imag, y.imag)) as i8 as f64),
+        Comparison::Eq => Object::Real((approx_eq(x.real, y.real) && approx_eq(x.imag, y.imag)) as i8 as f64),
+        Comparison::Neq => Object::Real(!(approx_eq(x.real, y.real) && approx_eq(x.imag, y.imag)) as i8 as f64),
         Comparison::Gt | Comparison::Lt | Comparison::Ge | Comparison::Le => Object::Undefined
     }
 }
@@ -267,19 +335,18 @@ fn compare_complex(x: &Complex, y: &Complex, comp: &Comparison) -> Object {
 /// and we must take care of possible dimension mismatches too.
 /// I'd go as far as saying this is fine since there are (currently) only 4 different types.
 pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result<Object, String> {
-    let err_msg = || format!("Operation {} invalid for operands {:?} and {:?}.", op, lhs, rhs); // Simplifies typing in the following match block
+    let err_msg = || format!("Operation '{}' invalid for operands {:?} and {:?}.", op, lhs, rhs); // Simplifies typing in the following match block
     let err = || Err(err_msg());
     match lhs {
         Object::Success | Object::Undefined | Object::Tuple(_) => err(), // You can't do any operation with 'Success'
-        Object::Float(x) => match rhs {
-            Object::Float(y) => Ok(Object::Float(
+        Object::Real(x) => match rhs {
+            Object::Real(y) => Ok(Object::Real(
                 match op {
                     BinaryOperation::Add => x+y,
                     BinaryOperation::Sub => x-y,
                     BinaryOperation::Mul => x*y,
                     BinaryOperation::Div => x/y,
                     BinaryOperation::Rem => x.rem_euclid(*y),
-                    // The following result should in fact already be an integer, the `.round()` only converts it to int while accounting for small errors.
                     BinaryOperation::Quo => utils::quo(*x, *y),
                     BinaryOperation::Pow(_) => x.powf(*y),
                     BinaryOperation::Comp(comp, _) => compare(*x, *y, comp) as i8 as f64,
@@ -298,8 +365,8 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
                     BinaryOperation::Rem | BinaryOperation::Quo => return Err(format!("Operation {} undefined for complex RHS.", op)),
                     BinaryOperation::Pow(_) => Object::Complex(Complex { real: *x, imag: 0.0 }.pow(z)),
                     BinaryOperation::Comp(comp, _) => compare_complex(&Complex { real: *x, imag: 0.0 }, z, comp),
-                    BinaryOperation::Or => Object::Float(if *x != 0.0 || z.real != 0.0 || z.imag != 0.0 {1.0} else {0.0}),
-                    BinaryOperation::And => Object::Float(if *x != 0.0 && z.real != 0.0 && z.imag != 0.0 {1.0} else {0.0}),
+                    BinaryOperation::Or => Object::Real(if *x != 0.0 || z.real != 0.0 || z.imag != 0.0 {1.0} else {0.0}),
+                    BinaryOperation::And => Object::Real(if *x != 0.0 && z.real != 0.0 && z.imag != 0.0 {1.0} else {0.0}),
                 }
             ),
             Object::Vector(y) => {
@@ -311,7 +378,7 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
             Object::Tuple(_) | Object::Success | Object::Undefined | Object::LiteralExpression(_) => err()
         }
         Object::Complex(z) => match rhs {
-            Object::Float(x) => Ok(
+            Object::Real(x) => Ok(
                 match op {
                     BinaryOperation::Add => Object::Complex(Complex { real: x + z.real, imag: z.imag }),
                     BinaryOperation::Sub => Object::Complex(Complex { real: z.real - x, imag: z.imag }),
@@ -321,8 +388,8 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
                     BinaryOperation::Quo => Object::Complex(Complex { real: utils::quo(z.real, *x), imag: utils::quo(z.imag, *x) }),
                     BinaryOperation::Pow(_) => Object::Complex(z.pow(&Complex { real: *x, imag: 0.0 })),
                     BinaryOperation::Comp(comp, _) => compare_complex(z, &Complex { real: *x, imag: 0.0 }, comp),
-                    BinaryOperation::Or => Object::Float(if *x != 0.0 || z.real != 0.0 || z.imag != 0.0 {1.0} else {0.0}),
-                    BinaryOperation::And => Object::Float(if *x != 0.0 && z.real != 0.0 && z.imag != 0.0 {1.0} else {0.0}),
+                    BinaryOperation::Or => Object::Real(if *x != 0.0 || z.real != 0.0 || z.imag != 0.0 {1.0} else {0.0}),
+                    BinaryOperation::And => Object::Real(if *x != 0.0 && z.real != 0.0 && z.imag != 0.0 {1.0} else {0.0}),
                 }
             ),
             // For the following code, we could just call `try_operation(lhs, Complex(rhs, 0), op)`, but this
@@ -337,8 +404,8 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
                         => return Err(format!("Operation {} undefined for complex RHS.", op)),
                     BinaryOperation::Pow(_) => Object::Complex(z.pow(w)),
                     BinaryOperation::Comp(comp, _) => compare_complex(z, w, comp),
-                    BinaryOperation::Or => Object::Float(if w.real != 0.0 || w.imag != 0.0 || z.real != 0.0 || z.imag != 0.0 {1.0} else {0.0}),
-                    BinaryOperation::And => Object::Float(if w.real != 0.0 && w.imag != 0.0 && z.real != 0.0 && z.imag != 0.0 {1.0} else {0.0}),
+                    BinaryOperation::Or => Object::Real(if w.real != 0.0 || w.imag != 0.0 || z.real != 0.0 || z.imag != 0.0 {1.0} else {0.0}),
+                    BinaryOperation::And => Object::Real(if w.real != 0.0 && w.imag != 0.0 && z.real != 0.0 && z.imag != 0.0 {1.0} else {0.0}),
                 }
             ),
             Object::Vector(_) | Object::Matrix(_) => Err("Complex vectors aren't supported yet.".to_string()),
@@ -346,7 +413,7 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
         }
         Object::Vector(x) => {
             match rhs {
-                Object::Float(y) => {
+                Object::Real(y) => {
                     Ok(Object::Vector(_op_mv_float(x, *y, op)?))
                 }
                 Object::Complex(_) => Err("Complex vectors aren't supported yet.".to_string()),
@@ -359,12 +426,12 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
                             (x-y).map(Object::Vector).ok_or_else(err_msg)
                         }
                         BinaryOperation::Mul => {
-                            (x*y).map(Object::Float).ok_or_else(err_msg)
+                            (x*y).map(Object::Real).ok_or_else(err_msg)
                         }
                         BinaryOperation::Comp(c, _) => {
                             let n = x.len();
                             if n == y.len() {
-                                Ok(Object::Float(
+                                Ok(Object::Real(
                                     if c.check_all() {
                                         (0..n).all(|i| compare(x[i], y[i], c))
                                     } else {
@@ -387,7 +454,7 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
         }
         Object::Matrix(x) => {
             match rhs {
-                Object::Float(y) => {
+                Object::Real(y) => {
                     if let BinaryOperation::Pow(_) = op {
                         // Matrix exponentiation is only accepted when the exponent is an integer (a.k.a. approximately equal to an integer)
                         let exponent = y.round();
@@ -413,7 +480,7 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
                     if let BinaryOperation::Comp(c, _) = op {
                         let m = x.m; let n = x.n;
                         if m == y.m && n == y.n {
-                            Ok(Object::Float(
+                            Ok(Object::Real(
                                 if c.check_all() {
                                     (0..m).all(
                                         |i| (0..n).all(
@@ -446,6 +513,12 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
                 _ => err()
             }
         }
-        Object::LiteralExpression(_) => err()
+        Object::LiteralExpression(expr) => Ok(Object::LiteralExpression(
+            Expression::BinaryOperation(
+                Box::new(expr.clone()),
+                op.clone(),
+                Box::new(rhs.to_expression())
+            )
+        ))
     }
 }

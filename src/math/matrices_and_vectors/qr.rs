@@ -84,7 +84,7 @@ impl Matrix {
         let (mut h, pg) = self.upper_hessenberg();
         let mut u = pg.transpose();
  
-        let mut eigenvalues = vec![Object::Float(0.0); n];
+        let mut eigenvalues = vec![Object::Real(0.0); n];
         const EPS: f64 = 1e-13;
         const MAX_ITERS_PER_BLOCK: usize = 200;
  
@@ -93,7 +93,7 @@ impl Matrix {
  
         while p > 0 {
             if p == 1 {
-                eigenvalues[0] = Object::Float(h.get(0, 0));
+                eigenvalues[0] = Object::Real(h.get(0, 0));
                 break;
             }
  
@@ -114,7 +114,7 @@ impl Matrix {
  
                 if let Some(i) = split_at {
                     if i == p - 1 {
-                        eigenvalues[p - 1] = Object::Float(h.get(p - 1, p - 1));
+                        eigenvalues[p - 1] = Object::Real(h.get(p - 1, p - 1));
                         p -= 1;
                     } else if i == p - 2 {
                         let (e1, e2) = h.eigenvalues_of_2x2_block(p - 2).unwrap();
@@ -139,7 +139,7 @@ impl Matrix {
                         eigenvalues[p - 1] = e2;
                         p = p.saturating_sub(2);
                     } else {
-                        eigenvalues[p - 1] = Object::Float(h.get(p - 1, p - 1));
+                        eigenvalues[p - 1] = Object::Real(h.get(p - 1, p - 1));
                         p -= 1;
                     }
                     break;
@@ -247,8 +247,8 @@ impl Matrix {
         if disc >= 0.0 {
             let sq = disc.sqrt();
             Some((
-                Object::Float((tr + sq) / 2.0),
-                Object::Float((tr - sq) / 2.0),
+                Object::Real((tr + sq) / 2.0),
+                Object::Real((tr - sq) / 2.0),
             ))
         } else {
             let re = tr / 2.0;

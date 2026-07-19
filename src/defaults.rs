@@ -3,15 +3,15 @@ use std::f64::consts;
 use std::sync::LazyLock;
 
 use crate::math::expressions;
-use crate::math::{Complex, DirectFunction, Expression, Matrix, Object, FunctionRepr};
+use crate::math::{Complex, DirectFunction, Expression, Matrix, Object, ObjType, FunctionRepr};
 use crate::math::operations::{UnaryOperation, BinaryOperation};
 use crate::{expr_if_else, expr_and, expr_compare, expr_add, expr_sub, expr_mul, expr_div, expr_square, expr_neg, expr_1arg_func};
 
 /// Wrapped in a function because const hashmaps aren't available yet.
 pub fn default_constants() -> HashMap<String, Object> {
     HashMap::<String, Object>::from([
-        ("e".to_string(), Object::Float(consts::E)),
-        ("pi".to_string(), Object::Float(consts::PI)),
+        ("e".to_string(), Object::Real(consts::E)),
+        ("pi".to_string(), Object::Real(consts::PI)),
         ("i".to_string(), Object::Complex(Complex { real: 0.0, imag: 1.0 })),
     ])
 }
@@ -30,7 +30,7 @@ macro_rules! float_1_function {
                 ))
             } else {
                 match args[0] {
-                    Object::Float(x) => Ok(Object::Float(x.$name())),
+                    Object::Real(x) => Ok(Object::Real(x.$name())),
                     _ => Err(format!(
                         "Wrong type of argument provided for function '{}' (expected float).",
                         stringify!($name)
@@ -89,7 +89,7 @@ macro_rules! apply_matrix_fn {
 pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[DirectFunction; 23]> = LazyLock::new(|| [
     expect_n_args!(sign, 1, |args: &[Object]| {
         match &args[0] {
-            Object::Float(x) => Ok(Object::Float(if *x >= 0.0 {1.0} else {-1.0})),
+            Object::Real(x) => Ok(Object::Real(if *x >= 0.0 {1.0} else {-1.0})),
             Object::Vector(v) => Ok(Object::Vector(v.transform(|x| if x >= 0.0 {1.0} else {-1.0}))),
             Object::Matrix(m) => Ok(Object::Matrix(m.transform(|x| if x >= 0.0 {1.0} else {-1.0}))),
             other => Err(format!("Undefined operation `sign` for operand {:?}.", other))
@@ -99,9 +99,9 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[DirectFunction; 23]> = LazyLock::
     float_1_function!(exp),
     float_1_function!(ln),
     expect_n_args!(log, 2, |args: &[Object]| {
-        if let Object::Float(base) = args[1] {
+        if let Object::Real(base) = args[1] {
             match args[0] {
-                Object::Float(x) => Ok(Object::Float(x.log(base))),
+                Object::Real(x) => Ok(Object::Real(x.log(base))),
                 _ => Err("Wrong type for first argument (value) of function 'log' (expected float).".to_string())
             }
         }
@@ -123,21 +123,21 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[DirectFunction; 23]> = LazyLock::
         else { Err("Wrong type for argument of function 'eig' (expected Matrix).".to_string()) }
     }),
     apply_matrix_fn!(det, |r, mat: &Matrix| match r {
-        Some(res) => Ok(Object::Float(res)),
+        Some(res) => Ok(Object::Real(res)),
         None => Err(format!("Matrix must be quadratic (got size {}x{}).", mat.m, mat.n))
     }),
     apply_matrix_fn!(adj, |r, mat: &Matrix| match r {
         Some(res) => Ok(Object::Matrix(res)),
         None => Err(format!("Matrix must be quadratic (got size {}x{}).", mat.m, mat.n))
     }),
-    apply_matrix_fn!(tr, |r: Result<f64, String>, _| {r.map(Object::Float)}),
+    apply_matrix_fn!(tr, |r: Result<f64, String>, _| {r.map(Object::Real)}),
     apply_matrix_fn!(transpose, |r: Matrix, _| {Ok(Object::Matrix(r))}),
     Box::new(|args|
         if args.len() == 2
         && let (Object::Vector(x), Object::Vector(y)) = (&args[0], &args[1])
         && x.len() == y.len() {
             let n = x.len();
-            Ok(Object::Float((0..n).map(|i|
+            Ok(Object::Real((0..n).map(|i|
                 x[i]
                 * if i > 0 {(0..i).map(|j| y[j]).product()} else {1.0}
                 * if i < n-1 {(i+1..n).map(|j| y[j]).product()} else {1.0}
@@ -171,6 +171,21 @@ pub fn default_functions() -> HashMap<String, FunctionRepr> {
         )
     ));
     res
+}
+
+/// Given the name of a default function and the types of the given arguments,
+/// returns the corresponding output type.
+pub fn get_default_fn_type(name: &str, arg_types: &[ObjType]) -> Result<ObjType, String> {
+    match (name, arg_types) {
+        ("eig", [ObjType::Matrix(m, n)]) if m == n => Ok(ObjType::Vector(*n)),
+        ("det", [ObjType::Matrix(m, n)]) | ("tr", [ObjType::Matrix(m, n)]) if m == n => Ok(ObjType::Scalar),
+        ("adj", [ObjType::Matrix(m, n)]) if m == n => Ok(ObjType::Matrix(*n, *n)),
+        ("transpose", [ObjType::Matrix(m, n)]) => Ok(ObjType::Matrix(*n, *m)),
+        ("___helper_prod_rule", [ObjType::Vector(m), ObjType::Vector(n)]) if m == n => Ok(ObjType::Scalar),
+        ("log", [ObjType::Scalar, ObjType::Scalar]) => Ok(ObjType::Scalar),
+        (_, [ObjType::Scalar]) => Ok(ObjType::Scalar),
+        _ => Err(format!("No function \"{}\" accepting arguments of type {:?}.", name, arg_types))
+    }
 }
 
 pub const FUNCTIONS_WITH_PROVIDED_DERIVATIVE: [&str; 20] = [

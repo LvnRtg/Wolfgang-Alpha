@@ -174,7 +174,7 @@ pub fn eval(
                 Err(format!("Unknown identifier: {:?}", ident))
             }
         },
-        Expression::Number(x) => Ok(Object::Float(*x)),
+        Expression::Number(x) => Ok(Object::Real(*x)),
         Expression::Tuple(entries) => {
             // As mentioned in the docs, we capture the environment for tuple evaluation.
             // Two approaches:
@@ -195,7 +195,7 @@ pub fn eval(
         Expression::Vector(entries) => {
             Ok(Object::Vector(math::Vector{values: entries.iter().map(
                 |x| match eval(x, extra_vars, env) {
-                    Ok(Object::Float(entry)) => Ok(entry),
+                    Ok(Object::Real(entry)) => Ok(entry),
                     Ok(_) => Err(format!("Entry {} is not a float.", x)),
                     Err(e) => Err(format!("Couldn't evaluate entry {}. Traceback: {}", x, e))
                 }
@@ -204,7 +204,7 @@ pub fn eval(
         Expression::Matrix(m, n, entries) => {
             Ok(Object::Matrix(math::Matrix::from(*m, *n, entries.iter().map(
                 |x| match eval(x, extra_vars, env) {
-                    Ok(Object::Float(entry)) => Ok(entry),
+                    Ok(Object::Real(entry)) => Ok(entry),
                     Ok(_) => Err(format!("Entry {} is not a float.", x)),
                     Err(e) => Err(format!("Couldn't evaluate entry {}. Traceback: {}", x, e))
                 }
@@ -221,7 +221,7 @@ pub fn eval(
                 UnaryOperation::Factorial => {
                     match eval(rhs, extra_vars, env)? {
                         Object::Success => Ok(Object::Success),
-                        Object::Float(x) => Ok(Object::Float({
+                        Object::Real(x) => Ok(Object::Real({
                             let r = x.round();
                             if approx_eq(x, r) && r >= 0.0 { // Avoid calling the gamma function if unnecessary
                                 if r <= 1.0 {
@@ -241,7 +241,8 @@ pub fn eval(
                 UnaryOperation::Abs => {
                     match eval(rhs, extra_vars, env)? {
                         Object::Success => Ok(Object::Success),
-                        Object::Float(x) => Ok(Object::Float(x.abs())),
+                        Object::Real(x) => Ok(Object::Real(x.abs())),
+                        Object::Complex(x) => Ok(Object::Real(x.modulus())),
                         Object::LiteralExpression(e) => Ok(Object::LiteralExpression(Expression::UnaryOperation(UnaryOperation::Abs, Box::new(e)))),
                         other => Err(format!("Operation 'Abs' not valid for operand {other}.")),
                     }
@@ -249,11 +250,11 @@ pub fn eval(
                 UnaryOperation::Norm(opt) => {
                     match eval(rhs, extra_vars, env)? {
                         Object::Success => Ok(Object::Success),
-                        Object::Float(x) => Ok(Object::Float(x.abs())),
-                        Object::Vector(x) => Ok(Object::Float(
+                        Object::Real(x) => Ok(Object::Real(x.abs())),
+                        Object::Vector(x) => Ok(Object::Real(
                             x.norm(&math::matrices_and_vectors::VectorNorm::from_expr(opt, extra_vars, env)?)
                         )),
-                        Object::Matrix(x) => Ok(Object::Float(
+                        Object::Matrix(x) => Ok(Object::Real(
                             x.norm(&math::matrices_and_vectors::MatrixNorm::from_expr(opt, extra_vars, env)?)?
                         )),
                         Object::LiteralExpression(e) => Ok(Object::LiteralExpression(Expression::UnaryOperation(UnaryOperation::Norm(opt.clone()), Box::new(e)))),
@@ -290,7 +291,7 @@ pub fn eval(
                     // If a number of repetitions is given as `param` under the form of an expression, evaluate it and use it. Otherwise, use `DEFAULT_TESTEQ_REPETITIONS`
                     let n = param.as_ref()
                         .map(|p| match eval(p, extra_vars, env) {
-                            Ok(Object::Float(x)) => Ok(x.round() as usize),
+                            Ok(Object::Real(x)) => Ok(x.round() as usize),
                             Err(e) => Err(format!("Couldn't resolve number of repetitions `{}`. Traceback: {}", p, e)),
                             _ => Err(format!("Couldn't resolve number of repetitions `{}` to float.", p))
                         })
@@ -303,10 +304,10 @@ pub fn eval(
                     let linspaces: Vec<Object> = [
                         linspace_as_objects(0.0, 1.0, n),
                         linspace_as_objects(1.0, 100.0, n),
-                        (101..=100+n).map(|x| Object::Float(x as f64)).collect::<Vec<Object>>(),
+                        (101..=100+n).map(|x| Object::Real(x as f64)).collect::<Vec<Object>>(),
                         linspace_as_objects(0.0, -1.0, n),
                         linspace_as_objects(-1.0, -100.0, n),
-                        (-100-(n as isize) .. -100).map(|x| Object::Float(x as f64)).collect::<Vec<Object>>()
+                        (-100-(n as isize) .. -100).map(|x| Object::Real(x as f64)).collect::<Vec<Object>>()
                     ].iter().flat_map(|v| v.iter()).cloned().collect();
 
                     for test_values in (0..lhs_free_variables.len()).map(|_| linspaces.iter()).multi_cartesian_product() {
@@ -322,12 +323,12 @@ pub fn eval(
                         }
                         // If the objects' comparison yields `false`, return that. If the objects aren't comparable, return the appropriate error. Otherwise, continue.
                         match if mirror {try_operation(&other_eval, &first_eval, op)} else {try_operation(&first_eval, &other_eval, op)} {
-                            Ok(Object::Float(0.0)) => { return Ok(Object::Float(0.0)); }
+                            Ok(Object::Real(0.0)) => { return Ok(Object::Real(0.0)); }
                             Err(_) => { return Err(format!("Couldn't compare `{}` and `{}` (arising from environment {:?}).", first_eval, other_eval, env.constants)); }
                             _ => {}
                         }
                     }
-                    return Ok(Object::Float(1.0)); // If nothing previous returned, then the expressions fulfill the comparison.
+                    return Ok(Object::Real(1.0)); // If nothing previous returned, then the expressions fulfill the comparison.
                 }
             }
             
@@ -335,31 +336,38 @@ pub fn eval(
             let lhs_eval = eval(lhs, extra_vars, env)?;
             // If the LHS is evaluated to zero and `op` is a multiplication, we can skip evaluating the RHS.
             // Furthermore, we actually SHOULD skip it, since this enables us to use indicator functions smartly.
-            if let Object::Float(x) = &lhs_eval && approx_eq(*x, 0.0) && *op == BinaryOperation::Mul {
-                return Ok(Object::Float(0.0)); // TODO: return the correct type when `Expression.type` is available
+            if let Object::Real(x) = &lhs_eval && approx_eq(*x, 0.0) && *op == BinaryOperation::Mul {
+                rhs.get_type(extra_vars, env).map(|t| t.zero())
+            } else {
+                try_operation(&lhs_eval, &eval(rhs, extra_vars, env)?, op)
             }
-            try_operation(&lhs_eval, &eval(rhs, extra_vars, env)?, op)
         },
-        Expression::FoldedOperation(op, varname, from, conditions, to, inner) => {
+        Expression::FoldedOperation(op, index_var, from, conditions, to, inner) => {
             let mut i = eval(from, extra_vars, env)?.expect_int()?;
-            // If i is more than `to` rightaway, return the default value for a folded operator over an empty range.
-            if i > eval(to, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Float(i))]), parent: extra_vars }, env)?.expect_float()? {
-                // TODO check type using extra function `checktype(expr)` and return 0 of the appropriate space.
-                return Ok(op.if_empty());
+            let initial_to_eval = eval(to, &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: extra_vars }, env)?.expect_float()?;
+            // We initialize `res` with the appropriate identity object (e.g. zero for a sum and one for a product). To do this, we must know the correct type,
+            // which we obtain using `inner.get_type`. This in turn requires us to know the type of the index var, which we can obtain by simply evaluating it once.
+            // Since we need the evaluation at `to` below anyway, we choose to evalute `index_var` at this point and not (say) at `from`.
+            let mut res = op.if_empty(&inner.get_type(
+                &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(initial_to_eval))]), parent: extra_vars },
+                env
+            )?);
+            // If `i` is more than `to` rightaway (i.e. more than `initial_to_eval`), return the default value for a folded operator over an empty range.
+            if i > initial_to_eval {
+                return Ok(res);
             }
-            let mut res = op.if_empty(); // TODO also change type here
             let binop = op.underlying_binop();
             // We will rebuild the following varstack in every iteration (I didn't find a way to make it modify itself when i changes).
-            let mut i_as_obj = Object::Float(i);
-            let mut varstack_top_frame = HashMap::from([(varname, &i_as_obj)]);
+            let mut i_as_obj = Object::Real(i);
+            let mut varstack_top_frame = HashMap::from([(index_var, &i_as_obj)]);
             let mut varstack = VarStack::Frame { vars: &varstack_top_frame, parent: extra_vars };
             // The below condition `i + 1.0 != i` is required because for too large floats, adding 1.0 becomes a non-op and prevents the loop from ever finishing.
             'outer: while i + 1.0 != i && i <= eval(to, &varstack, env)?.expect_float()? {
                 // Check if all conditions are met. If not, skip this `i`.
                 for cond in conditions {
                     match eval(cond, &varstack, env)? {
-                        Object::Float(1.0) => {} // Condition met; ignore
-                        Object::Float(0.0) => { // Condition not met; skip `i`
+                        Object::Real(1.0) => {} // Condition met; ignore
+                        Object::Real(0.0) => { // Condition not met; skip `i`
                             i += 1.0;
                             continue 'outer;
                         }
@@ -371,8 +379,8 @@ pub fn eval(
                 res = try_operation(&res, &next_term, &binop)?;
                 i += 1.0;
                 // Rebuild varstack
-                i_as_obj = Object::Float(i);
-                varstack_top_frame = HashMap::from([(varname, &i_as_obj)]);
+                i_as_obj = Object::Real(i);
+                varstack_top_frame = HashMap::from([(index_var, &i_as_obj)]);
                 varstack = VarStack::Frame { vars: &varstack_top_frame, parent: extra_vars };
             }
             Ok(res)
@@ -471,8 +479,8 @@ pub fn eval(
         }
         Expression::IfElse(condition, iftrue, iffalse) => {
             match eval(condition, extra_vars, env) {
-                Ok(Object::Float(1.0)) => eval(iftrue, extra_vars, env),
-                Ok(Object::Float(0.0)) => eval(iffalse, extra_vars, env),
+                Ok(Object::Real(1.0)) => eval(iftrue, extra_vars, env),
+                Ok(Object::Real(0.0)) => eval(iffalse, extra_vars, env),
                 Ok(x) => Err(format!("Couldn't evaluate condition {} to 0 or 1; got {x}", &**condition)),
                 other => other
             }

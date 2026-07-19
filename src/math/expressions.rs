@@ -1,7 +1,7 @@
 use std::fmt;
 use std::collections::{HashMap, HashSet};
 
-use crate::math::{Env, Object, VarStack};
+use crate::math::{Env, Object, objects::ObjType, VarStack};
 use crate::math::operations::*;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -287,6 +287,146 @@ impl Expression {
             }
         }
     }
+
+    /// Recursively determines what type this expression should output for the given context.
+    /// 
+    /// Returns `Err` if the type couldn't be determined.
+    /// 
+    /// Useful to return the correct types of object for e.g. empty sums.
+    pub fn get_type(&self, extra_vars: &VarStack, env: &Env) -> Result<ObjType, String> {
+        match self {
+            Expression::None => Ok(ObjType::NonObject),
+            Expression::Identifier(s) => {
+                if let Some(obj) = extra_vars.lookup(s).or_else(|| env.constants.get(s)) {
+                    Ok(obj.get_type())
+                } else {
+                    Err(format!("Unknown identifier: {:?}", s))
+                }
+            }
+            Expression::Number(_) => Ok(ObjType::Scalar),
+            Expression::Tuple(v) => Ok(ObjType::Tuple(v.len())),
+            Expression::Vector(v) => Ok(ObjType::Vector(v.len())),
+            Expression::Matrix(m, n, _) => Ok(ObjType::Matrix(*m, *n)),
+            Expression::UnaryOperation(op, r) => match op {
+                UnaryOperation::Neg => r.get_type(extra_vars, env),
+                UnaryOperation::Not => r.get_type(extra_vars, env),
+                UnaryOperation::Factorial => match r.get_type(extra_vars, env)? {
+                    t @ (ObjType::Scalar | ObjType::LiteralExpression | ObjType::NonObject) => Ok(t),
+                    other => Err(format!("Operation 'Factorial' not valid for operand of type {:?}.", other))
+                }
+                UnaryOperation::Abs => match r.get_type(extra_vars, env)? {
+                    t @ (ObjType::Scalar | ObjType::LiteralExpression | ObjType::NonObject) => Ok(t),
+                    other => Err(format!("Operation 'Factorial' not valid for operand of type {:?}.", other))
+                }
+                UnaryOperation::Norm(_) => match r.get_type(extra_vars, env)? {
+                    t @ (ObjType::LiteralExpression | ObjType::NonObject) => Ok(t),
+                    _ => Ok(ObjType::Scalar)
+                }
+            }
+            Expression::BinaryOperation(l, op, r) => {
+                let ltype = l.get_type(extra_vars, env)?;
+                let rtype = r.get_type(extra_vars, env)?;
+                let err = || Err(format!("Operation '{}' invalid for operands {:?} and {:?}.", op, l, r));
+                if matches!(ltype, ObjType::NonObject | ObjType::Tuple(_)) || matches!(rtype, ObjType::NonObject | ObjType::Tuple(_)) {
+                    return err();
+                }
+                if matches!(ltype, ObjType::LiteralExpression) || matches!(rtype, ObjType::LiteralExpression) {
+                    return Ok(ObjType::LiteralExpression)
+                }
+                // Remaining types: scalar, vector, matrix.
+                match op {
+                    BinaryOperation::Add | BinaryOperation::Sub if ltype == rtype => Ok(ltype),
+                    BinaryOperation::Mul => match ltype {
+                        ObjType::Scalar => Ok(rtype),
+                        ObjType::Vector(k) => match rtype {
+                            ObjType::Scalar => Ok(ObjType::Vector(k)),
+                            ObjType::Vector(n) if n == k => Ok(ObjType::Scalar),
+                            ObjType::Matrix(m, n) if m == k => Ok(ObjType::Vector(n)),
+                            _ => err()
+                        }
+                        ObjType::Matrix(m, n) => match rtype {
+                            ObjType::Scalar => Ok(ObjType::Matrix(m, n)),
+                            ObjType::Vector(k) if k == n => Ok(ObjType::Vector(m)),
+                            ObjType::Matrix(k, l) if k == n => Ok(ObjType::Matrix(m, l)),
+                            _ => err()
+                        }
+                        _ => err()
+                    }
+                    BinaryOperation::Div | BinaryOperation::Rem | BinaryOperation::Quo if ltype == ObjType::Scalar => Ok(rtype),
+                    BinaryOperation::Div | BinaryOperation::Rem | BinaryOperation::Quo if rtype == ObjType::Scalar => Ok(ltype),
+                    BinaryOperation::Pow(_) if rtype == ObjType::Scalar => match ltype {
+                        ObjType::Matrix(m, n) if m == n => Ok(ltype),
+                        ObjType::Scalar => Ok(ltype),
+                        _ => err()
+                    }
+                    BinaryOperation::And | BinaryOperation::Or if ltype == ObjType::Scalar && rtype == ObjType::Scalar => Ok(ObjType::Scalar),
+                    BinaryOperation::Comp(..) => Ok(ObjType::Scalar),
+                    _ => err()
+                }
+            }
+            Expression::FoldedOperation(_, index_name, from, .., inner) => {
+                /*
+                Here, we trust that `inner` always returns the same type of object.
+                There is one special case where this is not necessarily true: if the folded operation is a product of the form
+                `prod_i f(i)` and `f(i)` returns a `g(i) x g(i+1)`-matrix. Then, the operation can successfully be evaluted
+                even though its inner term is of variable type.
+                However, this case can (currently) be disregarded for the following reason. The (currently) only application
+                of this method `get_type` is to determine the type a folded operation should return so that when it runs over
+                an empty range, we can return a default value of the correct type. In the case presented above, the returned
+                type depends on the range ran over, so if the outer operation has an empty range, we couldn't always determine
+                the true returned type anyway (only that it is a matrix, but not its dimension).
+                */
+                let index_type_repr = from.get_type(extra_vars, env)?.representative();
+                inner.get_type(&VarStack::Frame { vars: &HashMap::from([(index_name, &index_type_repr)]), parent: extra_vars }, env)
+            }
+            Expression::Function(name, args) => {
+                match env.functions.get(name) {
+                    Some(super::FunctionRepr::ByExpression(varnames, expr)) => {
+                        let h = varnames.iter().zip(args)
+                            .map(|(v, a)| a.get_type(extra_vars, env).map(|t| (v, t.representative())))
+                            .collect::<Result<HashMap<_, _>, _>>()?;
+                        expr.get_type(
+                            &VarStack::Frame {
+                                vars: &h.iter().map(|(v, r)| (*v, r)).collect(),
+                                parent: extra_vars
+                            },
+                            env
+                        )
+                    }
+                    Some(super::FunctionRepr::Direct(_)) => crate::defaults::get_default_fn_type(
+                        name,
+                        &args.iter().map(|x| x.get_type(extra_vars, env)).collect::<Result<Vec<_>, _>>()?
+                    ),
+                    None => Err(format!("No such function: \"{name}\"."))
+                }
+            }
+            Expression::Assignment(_, rhs) => rhs.get_type(extra_vars, env),
+            Expression::PartialDerivative(..) => Ok(ObjType::LiteralExpression),
+            Expression::DirectionalDerivative(vars, expr, point, _) => {
+                let h = vars.iter().zip(point)
+                    .map(|(v, a)| a.get_type(extra_vars, env).map(|t| (v, t.representative())))
+                    .collect::<Result<HashMap<_, _>, _>>()?;
+                expr.get_type(
+                    &VarStack::Frame {
+                        vars: &h.iter().map(|(v, r)| (*v, r)).collect(),
+                        parent: extra_vars
+                    },
+                    env
+                )
+            }
+            Expression::Integral(func, a, _, wrt) => {
+                // This time, we can assume truly w.l.o.g. that `func` always returns the same type,
+                // otherwise the integral wouldn't be defined.
+                let wrt_type_repr = a.get_type(extra_vars, env)?.representative();
+                func.get_type(&VarStack::Frame { vars: &HashMap::from([(wrt, &wrt_type_repr)]), parent: extra_vars }, env)
+            }
+            // Below, we can have a problem if `iftrue` and `iffalse` are different. Logically, this shouldn't be the case,
+            // but the user _can_ do this. However, there is no way to solve this since without knowing the free variables,
+            // we can't simply check the condition to know which expression is returned.
+            // Therefore, I decided to use `iftrue`.
+            Expression::IfElse(_, iftrue, _) => iftrue.get_type(extra_vars, env),
+        }
+    }
 }
 
 /// Allows to simplify literal expressions.
@@ -568,7 +708,7 @@ impl Expression {
 }
 
 
-// The following macros simplify typing and enhance readability by a LOT. I only add these that are actively used.
+// The following macros simplify typing and enhance readability by a LOT.
 #[macro_export]
 macro_rules! expr_if_else {
     ($condition:expr, $iftrue:expr, $iffalse:expr) => {

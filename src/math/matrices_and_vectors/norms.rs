@@ -17,7 +17,7 @@ impl VectorNorm {
             Expression::Identifier(ident) if ident == "inf" || ident == "infty"
                 => Ok(VectorNorm::P(f64::INFINITY)),
             other => {
-                if let Object::Float(z) = eval(other, extra_vars, env)? {
+                if let Object::Real(z) = eval(other, extra_vars, env)? {
                     Ok(VectorNorm::P(z))
                 }
                 else {
@@ -43,7 +43,7 @@ impl MatrixNorm {
             Expression::Identifier(ident) if ident.starts_with('f')
                 => Ok(MatrixNorm::Frobenius),
             other => {
-                if let Object::Float(z) = eval(other, extra_vars, env)? {
+                if let Object::Real(z) = eval(other, extra_vars, env)? {
                     Ok(MatrixNorm::P(z))
                 }
                 else {
@@ -199,7 +199,7 @@ impl Matrix {
                 match self.gram_matrix().qr_decomposition() {
                     Some((eigenvalues, ..)) => Ok(utils::max(eigenvalues.into_iter().map(
                         |obj| match obj {
-                            Object::Float(x) => x.abs(),
+                            Object::Real(x) => x.abs(),
                             Object::Complex(x) => x.modulus(),
                             _ => 0.0 // Will never happen anyway, `qr_decomposition[0]` only consists of floats and complex values
                         }

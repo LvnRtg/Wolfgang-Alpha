@@ -23,7 +23,7 @@ pub mod utils;
 pub use crate::math::complex::Complex;
 pub use crate::math::expressions::Expression;
 pub use crate::math::matrices_and_vectors::{Matrix, Vector};
-pub use crate::math::objects::{Object, DirectFunction, FunctionRepr};
+pub use crate::math::objects::{Object, ObjType, DirectFunction, FunctionRepr};
 pub use crate::math::operations::{Comparison, BinaryOperation, UnaryOperation, FoldedOperation};
 
 /// Set this constant such that `BLOCK^2 * 8` fits in your L1 Cache. Find out the capacity of the latter by running `sudo lshw -C memory`.
