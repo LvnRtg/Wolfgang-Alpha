@@ -4,7 +4,17 @@ use std::ops;
 use std::slice::SliceIndex;
 
 use std::cmp::min;
-use crate::math::{Matrix, Vector};
+use crate::math::{Matrix, Vector, utils::quo};
+
+
+trait Quo<Rhs = Self> {
+    type Output;
+    fn quo(self, rhs: Rhs) -> Self::Output;
+}
+trait QuoAssign<Rhs = Self> {
+    fn quo_assign(&mut self, rhs: Rhs);
+}
+
 
 // Indexing just operates on the values directly
 impl<I> ops::Index<I> for Vector where I: SliceIndex<[f64]> {
@@ -141,6 +151,29 @@ impl ops::RemAssign<f64> for Vector {
     fn rem_assign(&mut self, rhs: f64) {
         for i in 0..self.values.len() {
             self.values[i] = self.values[i].rem_euclid(rhs);
+        }
+    }
+}
+impl Quo<f64> for &Vector {
+    type Output = Vector;
+    fn quo(self, rhs: f64) -> Self::Output {
+        Vector {
+            values: self.values.iter().map(|x| quo(*x, rhs)).collect::<Vec<f64>>()
+        }
+    }
+}
+impl<'a> Quo<&'a Vector> for f64 {
+    type Output = Vector;
+    fn quo(self, rhs: &'a Vector) -> Self::Output {
+        Vector {
+            values: rhs.values.iter().map(|x| quo(self, *x)).collect::<Vec<f64>>()
+        }
+    }
+}
+impl QuoAssign<f64> for Vector {
+    fn quo_assign(&mut self, rhs: f64) {
+        for i in 0..self.values.len() {
+            self.values[i] = quo(self.values[i], rhs);
         }
     }
 }
@@ -282,6 +315,33 @@ impl ops::RemAssign<f64> for Matrix {
     fn rem_assign(&mut self, rhs: f64) {
         for i in 0..self.values.len() {
             self.values[i] = self.values[i].rem_euclid(rhs);
+        }
+    }
+}
+impl Quo<f64> for &Matrix {
+    type Output = Matrix;
+    fn quo(self, rhs: f64) -> Self::Output {
+        Matrix {
+            m: self.m,
+            n: self.n,
+            values: self.values.iter().map(|x| quo(*x, rhs)).collect::<Vec<f64>>()
+        }
+    }
+}
+impl<'a> Quo<&'a Matrix> for f64 {
+    type Output = Matrix;
+    fn quo(self, rhs: &'a Matrix) -> Self::Output {
+        Matrix {
+            m: rhs.m,
+            n: rhs.n,
+            values: rhs.values.iter().map(|x| quo(self, *x)).collect::<Vec<f64>>()
+        }
+    }
+}
+impl QuoAssign<f64> for Matrix {
+    fn quo_assign(&mut self, rhs: f64) {
+        for i in 0..self.values.len() {
+            self.values[i] = quo(self.values[i], rhs);
         }
     }
 }
