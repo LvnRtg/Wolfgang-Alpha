@@ -4,16 +4,7 @@ use std::ops;
 use std::slice::SliceIndex;
 
 use std::cmp::min;
-use crate::math::{Matrix, Vector, utils::quo};
-
-
-trait Quo<Rhs = Self> {
-    type Output;
-    fn quo(self, rhs: Rhs) -> Self::Output;
-}
-trait QuoAssign<Rhs = Self> {
-    fn quo_assign(&mut self, rhs: Rhs);
-}
+use crate::math::{Matrix, Vector, utils::{quo, Quo, QuoAssign}};
 
 
 // Indexing just operates on the values directly

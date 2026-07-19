@@ -4,6 +4,16 @@ use std::collections::HashSet;
 
 use crate::math::Object;
 
+
+pub trait Quo<Rhs = Self> {
+    type Output;
+    fn quo(self, rhs: Rhs) -> Self::Output;
+}
+pub trait QuoAssign<Rhs = Self> {
+    fn quo_assign(&mut self, rhs: Rhs);
+}
+
+
 #[inline]
 pub fn approx_eq(x: f64, y: f64) -> bool {
     (x-y).abs() <= 1e-10
@@ -102,7 +112,7 @@ pub fn format_trimmed(x: f64, decimals: usize) -> String {
 /// As `linspace` but directly converts all floats to `Object`s.
 pub fn linspace_as_objects(a: f64, b: f64, n: usize) -> Vec<Object> {
     if n == 0 {return Vec::<Object>::new();}
-    if n == 1 {return vec![Object::Float(a)];}
+    if n == 1 {return vec![Object::Real(a)];}
     let step = (b-a) / ((n-1) as f64);
-    (0..n).map(|i| Object::Float(a + i as f64 * step)).collect()
+    (0..n).map(|i| Object::Real(a + i as f64 * step)).collect()
 }
