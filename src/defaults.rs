@@ -115,20 +115,20 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[DirectFunction; 23]> = LazyLock::
 
     expect_n_args!(eig, 1, |args: &[Object]| {
         if let Object::Matrix(mat) = &args[0] {
-            match mat.qr_decomposition() {
-                Some((eig, ..)) => Ok(Object::Tuple(eig)),
-                None => Err(format!("Matrix must be quadratic (got size {}x{}).", mat.m, mat.n))
+            match mat.eigenvalues() {
+                Some(eig) => Ok(Object::Tuple(eig)),
+                None => Err(format!("Matrix must be quadratic (got size {}x{}).", mat.m(), mat.n()))
             }
         }
         else { Err("Wrong type for argument of function 'eig' (expected Matrix).".to_string()) }
     }),
     apply_matrix_fn!(det, |r, mat: &Matrix| match r {
         Some(res) => Ok(Object::Real(res)),
-        None => Err(format!("Matrix must be quadratic (got size {}x{}).", mat.m, mat.n))
+        None => Err(format!("Matrix must be quadratic (got size {}x{}).", mat.m(), mat.n()))
     }),
     apply_matrix_fn!(adj, |r, mat: &Matrix| match r {
         Some(res) => Ok(Object::Matrix(res)),
-        None => Err(format!("Matrix must be quadratic (got size {}x{}).", mat.m, mat.n))
+        None => Err(format!("Matrix must be quadratic (got size {}x{}).", mat.m(), mat.n()))
     }),
     apply_matrix_fn!(tr, |r: Result<f64, String>, _| {r.map(Object::Real)}),
     apply_matrix_fn!(transpose, |r: Matrix, _| {Ok(Object::Matrix(r))}),
@@ -387,7 +387,10 @@ pub fn get_default_derivative(function_name: &str, point: &[Expression], directi
         "det" => assert_length!(1, det, point, direction,
             expr_1arg_func!(
                 "tr",
-                Expression::Function("adj".to_string(), vec![direction[0].clone()])
+                expr_mul!(
+                    Expression::Function("adj".to_string(), vec![point[0].clone()]),
+                    direction[0].clone()
+                )
             )
         ),
         // `tr` is linear and thus commutes with the derivative.

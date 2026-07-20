@@ -12,7 +12,9 @@ const PARALLELIZATION_THRESHOLD: usize = 16;
 impl Matrix {
     /// Transposes `self` using parallelization if `self` is large.
     pub fn transpose(&self) -> Matrix {
-        if self.m.max(self.n) >= PARALLELIZATION_THRESHOLD {
+        if self.m == 0 || self.n == 0 {
+            Matrix::from(0, 0, vec![])
+        } else if self.m.max(self.n) >= PARALLELIZATION_THRESHOLD {
             self.transpose_parallel()
         } else {
             self.transpose_simple()

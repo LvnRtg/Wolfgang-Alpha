@@ -17,6 +17,9 @@ impl ops::Mul<&Matrix> for &Matrix {
         if self.n != rhs.m {
             return None;
         }
+        if self.m == 0 || self.n == 0 || rhs.n == 0 {
+            return Some(Matrix::from(0, 0, vec![]));
+        }
         let rhs_t = rhs.transpose(); // Improves cache locality and is only O(n²)
         let m = self.m;
         let n = rhs.n;
@@ -128,7 +131,7 @@ impl Matrix {
                         let out_row = &mut out_block[bi * l..(bi + 1) * l];
                         out_row[jj..j_end].iter_mut().enumerate().for_each(
                             |(j, out_elem)|
-                            *out_elem = Vector::unchecked_dot(a_row, rhs_t.row_slice(j))
+                            *out_elem = Vector::unchecked_dot(a_row, rhs_t.row_slice(jj + j))
                         );
                     }
                 }

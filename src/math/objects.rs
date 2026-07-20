@@ -132,10 +132,10 @@ impl Object {
             Object::Vector(v) => vec![format!("({})", &v.values.iter().map(|x| utils::format_trimmed(*x, 8)).collect::<Vec<String>>().join(", "))],
             Object::Matrix(x) => {
                 // First, we go through all element to know how much space each column needs.
-                let mut column_lengths = Vec::<usize>::with_capacity(x.n);
-                let mut entries = Vec::<String>::with_capacity(x.n * x.m); // Notice this is the transposed version of the typical flattened vector
-                for j in 0..x.n {
-                    column_lengths.push((0..x.m).map(
+                let mut column_lengths = Vec::<usize>::with_capacity(x.n());
+                let mut entries = Vec::<String>::with_capacity(x.n() * x.m()); // Notice this is the transposed version of the typical flattened vector
+                for j in 0..x.n() {
+                    column_lengths.push((0..x.m()).map(
                         |i| {
                             let s = utils::format_trimmed(x.get(i, j), 8);
                             let len = s.len();
@@ -145,11 +145,11 @@ impl Object {
                     ).max().unwrap_or(0))
                 }
                 // Cache locality isn't very important here since only so much can be displayed on a reasonable screen anyway
-                let row_length = column_lengths.iter().sum::<usize>() + 2*x.n; // Between two columns, add 2 spaces. Before the first columns and after the last one, only 1 space.
+                let row_length = column_lengths.iter().sum::<usize>() + 2*x.n(); // Between two columns, add 2 spaces. Before the first columns and after the last one, only 1 space.
                 let mut lines = vec![format!("╭{}╮", (0..row_length).map(|_| ' ').collect::<String>())];
-                for i in 0..x.m {
-                    lines.push(format!("│ {}│", (0..x.n).map(
-                        |j| format!("{:^2$} {}", entries[j*x.m + i], if j == x.n-1 {""} else {" "}, column_lengths[j])
+                for i in 0..x.m() {
+                    lines.push(format!("│ {}│", (0..x.n()).map(
+                        |j| format!("{:^2$} {}", entries[j*x.m() + i], if j == x.n()-1 {""} else {" "}, column_lengths[j])
                     ).collect::<String>()));
                 }
                 lines.push(format!("╰{}╯", (0..row_length).map(|_| ' ').collect::<String>()));
@@ -167,7 +167,7 @@ impl Object {
             Object::Tuple(v) => Expression::Tuple(v.iter().map(|o| o.to_expression()).collect()),
             Object::Vector(v) => Expression::Vector(v.values.iter().map(|entry| Expression::Number(*entry)).collect()),
             Object::Matrix(x) => Expression::Matrix(
-                x.m, x.n,
+                x.m(), x.n(),
                 x.iter_values().map(|entry| Expression::Number(*entry)).collect()
             ),
             Object::LiteralExpression(e) => e.clone()
@@ -196,7 +196,7 @@ impl Object {
             Object::Undefined | Object::Success => ObjType::NonObject,
             Object::Real(_) | Object::Complex(_) => ObjType::Scalar,
             Object::Vector(v) => ObjType::Vector(v.len()),
-            Object::Matrix(x) => ObjType::Matrix(x.m, x.n),
+            Object::Matrix(x) => ObjType::Matrix(x.m(), x.n()),
             Object::Tuple(t) => ObjType::Tuple(t.len()),
             Object::LiteralExpression(_) => ObjType::LiteralExpression
         }
@@ -366,7 +366,7 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
                     BinaryOperation::Pow(_) => Object::Complex(Complex { real: *x, imag: 0.0 }.pow(z)),
                     BinaryOperation::Comp(comp, _) => compare_complex(&Complex { real: *x, imag: 0.0 }, z, comp),
                     BinaryOperation::Or => Object::Real(if *x != 0.0 || z.real != 0.0 || z.imag != 0.0 {1.0} else {0.0}),
-                    BinaryOperation::And => Object::Real(if *x != 0.0 && z.real != 0.0 && z.imag != 0.0 {1.0} else {0.0}),
+                    BinaryOperation::And => Object::Real(if *x != 0.0 && (z.real != 0.0 || z.imag != 0.0) {1.0} else {0.0}),
                 }
             ),
             Object::Vector(y) => {
@@ -389,7 +389,7 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
                     BinaryOperation::Pow(_) => Object::Complex(z.pow(&Complex { real: *x, imag: 0.0 })),
                     BinaryOperation::Comp(comp, _) => compare_complex(z, &Complex { real: *x, imag: 0.0 }, comp),
                     BinaryOperation::Or => Object::Real(if *x != 0.0 || z.real != 0.0 || z.imag != 0.0 {1.0} else {0.0}),
-                    BinaryOperation::And => Object::Real(if *x != 0.0 && z.real != 0.0 && z.imag != 0.0 {1.0} else {0.0}),
+                    BinaryOperation::And => Object::Real(if *x != 0.0 && (z.real != 0.0 || z.imag != 0.0) {1.0} else {0.0}),
                 }
             ),
             // For the following code, we could just call `try_operation(lhs, Complex(rhs, 0), op)`, but this
@@ -405,7 +405,7 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
                     BinaryOperation::Pow(_) => Object::Complex(z.pow(w)),
                     BinaryOperation::Comp(comp, _) => compare_complex(z, w, comp),
                     BinaryOperation::Or => Object::Real(if w.real != 0.0 || w.imag != 0.0 || z.real != 0.0 || z.imag != 0.0 {1.0} else {0.0}),
-                    BinaryOperation::And => Object::Real(if w.real != 0.0 && w.imag != 0.0 && z.real != 0.0 && z.imag != 0.0 {1.0} else {0.0}),
+                    BinaryOperation::And => Object::Real(if (w.real != 0.0 || w.imag != 0.0) && (z.real != 0.0 || z.imag != 0.0) {1.0} else {0.0}),
                 }
             ),
             Object::Vector(_) | Object::Matrix(_) => Err("Complex vectors aren't supported yet.".to_string()),
@@ -458,9 +458,9 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
                     if let BinaryOperation::Pow(_) = op {
                         // Matrix exponentiation is only accepted when the exponent is an integer (a.k.a. approximately equal to an integer)
                         let exponent = y.round();
-                        if x.m == x.n && approx_eq(exponent, *y) {
+                        if x.m() == x.n() && approx_eq(exponent, *y) {
                             if exponent >= 0.0 {
-                                Ok(Object::Matrix(x.pow(exponent as u64).ok_or(format!("Matrix must be quadratic to apply `Pow` (got size {}x{})", x.m, x.n))?))
+                                Ok(Object::Matrix(x.pow(exponent as u64).ok_or(format!("Matrix must be quadratic to apply `Pow` (got size {}x{})", x.m(), x.n()))?))
                             } else {
                                 let inv = x.inv().ok_or(format!("Matrix is not invertible: {:?}", x))?;
                                 Ok(Object::Matrix(inv.pow((-exponent) as u64).unwrap())) // `unwrap` is safe since if `inv` exists, it is necessarily quadratic.
@@ -478,8 +478,8 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
                 }
                 Object::Matrix(y) => {
                     if let BinaryOperation::Comp(c, _) = op {
-                        let m = x.m; let n = x.n;
-                        if m == y.m && n == y.n {
+                        let m = x.m(); let n = x.n();
+                        if m == y.m() && n == y.n() {
                             Ok(Object::Real(
                                 if c.check_all() {
                                     (0..m).all(

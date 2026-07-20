@@ -20,7 +20,11 @@ use crate::math::objects::try_operation;
 pub fn simpson_rule<F, T, U>(f: F, a: T, b: T, n: usize) -> U
 where F: Fn(T) -> U,
       T: Float + AddAssign<T> + Div<f64, Output=T>,
-      U: AddAssign<U> + Mul<f64, Output=U> + Neg<Output=U> + Mul<T, Output=U> {
+      U: AddAssign<U> + Mul<f64, Output=U> + Neg<Output=U> + Mul<T, Output=U> + Default {
+    if n == 0 {
+        // There is no return value that makes sense here, but we don't want to panic and this should never happen anyway (so `Option` would be unnecessary overhead).
+        return U::default();
+    }
     if b < a {return -simpson_rule(f, b, a, n);}
     let h: T = (b - a) / T::from(2 * n).unwrap(); // Safe: Float (f32/f64) can always represent any usize, possibly with precision loss
     let mut x = a;

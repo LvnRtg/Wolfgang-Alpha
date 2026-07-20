@@ -27,8 +27,8 @@ pub struct Vector {
 }
 #[derive(Clone, PartialEq)]
 pub struct Matrix {
-    pub m: usize,
-    pub n: usize,
+    m: usize,
+    n: usize,
     values: Vec<f64>
 }
 
@@ -65,15 +65,20 @@ impl Default for Vector {
 
 
 impl Matrix {
+    /// For the sake of efficiency, the responsibility of bound-checking is delegated to the caller.
     #[inline]
     pub fn get(&self, i: usize, j: usize) -> f64 {
         self.values[i * self.n + j]
     }
 
+    /// For the sake of efficiency, the responsibility of bound-checking is delegated to the caller.
     #[inline]
     pub fn set(&mut self, i: usize, j: usize, value: f64) {
         self.values[i * self.n + j] = value;
     }
+
+    pub fn m(&self) -> usize {self.m}
+    pub fn n(&self) -> usize {self.n}
 }
 
 
@@ -193,7 +198,7 @@ impl Matrix {
     /// 
     /// Returns `None` if the permutation's size doesn't match the matrices size.
     pub fn permute_rows(&self, permutation: &[usize]) -> Option<Matrix> {
-        if permutation.len() != self.m || permutation.iter().any(|p| *p + 1 > self.m) {return None;}
+        if permutation.len() != self.m || permutation.iter().any(|p| *p >= self.m) {return None;}
         let mut values = Vec::<f64>::with_capacity(self.values.len());
         for p in permutation {
             // Writes are sequential and reads are sequential within each row. By the nature
@@ -210,7 +215,7 @@ impl Matrix {
     /// 
     /// Returns `None` if the permutation's size doesn't match the matrices size.
     pub fn permute_columns(&self, permutation: &[usize]) -> Option<Matrix> {
-        if permutation.len() != self.n || permutation.iter().any(|p| *p + 1 > self.n) {return None;}
+        if permutation.len() != self.n || permutation.iter().any(|p| *p >= self.n) {return None;}
         let mut values = Vec::<f64>::with_capacity(self.values.len());
         for i in 0..self.m {
             // As for row permutations, writes are sequential and reads are sequential within each row.
@@ -223,7 +228,7 @@ impl Matrix {
     /// Returns the inverse of `self` in O(n^3).
     pub fn inv(&self) -> Option<Matrix> {
         if let Some((p, l, u)) = self.plu_decomposition() {
-            (&u.inv_for_upper_triangular()? * &l.inv_for_lower_triangular()?)?.permute_columns(&utils::transpose_permutation(&p))
+            (&u.inv_for_upper_triangular()? * &l.inv_for_lower_triangular()?)?.permute_columns(&p)
         } else {None}
     }
 
@@ -290,13 +295,14 @@ impl Matrix {
         )
     }
 
-    /// Returns the determinant of `self` assuming that `self` is an `nxn` Hessenberg matrix.
+    /// Returns the determinant of `self` requiring that `self` is an `nxn` Hessenberg matrix (`None` if `self` isn't square).
     /// 
     /// This algorithm is based on the fact that (indexing from 1) with `d_k := det(H_{1:k, 1:k}` and `d_0 := 1`,
     /// we have the recursive formula `d_k = \sum_{r=0}^k (-1)^{k-r} H_{r,k} (\prod_{t=r}^{k-1} H_{t+1,t}) d_{r-1}`.
     /// 
     /// Runs in O(n^2).
-    pub fn det_for_hessenberg_matrix(&self) -> f64 {
+    pub fn det_for_hessenberg_matrix(&self) -> Option<f64> {
+        if self.m != self.n { return None; }
         let mut d = vec![0.0; self.n+1];
         d[0] = 1.0;
         for k in 1..=self.n {
@@ -308,6 +314,6 @@ impl Matrix {
                 }
             }
         }
-        d[self.n]
+        Some(d[self.n])
     }
 }

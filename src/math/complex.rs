@@ -1,4 +1,3 @@
-use std::f64::consts;
 use std::ops;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -98,17 +97,7 @@ impl Complex {
     /// Computes the argument (in radian) of the given complex number `a + bi`.
     /// We use the convention `arg(z) ∈ (-π, π]`.
     pub fn arg(&self) -> f64 {
-        if self.real == 0.0 {
-            consts::PI / 2.0
-        } else if self.real > 0.0 {
-            (self.imag / self.real).atan()
-        } else {
-            if self.imag >= 0.0 {
-                (self.imag / self.real).atan() + consts::PI
-            } else {
-                (self.imag / self.real).atan() - consts::PI
-            }
-        }
+        self.imag.atan2(self.real)
     }
 
     /// Computes `exp(a + bi)` using Euler's formula.

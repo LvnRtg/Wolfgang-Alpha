@@ -222,7 +222,7 @@ pub fn analytic_partial_derivative(
                 let n = (0..).find(|i| !env.functions.contains_key(&format!("___int_{i}"))).unwrap();
                 let function_name = format!("___int_{n}");
                 let res = analytic_partial_derivative_for_direct_function(wrt, &function_name, vec![Expression::Identifier(int_var.clone())], extra_vars, env);
-                env.functions.insert(function_name, FunctionRepr::ByExpression(vec![int_var.clone()], expr.clone()));
+                env.functions.insert(function_name, FunctionRepr::ByExpression(vec![wrt.clone()], expr.clone()));
                 res
             }
         }

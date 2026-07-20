@@ -91,7 +91,7 @@ pub fn parse_function_definition(
             // Notice that if `varname` is simultaneously an argument of the function, it shouldn't be replace by ___tmp_...
             // within `inner`. For example, `g(x) := \sum_{x=1}^2 x` should be equivalent to `g(x) := \sum_{i=1}^2 i`.
             if let Some(i) = argument_names.iter().position(|n| n == varname) {
-                if argument_names.len() > 2 {
+                if argument_names.len() >= 2 {
                     // Still replace all identifiers in `inner` except the one at index `i`. Note that cloning is fine here since the list of argument names
                     // should be very small (having more than two would already be very rare).
                     Box::new(parse_function_definition(
@@ -123,11 +123,25 @@ pub fn parse_function_definition(
             point.iter().map(|x| parse_function_definition(x, argument_names, extra_vars, env)).collect::<Result<Vec<_>, _>>()?,
             direction.iter().map(|x| parse_function_definition(x, argument_names, extra_vars, env)).collect::<Result<Vec<_>, _>>()?
         ),
-        Expression::Integral(inner, a, b, x) => Expression::Integral(
-            Box::new(parse_function_definition(inner, argument_names, extra_vars, env)?),
+        Expression::Integral(inner, a, b, wrt) => Expression::Integral(
+            // As for folded operations
+            if let Some(i) = argument_names.iter().position(|n| n == wrt) {
+                if argument_names.len() >= 2 {
+                    Box::new(parse_function_definition(
+                        inner,
+                        &argument_names.iter().enumerate().filter(|&(idx, _)| idx != i).map(|(_, x)| x.clone()).collect(),
+                        extra_vars,
+                        env
+                    )?)
+                } else {
+                    inner.clone()
+                }
+            } else {
+                Box::new(parse_function_definition(inner, argument_names, extra_vars, env)?)
+            },
             Box::new(parse_function_definition(a, argument_names, extra_vars, env)?),
             Box::new(parse_function_definition(b, argument_names, extra_vars, env)?),
-            x.clone()
+            wrt.clone()
         ),
         Expression::IfElse(x, y, z) => Expression::IfElse(
             Box::new(parse_function_definition(x, argument_names, extra_vars, env)?),
@@ -334,9 +348,9 @@ pub fn eval(
             
             // Otherwise, simply evaluate the binary operation.
             let lhs_eval = eval(lhs, extra_vars, env)?;
-            // If the LHS is evaluated to zero and `op` is a multiplication, we can skip evaluating the RHS.
+            // If the LHS is evaluated to zero and `op` is `*` or `&&`, we can skip evaluating the RHS.
             // Furthermore, we actually SHOULD skip it, since this enables us to use indicator functions smartly.
-            if let Object::Real(x) = &lhs_eval && approx_eq(*x, 0.0) && *op == BinaryOperation::Mul {
+            if let Object::Real(x) = &lhs_eval && approx_eq(*x, 0.0) && (*op == BinaryOperation::Mul || *op == BinaryOperation::And) {
                 rhs.get_type(extra_vars, env).map(|t| t.zero())
             } else {
                 try_operation(&lhs_eval, &eval(rhs, extra_vars, env)?, op)
@@ -369,6 +383,10 @@ pub fn eval(
                         Object::Real(1.0) => {} // Condition met; ignore
                         Object::Real(0.0) => { // Condition not met; skip `i`
                             i += 1.0;
+                            // Rebuild varstack
+                            i_as_obj = Object::Real(i);
+                            varstack_top_frame = HashMap::from([(index_var, &i_as_obj)]);
+                            varstack = VarStack::Frame { vars: &varstack_top_frame, parent: extra_vars };
                             continue 'outer;
                         }
                         other => return Err(format!("Expected 1 or 0 when evaluating condition, got {:?}.", other))
@@ -447,8 +465,15 @@ pub fn eval(
             // This is necessary since `functions` can't be borrowed as mutable and immutable twice at the same time (caused by recursive call to `eval`).
             // By transfer of ownership, this is a very cheap operation compared to cloning a `FunctionRepr` because the latter's
             // defining expression (if present) can be highly nested.
-            else if let Some(func) = env.functions.remove(function_name) {
-                let ret_value = eval_function(function_name, &func, given_arg_exprs, extra_vars, env);
+            else if env.functions.contains_key(function_name) {
+                let evaluated_args = given_arg_exprs.iter().map(
+                    |given_arg_expr| {
+                        eval(given_arg_expr, extra_vars, env)
+                        .map_err(|e| format!("Couldn't resolve argument `{}`. Traceback: {}", given_arg_expr, e))
+                    }
+                ).collect::<Result<Vec<_>, _>>()?;
+                let func = env.functions.remove(function_name).unwrap(); // Safe
+                let ret_value = eval_function(function_name, &func, &evaluated_args, extra_vars, env);
                 env.functions.insert(function_name.clone(), func); // Reinsert the removed function
                 ret_value
             }
@@ -461,7 +486,7 @@ pub fn eval(
             math::differentiation::analytic_partial_derivative(expr, wrt, extra_vars, env).map(Object::LiteralExpression)
         }
         Expression::DirectionalDerivative(vars, expr, point_exprs, direction_exprs) => {
-            if point_exprs.len() != direction_exprs.len() {
+            if point_exprs.len() != vars.len() || point_exprs.len() != direction_exprs.len() {
                 return Err("Point and direction of directional derivative must have the same dimension.".to_string());
             }
             let point = point_exprs.iter()
@@ -491,30 +516,21 @@ pub fn eval(
 fn eval_function(
     function_name: &String,
     func: &FunctionRepr,
-    given_arg_exprs: &[Expression],
+    evaluated_args: &[Object],
     extra_vars: &VarStack,
     env: &mut Env
 ) -> Result<Object, String> {
     match func {
         FunctionRepr::ByExpression(argnames, defining_expr) => {
-            if given_arg_exprs.len() != argnames.len() {
-                return Err(format!("Wrong number of arguments provided for function '{}' (expected {}, got {}).", function_name, argnames.len(), given_arg_exprs.len()));
+            if evaluated_args.len() != argnames.len() {
+                return Err(format!("Wrong number of arguments provided for function '{}' (expected {}, got {}).", function_name, argnames.len(), evaluated_args.len()));
             }
-            // Put all temporary variables (arguments) into a new hashmap and add it to `extra_vars`.
-            let tmp_var_evals = given_arg_exprs.iter().enumerate().map(
-                |(i, given_arg_expr)| {
-                    eval(given_arg_expr, extra_vars, env)
-                    .map_err(|e| format!("Couldn't resolve argument {} := {}. Traceback: {}", argnames[i], given_arg_expr, e))
-                }
-            ).collect::<Result<Vec<_>, _>>()?;
-            let tmp_vars: HashMap<&String, &Object> = tmp_var_evals.iter().enumerate().map(|(i, x)| (&argnames[i], x)).collect();
+            let tmp_vars: HashMap<&String, &Object> = evaluated_args.iter().enumerate().map(|(i, x)| (&argnames[i], x)).collect();
             let new_stack = VarStack::Frame { vars: &tmp_vars, parent: extra_vars };
             eval(defining_expr, &new_stack, env)
         }
         FunctionRepr::Direct(f) => {
-            f(&given_arg_exprs.iter()
-                .map(|arg_expr| eval(arg_expr, extra_vars, env))
-                .collect::<Result<Vec<_>, _>>()?)
+            f(evaluated_args)
         }
     }
 }

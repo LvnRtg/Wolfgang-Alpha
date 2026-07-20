@@ -69,16 +69,16 @@ impl Matrix {
         }
     }
 
-    /// Computes the eigenvalues and QR decomposition of `self` in O(n^3) using Hessenberg matrices and Givens rotations.
+    /// Computes the eigenvalues of `self` in O(n^3) using a QR algorithm, Hessenberg matrices and Givens rotations.
     /// 
-    /// Returns `None` if `self` is not quadratic. Otherwise, returns `(eigenvalues, q, r)`.
-    pub fn qr_decomposition(&self) -> Option<(Vec<Object>, Matrix, Matrix)> {
+    /// Returns `None` if `self` is not quadratic. 
+    pub fn eigenvalues(&self) -> Option<Vec<Object>> {
         if self.m != self.n {
             return None;
         }
         let n = self.m;
         if n == 0 {
-            return Some((Vec::new(), self.clone(), Matrix::identity(0)));
+            return Some(Vec::new());
         }
  
         let (mut h, pg) = self.upper_hessenberg();
@@ -99,8 +99,7 @@ impl Matrix {
  
             let mut iters = 0usize;
             loop {
-                // Look for a subdiagonal entry we can treat as zero, scanning
-                // from the bottom of the active block.
+                // Look for a subdiagonal entry we can treat as zero, scanning from the bottom of the active block.
                 let mut split_at: Option<usize> = None;
                 for i in (1..p).rev() {
                     let scale = h.get(i - 1, i - 1).abs() + h.get(i, i).abs();
@@ -113,26 +112,26 @@ impl Matrix {
                 }
  
                 if let Some(i) = split_at {
+                    // Interior split: the trailing sub-block [i, p) is
+                    // independent of [0, i). We keep the same active size p
+                    // and re-scan; the next pass finds the (now closer to
+                    // the edge) splits first since we scan bottom-up.
                     if i == p - 1 {
                         eigenvalues[p - 1] = Object::Real(h.get(p - 1, p - 1));
                         p -= 1;
+                        break;
                     } else if i == p - 2 {
                         let (e1, e2) = h.eigenvalues_of_2x2_block(p - 2).unwrap();
                         eigenvalues[p - 2] = e1;
                         eigenvalues[p - 1] = e2;
                         p -= 2;
+                        break;
                     }
-                    // Interior split: the trailing sub-block [i, p) is
-                    // independent of [0, i). We keep the same active size p
-                    // and re-scan; the next pass finds the (now closer to
-                    // the edge) splits first since we scan bottom-up.
-                    break;
                 }
  
                 iters += 1;
                 if iters > MAX_ITERS_PER_BLOCK {
-                    // Give up deflating further rather than looping forever;
-                    // take the trailing block as final.
+                    // Give up deflating further rather than looping forever; take the trailing block as final.
                     if p >= 2 {
                         let (e1, e2) = h.eigenvalues_of_2x2_block(p - 2).unwrap();
                         eigenvalues[p - 2] = e1;
@@ -172,7 +171,7 @@ impl Matrix {
             }
         }
  
-        Some((eigenvalues, h, u))
+        Some(eigenvalues)
     }
 
     /// Computes the QR decomposition of `self`. Only works if `self` is a Hessenberg matrix.

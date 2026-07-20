@@ -89,8 +89,9 @@ impl Vector {
             // Then, `q = 1`, so the dual is simply the unit vector pointing in direction `argmax_i |self[i]|`.
             let mut i: usize = 0; let mut highest_abs = 0.0;
             for (j, x) in self.values.iter().enumerate() {
-                if x.abs() > highest_abs {
-                    highest_abs = *x;
+                let abs = x.abs();
+                if abs > highest_abs {
+                    highest_abs = abs;
                     i = j;
                 }
             }
@@ -196,8 +197,8 @@ impl Matrix {
                 Ok(utils::max(sums.into_iter()))
             }
             MatrixNorm::P(2.0) => {
-                match self.gram_matrix().qr_decomposition() {
-                    Some((eigenvalues, ..)) => Ok(utils::max(eigenvalues.into_iter().map(
+                match self.gram_matrix().eigenvalues() {
+                    Some(eigenvalues) => Ok(utils::max(eigenvalues.into_iter().map(
                         |obj| match obj {
                             Object::Real(x) => x.abs(),
                             Object::Complex(x) => x.modulus(),

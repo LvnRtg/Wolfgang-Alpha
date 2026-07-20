@@ -5,6 +5,10 @@ use std::collections::HashSet;
 use crate::math::Object;
 
 
+const ABS_TOL: f64 = 1e-12;
+const REL_TOL: f64 = 1e-10;
+
+
 pub trait Quo<Rhs = Self> {
     type Output;
     fn quo(self, rhs: Rhs) -> Self::Output;
@@ -16,7 +20,8 @@ pub trait QuoAssign<Rhs = Self> {
 
 #[inline]
 pub fn approx_eq(x: f64, y: f64) -> bool {
-    (x-y).abs() <= 1e-10
+    // We use the criterion |x-y| <= max(ABS_TOL, REL_TOL * max(|x|, |y|))
+    (x-y).abs() <= ABS_TOL.max(REL_TOL * x.abs().max(y.abs()))
 }
 
 pub fn quo(x: f64, y: f64) -> f64 {
@@ -26,13 +31,13 @@ pub fn quo(x: f64, y: f64) -> f64 {
 #[inline]
 /// Returns the maximum of the given iterator of floats. If the iterator is empty, returns 0.0.
 pub fn max(iter: impl Iterator<Item=f64>) -> f64 {
-    iter.fold(0.0, f64::max)
+    iter.fold(-f64::INFINITY, f64::max)
 }
 
 #[inline]
 /// Returns the minimum of the given iterator of floats. If the iterator is empty, returns 0.0.
 pub fn min(iter: impl Iterator<Item=f64>) -> f64 {
-    iter.fold(0.0, f64::min)
+    iter.fold(f64::INFINITY, f64::min)
 }
 
 #[inline]
