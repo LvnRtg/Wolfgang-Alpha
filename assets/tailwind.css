@@ -206,6 +206,9 @@
   .rounded {
     border-radius: 0.25rem;
   }
+  .underline {
+    text-decoration-line: underline;
+  }
 }
 @property --tw-rotate-x {
   syntax: "*";

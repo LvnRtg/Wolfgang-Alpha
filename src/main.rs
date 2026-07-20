@@ -313,9 +313,9 @@ fn App() -> Element {
                                                             }
                                                             "Result"
                                                         }
+                                                        pre { "{output}" }
                                                     }
                                                 }
-                                                pre { "{output}" }
                                             }
                                         }
                                     }
