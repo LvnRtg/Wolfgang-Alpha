@@ -238,15 +238,18 @@ impl Matrix {
     pub fn inv_for_upper_triangular(&self) -> Option<Matrix> {
         let n = self.n;
         if self.m != n || (0..n).any(|i| self.get(i, i) == 0.0) {return None;}
-        let mut res = Matrix::zeros(n, n);
+        // For cache locality, we build the transposed inverse first
+        let mut inv_t = vec![0.0; n*n];
         for j in 0..n {
-            res.set(j, j, 1.0 / self.get(j, j));
+            inv_t[j*n + j] = 1.0 / self.get(j, j);
             for i in (0..j).rev() {
-                res.set(i, j, -Vector::unchecked_dot_iter((i+1..n).map(|k| res.get(k, j)), &self.row_slice(i)[i+1..n]) / self.get(i, i));
-                //                  = (i+1..n).map(|k| self.get(i, k) * res.get(k, j)).sum::<f64>()
+                inv_t[j*n + i] = -Vector::unchecked_dot(&self.values[i*n + i+1 .. i*n + j+1], &inv_t[j*n + i+1 .. j*n + j+1]) / self.get(i, i);
+                //             = -sum_{k=i+1}^{n-1} self[i, k] * inv_t[j, k]                                                   / self[i, i]
+                //             = -sum_{k=i+1}^j self[i, k] * inv_t[j, k]                                                       / self[i, i]
+                //               since inv_t[j, k] = 0 for k > j
             }
         }
-        Some(res)
+        Some(Matrix::from(n, n, inv_t).transpose())
     }
     /// Returns the inverse of `self` assuming that `self` is a lower triangular matrix.
     /// 
@@ -254,15 +257,19 @@ impl Matrix {
     pub fn inv_for_lower_triangular(&self) -> Option<Matrix> {
         let n = self.n;
         if self.m != n || (0..n).any(|i| self.get(i, i) == 0.0) {return None;}
-        let mut res = Matrix::zeros(n, n);
+        // For cache locality, we build the transposed inverse first
+        let mut inv_t = Vec::<f64>::with_capacity(n * n);
         for j in 0..n {
-            res.set(j, j, 1.0 / self.get(j, j));
+            inv_t.extend(std::iter::repeat_n(0.0, j));
+            inv_t.push(1.0 / self.get(j, j));
             for i in j+1..n {
-                res.set(i, j, -Vector::unchecked_dot_iter(utils::col(&res.values, j, i, res.n), &self.row_slice(i)[0..i]) / self.get(i, i));
-                //                  = (0..i).map(|k| self.get(i, k) * res.get(k, j)).sum::<f64>()
+                inv_t.push(-Vector::unchecked_dot(&self.values[i*n + j .. i*n + i], &inv_t[j*n + j..]) / self.get(i, i));
+                //       = -sum_{k=0}^{i-1} self[i, k] * inv_t[j, k]                                        / self[i, i]
+                //       = -sum_{k=j}^{i-1} self[i, k] * inv_t[j, k]                                        / self[i, i]
+                //         since inv_t[j, k] = 0 for k < j
             }
         }
-        Some(res)
+        Some(Matrix::from(n, n, inv_t).transpose())
     }
 
 
