@@ -148,7 +148,7 @@ fn App() -> Element {
     rsx! {
         document::Title { "Wolfgang Alpha — Symbolic Calculator" }
         document::Link { rel: "icon", href: FAVICON }
-        document::Style { {font_faces} }
+        document::Style { {font_faces} } // Issues a warning in the console but actually has an effect, so I'll leave it in
         document::Stylesheet { href: MAIN_CSS }
 
         main { class: "app-shell",
