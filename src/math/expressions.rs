@@ -672,7 +672,8 @@ impl Expression {
             Expression::Identifier(x) => identifier == x,
             Expression::Tuple(v) | Expression::Vector(v) | Expression::Matrix(.., v)
                 => v.iter().any(|e| e.contains_identifier(identifier)),
-            Expression::UnaryOperation(_, expr) => expr.contains_identifier(identifier),
+            Expression::UnaryOperation(_, expr) | Expression::Assignment(_, expr) | Expression::PartialDerivative(_, expr)
+                => expr.contains_identifier(identifier),
             Expression::BinaryOperation(lhs, _, rhs) => {
                 lhs.contains_identifier(identifier)
                 || rhs.contains_identifier(identifier)
@@ -686,23 +687,83 @@ impl Expression {
             Expression::Function(_, args) => {
                 args.iter().any(|arg| arg.contains_identifier(identifier))
             }
-            Expression::Assignment(_, rhs) => rhs.contains_identifier(identifier),
-            Expression::PartialDerivative(_, expr) => expr.contains_identifier(identifier),
             Expression::DirectionalDerivative(_, expr, point, direction) => {
                 expr.contains_identifier(identifier)
                 || point.iter().any(|v| v.contains_identifier(identifier))
                 || direction.iter().any(|v| v.contains_identifier(identifier))
-            },
+            }
             Expression::IfElse(x, y, z) => {
                 x.contains_identifier(identifier)
                 || y.contains_identifier(identifier)
                 || z.contains_identifier(identifier)
-            },
+            }
             Expression::Integral(func, a, b, wrt) => {
                 a.contains_identifier(identifier)
                 || b.contains_identifier(identifier)
                 || (func.contains_identifier(identifier) && wrt != identifier) // Ignore presence of `identifier` in `func` if we integrate w.r.t. `identifier`
             }
+        }
+    }
+
+    /// Returns the first identifier of the form `prefixNumber` (e.g. `x2` if `prefix` is `x`) which
+    /// is contained nowhere inside `self`.
+    /// 
+    /// This can be used to create an `Expression::Integral` for which
+    /// the integration variable doesn't clash with any variable inside the integrand.
+    pub fn get_new_free_identifier(&self, prefix: &str) -> String {
+        format!("{}{}", prefix, self.get_new_free_identifier_recursive(prefix, 0))
+    }
+    /// Returns an integer `j` (not necessarily the smallest one) such that `{prefix}{j}` is not contained in `self`.
+    /// Returning the smallest one is not very useful for `get_new_free_identifier` but would increase computation time.
+    /// 
+    /// If `{prefix}{i}` is not contained in `self` (for the given parameter `i`), then `i` is returned as is.
+    fn get_new_free_identifier_recursive(&self, prefix: &str, i: usize) -> usize {
+        // The below function `check_id` does the following.
+        // If `id` is of the form `{prefix}{j}` for some `j >= i`, return `j+1`, otherwise `i`.
+        // This ensures that whenever we reach the end of the expression `self`, the integer this function returns is contained nowhere.
+        let check_id = |id: &String| {
+            if let Some(suffix) = id.strip_prefix(prefix) && let Ok(j) = suffix.parse::<usize>() && j >= i {
+                j+1
+            } else {
+                i
+            }
+        };
+        match self {
+            Expression::None | Expression::Number(_) => i, // `i` is still valid then
+            Expression::Identifier(id) => check_id(id),
+            Expression::Tuple(v) | Expression::Vector(v) | Expression::Matrix(.., v) =>
+                v.iter()
+                .map(|e: &Expression| e.get_new_free_identifier_recursive(prefix, i))
+                .max()
+                .unwrap_or(i),
+            Expression::UnaryOperation(_, expr) | Expression::Assignment(_, expr) | Expression::PartialDerivative(_, expr) =>
+                expr.get_new_free_identifier_recursive(prefix, i),
+            Expression::BinaryOperation(lhs, _, rhs) =>
+                lhs.get_new_free_identifier_recursive(prefix, i)
+                .max(rhs.get_new_free_identifier_recursive(prefix, i)),
+            Expression::FoldedOperation(_, loop_var, from, conditions, to, inner) =>
+                from.get_new_free_identifier_recursive(prefix, i)
+                .max(conditions.iter().map(|c| c.get_new_free_identifier_recursive(prefix, i)).max().unwrap_or(i))
+                .max(to.get_new_free_identifier_recursive(prefix, i))
+                .max(inner.get_new_free_identifier_recursive(prefix, i))
+                .max(check_id(loop_var)),
+            Expression::Function(name, args) =>
+                args.iter().map(|arg| arg.get_new_free_identifier_recursive(prefix, i)).max().unwrap_or(i)
+                .max(check_id(name)),
+            Expression::DirectionalDerivative(vars, expr, point, direction) =>
+                expr.get_new_free_identifier_recursive(prefix, i)
+                .max(point.iter().map(|v| v.get_new_free_identifier_recursive(prefix, i)).max().unwrap_or(i))
+                .max(direction.iter().map(|v| v.get_new_free_identifier_recursive(prefix, i)).max().unwrap_or(i))
+                .max(vars.iter().map(check_id).max().unwrap_or(i)),
+            Expression::IfElse(x, y, z) =>
+                x.get_new_free_identifier_recursive(prefix, i)
+                .max(y.get_new_free_identifier_recursive(prefix, i))
+                .max(z.get_new_free_identifier_recursive(prefix, i)),
+            Expression::Integral(func, a, b, wrt) =>
+                a.get_new_free_identifier_recursive(prefix, i)
+                .max(b.get_new_free_identifier_recursive(prefix, i))
+                .max(func.get_new_free_identifier_recursive(prefix, i))
+                .max(check_id(wrt))
         }
     }
 }
@@ -756,6 +817,13 @@ macro_rules! expr_mul {
             Box::new($lhs),
             BinaryOperation::Mul,
             Box::new($rhs)
+        )
+    };
+    // Recursive case: fold left to right.
+    ($lhs:expr, $rhs:expr, $($rest:expr),+ $(,)?) => {
+        $crate::expr_mul!(
+            $crate::expr_mul!($lhs, $rhs),
+            $($rest),+
         )
     };
 }
