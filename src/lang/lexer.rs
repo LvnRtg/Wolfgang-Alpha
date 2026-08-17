@@ -6,6 +6,10 @@ use std::fmt;
 
 use crate::math::Comparison;
 
+const SPECIAL_CHARS: [char; 1] = [
+    '∞'
+];
+
 /// The tokens appearing in the grammar used by the calculator.
 /// 
 /// The goal is for the tokens to be entirely context free. Therefore, e.g. functions, matrices and vectors aren't tokens, they can only be later crafted as `Expression`.
@@ -215,7 +219,7 @@ fn tokenize_recursive(chars: &mut Peekable<Chars>, return_early: Vec<char>) -> R
                     _ => {tokens.push(Token::Pipe);}
                 }
             }
-            c if c.is_ascii_alphabetic() || c.is_ascii_digit() || c == '_' => {
+            c if c.is_ascii_alphabetic() || c.is_ascii_digit() || c == '_' || SPECIAL_CHARS.contains(&c) => {
                 // Encountered first character of a "word" (potential identifier, but maybe of the form "2x").
                 // First, parse all leading digits (which may include a point), then the rest of the word.
                 let mut digits = String::new();
@@ -233,7 +237,7 @@ fn tokenize_recursive(chars: &mut Peekable<Chars>, return_early: Vec<char>) -> R
                     else {break;}
                 }
                 let mut ident = String::new();
-                while let Some(&nc) = chars.peek() && (nc.is_ascii_alphabetic() || nc.is_ascii_digit() || nc == '_') {
+                while let Some(&nc) = chars.peek() && (nc.is_ascii_alphabetic() || nc.is_ascii_digit() || nc == '_' || SPECIAL_CHARS.contains(&nc)) {
                     ident.push(nc);
                     chars.next();
                 };
