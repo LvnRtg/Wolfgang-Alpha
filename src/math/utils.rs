@@ -29,15 +29,21 @@ pub fn quo(x: f64, y: f64) -> f64 {
 }
 
 #[inline]
-/// Returns the maximum of the given iterator of floats. If the iterator is empty, returns 0.0.
-pub fn max(iter: impl Iterator<Item=f64>) -> f64 {
-    iter.fold(-f64::INFINITY, f64::max)
+/// Returns the maximum of the given iterator. If the iterator is empty, returns `None`.
+pub fn max<T: PartialOrd>(iter: impl Iterator<Item = T>) -> Option<T> {
+    iter.fold(None, |acc, x| match acc {
+        None => Some(x),
+        Some(m) => Some(if x > m { x } else { m }),
+    })
 }
 
 #[inline]
-/// Returns the minimum of the given iterator of floats. If the iterator is empty, returns 0.0.
-pub fn min(iter: impl Iterator<Item=f64>) -> f64 {
-    iter.fold(f64::INFINITY, f64::min)
+/// Returns the minimum of the given iterator. If the iterator is empty, returns `None`.
+pub fn min<T: PartialOrd>(iter: impl Iterator<Item = T>) -> Option<T> {
+    iter.fold(None, |acc, x| match acc {
+        None => Some(x),
+        Some(m) => Some(if x < m { x } else { m }),
+    })
 }
 
 #[inline]

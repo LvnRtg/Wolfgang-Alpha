@@ -180,6 +180,7 @@ impl Matrix {
         Ok(est)
     }
 
+    /// Returns the norm of the given matrix. The norm of a 0x0 matrix is set to be zero.
     pub fn norm(&self, norm_type: &MatrixNorm) -> Result<f64, String> {
         match norm_type {
             // The sup-norm is simply the highest row sum, i.e. \max_i \sum_{j=1}^n |a_{i,j}|
@@ -187,14 +188,14 @@ impl Matrix {
                 (0..self.m).map(
                     |i| self.row_slice(i).iter().map(|x| x.abs()).sum()
                 )
-            )),
+            ).unwrap_or(0.0)),
             // The 1-norm is the highest column sum. We take a different approach than above to improve cache locality.
             MatrixNorm::P(1.0) => {
                 let mut sums = vec![0.0; self.n];
                 for i in 0..self.m {
                     sums.iter_mut().enumerate().for_each(|(j, x)| *x += self.get(i, j).abs());
                 }
-                Ok(utils::max(sums.into_iter()))
+                Ok(utils::max(sums.into_iter()).unwrap_or(0.0))
             }
             MatrixNorm::P(2.0) => {
                 match self.gram_matrix().eigenvalues() {
@@ -204,7 +205,7 @@ impl Matrix {
                             Object::Complex(x) => x.modulus(),
                             _ => 0.0 // Will never happen anyway, `qr_decomposition[0]` only consists of floats and complex values
                         }
-                    )).sqrt()),
+                    )).unwrap_or(0.0).sqrt()),
                     None => Err(format!("Matrix must be quadratic (got {}x{}).", self.m, self.n))
                 }
             }
