@@ -5,7 +5,7 @@ use crate::math::matrices_and_vectors::{VectorNorm, MatrixNorm};
 use crate::math::objects::{try_operation};
 use crate::math::expressions::*;
 use crate::math::utils::{approx_eq, min};
-use crate::math::{Env, Object, FunctionRepr, VarStack, Vector, Matrix};
+use crate::math::{Env, FunctionRepr, integration, Object, Matrix, VarStack, Vector};
 use crate::math::operations::{BinaryOperation, FoldedOperation, UnaryOperation};
 use crate::{defaults, expr_compare, expr_if_else, expr_sub, expr_mul, expr_div, expr_pow, expr_neg, expr_1arg_func, lang};
 
@@ -56,8 +56,21 @@ pub fn analytic_partial_derivative(
             )))
         }
         Expression::UnaryOperation(UnaryOperation::Not, _) => Err("Cannot differentiate the operation `Not`.".to_string()),
-        Expression::UnaryOperation(UnaryOperation::Factorial, _) => {
-            unimplemented!() // TODO when integrals are available via \Gamma'(x) = \int_0^\infty e^{-t} t^{x-1} ln(t) dt.
+        Expression::UnaryOperation(UnaryOperation::Factorial, inner) => {
+            // We treat the factorial as gamma function here since differentiating a function with discrete domain makes no sense.
+            // We use: d/dx x! = Γ'(x+1) = \int_0^\infty e^{-t} t^x ln(t) dt
+            //      => d/dx f(x)! = f'(x) * \int_0^\infty e^{-t} t^{f(x)} ln(t) dt
+            let wrt = inner.get_new_free_identifier("t");
+            Ok(Expression::Integral(
+                Box::new(expr_mul!(
+                    expr_1arg_func!("exp", expr_neg!(Expression::Identifier(wrt.clone()))),
+                    expr_1arg_func!("ln", Expression::Identifier(wrt.clone())),
+                    expr_pow!(Expression::Identifier(wrt.clone()), *inner.clone())
+                )),
+                Box::new(Expression::Number(0.0)),
+                Box::new(Expression::Identifier("inf".to_string())),
+                wrt
+            ))
         }
         Expression::UnaryOperation(UnaryOperation::Abs, rhs) => {
             let diff_r = analytic_partial_derivative(rhs, wrt, extra_vars, env)?;
@@ -365,8 +378,23 @@ pub fn analytic_directional_derivative(
             -&analytic_directional_derivative(vars, rhs, point, direction, extra_vars, env)?
         }
         Expression::UnaryOperation(UnaryOperation::Not, _) => Err("Cannot differentiate the operation `Not`.".to_string()),
-        Expression::UnaryOperation(UnaryOperation::Factorial, _) => {
-            unimplemented!() // TODO when integrals are available via \Gamma'(x) = \int_0^\infty e^{-t} t^{x-1} ln(t) dt.
+        Expression::UnaryOperation(UnaryOperation::Factorial, f_expr) => {
+            // Using D(Γ \circ f)(p)[d] = DΓ(f(p))[Df(p)[d]] = Γ'(f(p)) * Df(p)[d] = \int_0^\infty e^{-t} t^{x-1} ln(t) dt * Df(p)[d]
+            let df = analytic_directional_derivative(vars, f_expr, point, direction, extra_vars, env)?.expect_float()?;
+            let wrt = f_expr.get_new_free_identifier("t");
+            let integral = integration::integrate(
+                &expr_mul!(
+                    expr_1arg_func!("exp", expr_neg!(Expression::Identifier(wrt.clone()))),
+                    expr_1arg_func!("ln", Expression::Identifier(wrt.clone())),
+                    expr_pow!(Expression::Identifier(wrt.clone()), *f_expr.clone())
+                ),
+                0.0,
+                f64::INFINITY,
+                &wrt,
+                extra_vars,
+                env
+            )?.expect_float()?;
+            Ok(Object::Real(integral * df))
         }
         Expression::UnaryOperation(UnaryOperation::Abs, rhs) => {
             let diff_r = analytic_directional_derivative(vars, rhs, point, direction, extra_vars, env)?;
@@ -593,7 +621,7 @@ pub fn numerical_directional_derivative<F: FnMut(&[Object]) -> Result<Object, St
         Object::Vector(x) => Ok(x.norm(&VectorNorm::P(2.0))),
         Object::Matrix(x) => x.norm(&MatrixNorm::Frobenius)
     }).collect::<Result<Vec<_>, _>>()?;
-    let h = 1e-6 * (1.0 + min(norm_of_point.into_iter()));
+    let h = 1e-6 * (1.0 + min(norm_of_point.into_iter()).unwrap_or(0.0));
     for (i, coord) in point.iter_mut().enumerate() {
         direction[i] = h * &direction[i]; // Spares us another operation later
         *coord = try_operation(coord, &direction[i], &BinaryOperation::Add)?; // point + h*direction
