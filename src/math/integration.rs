@@ -5,6 +5,7 @@ use num_traits::float::Float;
 use crate::lang::eval;
 use crate::math::{BinaryOperation, Env, Expression, FoldedOperation, Object, UnaryOperation, VarStack};
 use crate::math::objects::try_operation;
+use crate::{expr_add, expr_div, expr_mul, expr_neg, expr_pow, expr_sub};
 
 /// Approximates the integral `\int_a^b f(x) dx` by splitting `[a, b]` into
 /// `n` intervals of equal size and applying the Simpson rule to each one,
@@ -59,19 +60,129 @@ where F: FnMut(T) -> Result<U, String>,
         res = (res + (f(x)? * 2.0))?;
     }
     x += h;
-        res = (res + (f(x)? * 4.0))?;
+    res = (res + (f(x)? * 4.0))?;
     x += h;
-        res = (res + f(x)?)?;
+    res = (res + f(x)?)?;
     Ok(res * (h / 3.0))
 }
 
 
 /// Numerically integrates the given expresion numerically from a to b.
 /// 
-/// Procedure: if the expression is of a special form (e.g. a sum, a constant, etc.; for a detailed list, cf. implementation),
+/// Procedure: first, split of the cases where `a` or `b` is infinite. Assuming they are both finite, check if the expression is of a special form
+/// (e.g. a sum, a constant, etc.; for a detailed list, cf. implementation),
 /// compute the integral accordingly (e.g. via direct calculation for constants or by integrating both summands and then adding the results).
 /// If no special form is found, integrate numericaclly using the Simpson rule on a grid of 100 equally distributed points.
+/// 
+/// If `a = -∞` or `b = ∞`, we use a substitution trick to reduce to a finite interval.
 pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &VarStack, env: &mut Env) -> Result<Object, String> {
+    if a == f64::INFINITY || b == -f64::INFINITY {
+        return Ok(Object::Real(0.0));
+    }
+    if a.is_finite() && b == f64::INFINITY {
+        // Substitute φ(t) = t/(1-ct) for c:=1 if a!=-1 and c:=2 otherwise, leading to
+        // int_a^∞ f(x) dx = int_{a/(1+ac)}^{1/c} f(t/(1-ct)) / (1-ct)² dt
+        // Below function `ct` creates `c * t` as expression.
+        let ct = || if a != -1.0 {
+            Expression::Identifier(wrt.clone())
+        } else {
+            expr_mul!(Expression::Number(2.0), Expression::Identifier(wrt.clone()))
+        };
+        let new_arg = expr_div!(
+            Expression::Identifier(wrt.clone()),
+            expr_sub!(
+                Expression::Number(1.0),
+                ct()
+            )
+        );
+        return integrate(
+            &expr_div!(
+                expr.replace_identifiers(wrt, &new_arg),
+                expr_pow!(
+                    expr_sub!(
+                        Expression::Number(1.0),
+                        ct()
+                    ),
+                    Expression::Number(2.0)
+                )
+            ),
+            a / (1.0 + (if a != -1.0 {a} else {2.0*a})), // a / (1 + ac)
+            if a != -1.0 {1.0} else {0.5}, // 1/c
+            wrt,
+            extra_vars,
+            env
+        );
+    } else if a == -f64::INFINITY && b.is_finite() {
+        // Substitute φ(t) = t/(ct-1) for c:=1 if b!=1 and c:=2 otherwise, leading to
+        // int_{-∞}^b f(x) dx = int_{b/(cb-1)}^{1/c} -f(t/(ct-1)) / (1-ct)² dt
+        let ct = || if b != 1.0 {
+            Expression::Identifier(wrt.clone())
+        } else {
+            expr_mul!(Expression::Number(2.0), Expression::Identifier(wrt.clone()))
+        };
+        let new_arg = expr_div!(
+            Expression::Identifier(wrt.clone()),
+            expr_sub!(
+                ct(),
+                Expression::Number(1.0)
+            )
+        );
+        return integrate(
+            &expr_neg!(expr_div!(
+                expr.replace_identifiers(wrt, &new_arg),
+                expr_pow!(
+                    expr_sub!(
+                        Expression::Number(1.0),
+                        ct()
+                    ),
+                    Expression::Number(2.0)
+                )
+            )),
+            if b != 1.0 {1.0} else {0.5}, // 1/c
+            b / ((if b != 1.0 {b} else {2.0*b}) - 1.0), // b / (cb - 1)
+            wrt,
+            extra_vars,
+            env
+        );
+    } else if a == -f64::INFINITY && b == f64::INFINITY {
+        // Substitute φ(t) = t/(1-t²), leading to
+        // int_{-∞}^∞ f(x) dx = int_{-1}^1 f(t/(1-t²)) * (1+t²)/((1-t²)²) dt
+        let t_square = || expr_pow!(
+            Expression::Identifier(wrt.clone()),
+            Expression::Number(2.0)
+        );
+        let new_arg = expr_div!(
+            Expression::Identifier(wrt.clone()),
+            expr_sub!(
+                Expression::Number(1.0),
+                t_square()
+            )
+        );
+        return integrate(
+            &expr_mul!(
+                expr.replace_identifiers(wrt, &new_arg),
+                expr_div!(
+                    expr_add!(
+                        Expression::Number(1.0),
+                        t_square()
+                    ),
+                    expr_pow!(
+                        expr_sub!(
+                            Expression::Number(1.0),
+                            t_square()
+                        ),
+                        Expression::Number(2.0)
+                    )
+                )
+            ),
+            -1.0,
+            1.0,
+            wrt,
+            extra_vars,
+            env
+        );
+    }
+
     match expr {
         Expression::None => Ok(Object::Undefined),
         Expression::Identifier(ident) => {
