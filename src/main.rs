@@ -407,6 +407,11 @@ fn App() -> Element {
                                                 call_js_on_dom_update!(MOVE_CURSOR_TO_RIGHT_END);
                                             }
                                         }
+                                        Key::Escape => {
+                                            // Clear input field
+                                            event.prevent_default();
+                                            input_value.set(String::new());
+                                        }
                                         _ => {}
                                     }
                                 },
