@@ -473,21 +473,24 @@ pub fn analytic_directional_derivative(
                 BinaryOperation::Comp(..) => Err(format!("Cannot differentiate comparison {:?}", expr)),
             }
         }
-        Expression::FoldedOperation(FoldedOperation::Sum, varname, from, conditions, to, inner) => {
+        Expression::FoldedOperation(FoldedOperation::Sum, index_var, from, conditions, to, inner) => {
             // Note: since the bounds of the sum must be integers, taking them into consideration when differentiating is useless.
             // Therefore, we simply treat `D sum_{i=a}^b ...(p)[d]` as `sum_{i=a(p)}^{b(p)} D ... (p)[d]`.
-            // The following code is adapted from lang::evaluator::eval (case Expression::FoldedOperation).
+            // The following code is adapted from lang::eval (case Expression::FoldedOperation).
             // Copying and adapting it is more efficient than to try to call `eval` instead.
             let varstack = VarStack::Frame { vars: &zip(vars, point).collect(), parent: extra_vars };
-            let mut i = lang::eval(from, &varstack, env)?.expect_int()?;
-            if i > lang::eval(to, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Real(i))]), parent: &varstack }, env)?.expect_float()? {
-                // TODO when the corresponding TODO in eval is done
-                return Ok(Object::Real(0.0));
+            let mut i = lang::eval(from, extra_vars, env)?.expect_int()?;
+            let initial_to_eval = lang::eval(to, &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: &varstack }, env)?.expect_float()?;
+            let mut res = FoldedOperation::Sum.if_empty(&inner.get_type(
+                &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(initial_to_eval))]), parent: extra_vars },
+                env
+            )?);
+            if i > initial_to_eval {
+                return Ok(res);
             }
-            let mut res = Object::Real(0.0); // TODO same
-            'outer: while i <= lang::eval(to, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Real(i))]), parent: &varstack }, env)?.expect_float()? {
+            'outer: while i <= lang::eval(to, &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: &varstack }, env)?.expect_float()? {
                 for cond in conditions {
-                    match lang::eval(cond, &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Real(i))]), parent: &varstack }, env)? {
+                    match lang::eval(cond, &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: &varstack }, env)? {
                         Object::Real(1.0) => {}
                         Object::Real(0.0) => { i += 1.0; continue 'outer; }
                         other => return Err(format!("Expected 1 or 0 when evaluating condition, got {:?}.", other))
@@ -495,7 +498,7 @@ pub fn analytic_directional_derivative(
                 }
                 let next_term = analytic_directional_derivative(
                     vars, inner, point, direction,
-                    &VarStack::Frame { vars: &HashMap::from([(varname, &Object::Real(i))]), parent: extra_vars },
+                    &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: extra_vars }, // Notice we don't use `varstack` but `extra_vars` here
                     env
                 )?;
                 res = try_operation(&res, &next_term, &BinaryOperation::Add)?;
