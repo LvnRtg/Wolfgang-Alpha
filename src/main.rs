@@ -66,7 +66,10 @@ fn scroll_to_bottom(id: &str) {
 }
 
 /// Given the user input as parameter, returns the new lines to be added to the console.
-fn validate_input(input: &str) -> Vec<String> {
+/// 
+/// If `reset` is set to `true`, resets the environment to defaults and ignores `input`.
+/// This has to be done is this way in order to keep `ENV` as a `thread_local`.
+fn validate_input(input: &str, reset: bool) -> Vec<String> {
     thread_local! {
         static ENV: RefCell<math::Env> = RefCell::new(math::Env {
             constants: defaults::default_constants(),
@@ -75,7 +78,15 @@ fn validate_input(input: &str) -> Vec<String> {
     }
     ENV.with(|cell| {
         let mut env = cell.borrow_mut();
-        repl::eval_line(input, &mut env)
+        if reset {
+            cell.replace(math::Env {
+                constants: defaults::default_constants(),
+                functions: defaults::default_functions()
+            });
+            vec![]
+        } else {
+            repl::eval_line(input, &mut env)
+        }
     })
 }
 
@@ -92,7 +103,7 @@ fn submit_calculation(
         return;
     }
 
-    let output = validate_input(&query);
+    let output = validate_input(&query, false);
     let is_error = output.iter().any(|line| line.starts_with("[ERROR]"));
 
     calculations.write().push(Calculation {
@@ -242,10 +253,12 @@ fn App() -> Element {
                                 class: "clear-button",
                                 r#type: "button",
                                 disabled: calculation_count == 0,
-                                aria_label: "Clear calculation history",
+                                aria_label: "Clear session",
                                 onclick: move |_| {
                                     calculations.set(Vec::new());
                                     command_history.set(Vec::new());
+                                    // Reset environment
+                                    validate_input("", true);
                                     rollback_index.set(0);
                                     input_value.set(String::new());
                                     call_js_on_dom_update!(FOCUS_MAIN_INPUT);

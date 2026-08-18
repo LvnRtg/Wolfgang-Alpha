@@ -5,7 +5,7 @@ use std::iter::Peekable;
 use std::vec::IntoIter;
 
 use crate::math::{BinaryOperation, Comparison, UnaryOperation, FoldedOperation, Expression, FunctionRepr, Env, VarStack};
-use crate::lang::lexer::{Token, tokenize};
+use crate::lang::lexer::{Keyword, Token, tokenize};
 
 pub struct Parser {
     pub tokens: Peekable<IntoIter<Token>>
@@ -199,8 +199,8 @@ impl Parser {
                 // way to know yet whether there will be an assignment operator on the same precedence level as we currently are. Therefore,
                 // this case will be handled afterwards by 'eval'. So, we only have to check the case:
                 match self.peek()? {
-                    Token::LParenthesis if env.functions.contains_key(&x) || x.starts_with("___diff_num_") => {
-                        self.next()?;
+                    Token::LParenthesis if env.functions.contains_key(&x) || x.starts_with("___diff_num_") || x == "del" => {
+                        let _ = self.next();
                         Expression::Function(x, self.parse_comma_expression(&Token::RParenthesis, env)?)
                     }
                     _ => Expression::Identifier(x)
@@ -299,12 +299,12 @@ impl Parser {
                     _ => Expression::UnaryOperation(UnaryOperation::Norm(None), Box::new(inner))
                 }
             }
-            Token::If => {
+            Token::Keyword(Keyword::If) => {
                 let condition = self.parse_expression(0, None, env)?; // Will return wenn LBrace is encountered.
                 self.expect_token(Token::LBrace, Some(" after condition"))?;
                 let iftrue = self.parse_expression(0, None, env)?;
                 self.expect_token(Token::RBrace, Some(" before `iftrue` expression"))?;
-                self.expect_token(Token::Else, None)?;
+                self.expect_token(Token::Keyword(Keyword::Else), None)?;
                 self.expect_token(Token::LBrace, Some(" after `else`"))?;
                 let iffalse = self.parse_expression(0, None, env)?;
                 self.expect_token(Token::RBrace, Some(" after `iffalse` expression"))?;
@@ -349,7 +349,7 @@ impl Parser {
                 // Note that in this context, Token::Pipe is the closing pipe, since the opening one would have been consumed in the definition of `lhs`.
                 // Note also that the opening brace is tied to specific syntaxes (e.g. `if else` blocks) and thus cannot be found "freely".
                 Token::Number(_) | Token::Comma | Token::Semicolon | Token::Backslash | Token::LBrace | Token::Ampersand
-                | Token::If | Token::Else | Token::EOF
+                | Token::Keyword(_) | Token::EOF
                 | Token::RParenthesis | Token::RBracket | Token::RBrace | Token::Pipe
                 => { break; }
             };

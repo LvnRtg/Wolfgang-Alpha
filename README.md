@@ -58,6 +58,7 @@ The basic syntax is the natural one with usual operator precedence. A few specia
   The `x` on the RHS of the definition will always be the `x` passed as argument, not the constant.<br/>
   If one wants to include a constant from the current environment, simply type `f(y) := 2x + y` where `x` is a pre-defined constant. Note that the
   current value of `x` will be captured at the time of the definition; if you change `x` later on, `f` will still use its old value.
+- Delete a constant/function with `del(x)`. You can delete as many constants/functions as you want at once, e.g. `del(x, y, f)`.
 
 ### Built-in constants and functions
 - The built-in constants currently are `pi` and `e`.

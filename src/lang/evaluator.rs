@@ -13,6 +13,11 @@ use crate::math::{BinaryOperation, Env, Expression, FunctionRepr, Object, UnaryO
 
 const DEFAULT_TESTEQ_REPETITIONS: usize = 20;
 
+/// Used to prevent the user from defining constants/functions with names such as "if".
+const KEYWORDS: [&str; 2] = [
+    "if", "else"
+];
+
 
 /// When an function definition is encountered, the expression on the RHS is processed in a special way.
 /// Generally, it has to be cloned (cleanest way to work with the 'eval' function below), which is the main action this function performs.
@@ -461,6 +466,40 @@ pub fn eval(
                 res
             }
 
+            // We can't define `del` as default function since default functions taked _parsed_ arguments (i.e. a `Vec<Object>`), but we specifically need to know the _unparsed_ arguments.
+            else if function_name == "del" {
+                let mut unknown_identifiers = Vec::<&String>::new();
+                let mut none_identifiers = Vec::<&Expression>::new();
+                for arg in given_arg_exprs {
+                    match arg {
+                        Expression::Identifier(id) => {
+                            // No bugs with short-circuiting here because if `constants.remove(id)` is `Some`, then `id` was in `constants`,
+                            // so it can't be in `functions` too.
+                            if env.constants.remove(id).is_none() && env.functions.remove(id).is_none() {
+                                unknown_identifiers.push(id);
+                            }
+                        }
+                        other => none_identifiers.push(other)
+                    }
+                }
+                if unknown_identifiers.is_empty() && none_identifiers.is_empty() {
+                    Ok(Object::Success)
+                } else {
+                    let mut err_str = "Some arguments couldn't be deleted from the environment.".to_string();
+                    if !unknown_identifiers.is_empty() {
+                        err_str.push_str("\nNot present in environment: ");
+                        err_str.push_str(unknown_identifiers.into_iter().join(", ").as_str());
+                        err_str.push('.');
+                    }
+                    if !none_identifiers.is_empty() {
+                        err_str.push_str("\nNot identifiers: ");
+                        err_str.push_str( none_identifiers.into_iter().join(", ").as_str());
+                        err_str.push('.');
+                    }
+                    Err(err_str)
+                }
+            }
+
             // We're doing a little trick which is to remove the corresponding function from `functions` and reinserting it at the end.
             // This is necessary since `functions` can't be borrowed as mutable and immutable twice at the same time (caused by recursive call to `eval`).
             // By transfer of ownership, this is a very cheap operation compared to cloning a `FunctionRepr` because the latter's
@@ -572,6 +611,7 @@ fn eval_assignment(
     ) -> Result<Object, String> {
         if function_name.starts_with("___") { Err("Names starting with \"___\" are forbidden".to_string()) }
         else if function_name == "D" || function_name.starts_with("D_") { Err("The name \"D\" and identifiers starting with \"D_\" are reserved for the total derivative.".to_string()) }
+        else if KEYWORDS.contains(&function_name.as_str()) { Err(format!("The identifier \"{function_name}\" is a keyword.")) }
         else {
             // First, check that all declared arguments on the LHS are in fact just identifiers.
             let mut argnames = unparsed_args.into_iter()
@@ -589,9 +629,11 @@ fn eval_assignment(
                 expr
             ));
             // The .clone() above is no problem since function definitions are rare (in the sense that performance doesn't matter for this).
-            // Lastly, if there was already a function `__diff_{function_name}` present in `functions` (cf. `analytic_derivative`).
-            // If so, it is now outdated, so remove it.
+            // Next, if there was already a function `__diff_{function_name}` present in `functions` (cf. `analytic_derivative`),
+            // then it is now outdated, so we remove it.
             env.functions.remove(&format!("___diff_num_{}", function_name));
+            // Lastly, if `function_name` was already a constant, then we should remove it to avoid ambiguity.
+            env.constants.remove(function_name);
             Ok(Object::Success)
         }
     }
@@ -605,11 +647,16 @@ fn eval_assignment(
             Err("Names starting with \"___\" are forbidden".to_string())
         } else if constant_name == "D" || constant_name.starts_with("D_") {
             Err("The name \"D\" and identifiers starting with \"D_\" are reserved for the total derivative.".to_string())
+        }
+        else if KEYWORDS.contains(&constant_name.as_str()) {
+            Err(format!("The identifier \"{constant_name}\" is a keyword."))
         } else {
             // The '.clone()' in below line is due to the fact that we want to save the value on one hand (within 'constants')
             // but also return it (e.g. the expression "x := 5" should not only define x as 5 but also return the value 5 so that
             // one can write "... * (x := ...)" to save intermediate results).
             env.constants.insert(constant_name.clone(), value.clone());
+            // Lastly, if `constant_name` was already a function, then we should remove it to avoid ambiguity.
+            env.functions.remove(constant_name);
             Ok(value)
         }
     }

@@ -10,6 +10,29 @@ const SPECIAL_CHARS: [char; 1] = [
     '∞'
 ];
 
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum Keyword {
+    If,
+    Else
+}
+impl fmt::Display for Keyword {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", match self {
+            Keyword::If => "if",
+            Keyword::Else => "else"
+        })
+    }
+}
+impl Keyword {
+    pub fn from_string(string: &str) -> Option<Keyword> {
+        match string {
+            "if" => Some(Keyword::If),
+            "else" => Some(Keyword::Else),
+            _ => None
+        }
+    }
+}
+
 /// The tokens appearing in the grammar used by the calculator.
 /// 
 /// The goal is for the tokens to be entirely context free. Therefore, e.g. functions, matrices and vectors aren't tokens, they can only be later crafted as `Expression`.
@@ -46,10 +69,6 @@ pub enum Token {
     Backslash,
     /// |
     Pipe,
-    /// The keyword "if"
-    If,
-    /// The keyword "else"
-    Else,
     /// &
     Ampersand,
     /// &&
@@ -58,6 +77,7 @@ pub enum Token {
     DoublePipe,
     /// !
     ExclamationMark,
+    Keyword(Keyword),
     #[allow(clippy::upper_case_acronyms)] EOF
 }
 
@@ -89,12 +109,11 @@ impl fmt::Display for Token {
             Token::Semicolon => ";".to_string(),
             Token::Backslash => "\\".to_string(),
             Token::Pipe => "|".to_string(),
-            Token::If => "if".to_string(),
-            Token::Else => "else".to_string(),
             Token::Ampersand => "&".to_string(),
             Token::DoubleAmpersand => "&&".to_string(),
             Token::DoublePipe => "||".to_string(),
             Token::ExclamationMark => "!".to_string(),
+            Token::Keyword(k) => k.to_string(),
             Token::EOF => "EOF".to_string(),
         })
     }
@@ -135,10 +154,10 @@ fn parse_comparison_parameter(chars: &mut Peekable<Chars>) -> Result<Option<Vec<
 }
 
 fn identifier_to_token(ident: String) -> Token {
-    match ident.as_str() {
-        "if" => Token::If,
-        "else" => Token::Else,
-        _ => Token::Identifier(ident)
+    if let Some(k) = Keyword::from_string(ident.as_str()) {
+        Token::Keyword(k)
+    } else {
+        Token::Identifier(ident)
     }
 }
 
