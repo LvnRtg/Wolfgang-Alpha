@@ -76,18 +76,18 @@ fn validate_input(input: &str, reset: bool) -> Vec<String> {
             functions: defaults::default_functions()
         });
     }
-    ENV.with(|cell| {
-        let mut env = cell.borrow_mut();
-        if reset {
-            cell.replace(math::Env {
-                constants: defaults::default_constants(),
-                functions: defaults::default_functions()
-            });
-            vec![]
-        } else {
+    if reset {
+        ENV.replace(math::Env {
+            constants: defaults::default_constants(),
+            functions: defaults::default_functions()
+        });
+        vec![]
+    } else {
+        ENV.with(|cell| {
+            let mut env = cell.borrow_mut();
             repl::eval_line(input, &mut env)
-        }
-    })
+        })
+    }
 }
 
 fn submit_calculation(
