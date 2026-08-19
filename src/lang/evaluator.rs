@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
-use dioxus::logger::tracing;
 use statrs::function::gamma;
 use itertools::Itertools;
 
@@ -536,16 +535,47 @@ pub fn eval(
                 }
             }
 
-            // We're doing a little trick which is to remove the corresponding function from `functions` and reinserting it at the end.
-            // This is necessary since `functions` can't be borrowed as mutable and immutable twice at the same time (caused by recursive call to `eval`).
-            // By transfer of ownership, this is a very cheap operation compared to cloning a `FunctionRepr` because the latter's
-            // defining expression (if present) can be highly nested.
-            else if env.functions.contains_key(function_name) {
-                let func = env.functions.remove(function_name).unwrap(); // Safe
-                let ret_value = eval_function(function_name, &func, given_arg_exprs, extra_vars, env);
-                env.functions.insert(function_name.clone(), func); // Reinsert the removed function
-                ret_value
+            // Check if `function_name` corresponds to a known `FunctionRepr::ByExpression(argnames, defining_expr)` in `env.functions`.
+            // If so, we need to clone `argnames` and `defining_expr`:
+            // Indeed, it would theoretically be possible that the final `eval` call in the subsequent block modifies the
+            // at least one of `argnames` and `defining_expr`, e.g. `f(x) := [f(x), f(y) := x+y]`. Therefore, not cloning
+            // would render this `eval` call impossible since we would need to reborrow `env` as mutable again.
+            // Note: we can't just temporarily remove `function_name` from `env.functions` and later reinsert it since this would
+            // make expressions like `exp(exp(0))` impossible.
+            else if let Some((argnames, defining_expr)) = match env.functions.get(function_name) {
+               Some(FunctionRepr::ByExpression(argnames, defining_expr)) => Some((argnames.clone(), defining_expr.clone())),
+               _ => None 
+            } {
+                let evaluated_args = given_arg_exprs.iter().map(
+                    |given_arg_expr| {
+                        eval(given_arg_expr, extra_vars, env)
+                        .map_err(|e| format!("Couldn't resolve argument `{}`. Traceback: {}", given_arg_expr, e))
+                    }
+                ).collect::<Result<Vec<_>, _>>()?;
+                if evaluated_args.len() != argnames.len() {
+                    return Err(format!("Wrong number of arguments provided for function '{}' (expected {}, got {}).", function_name, argnames.len(), evaluated_args.len()));
+                }
+                let tmp_vars: HashMap<&String, &Object> = evaluated_args.iter().enumerate().map(|(i, x)| (&argnames[i], x)).collect();
+                let new_stack = VarStack::Frame { vars: &tmp_vars, parent: extra_vars };
+                eval(&defining_expr, &new_stack, env)
             }
+
+            // Check if `function_name` corresponds to a known `FunctionRepr::Direct` in `env.functions`.
+            // Then, proceed similarly as for `FunctionRepr::ByExpression` but take into consideration the function mask.
+            else if let Some((f, m, n, b)) = match env.functions.get(function_name) {
+               Some(FunctionRepr::Direct(f, (m, n, b))) => Some((&**f, *m, *n, *b)),
+               _ => None 
+            } {
+                if given_arg_exprs.len() < m + n {
+                    return Err(format!("Wrong number of arguments provided for function '{}' (expected at least {}).", function_name, m + n));
+                }
+                let mut parsed_args = given_arg_exprs.iter().take(m).map(|arg| eval(arg, extra_vars, env)).collect::<Result<Vec<_>, _>>()?;
+                if b {
+                    parsed_args.extend(given_arg_exprs.iter().skip(m+n).map(|arg| eval(arg, extra_vars, env)).collect::<Result<Vec<_>, _>>()?)
+                }
+                f(&parsed_args, if b {&given_arg_exprs[m .. (m+n)]} else {&given_arg_exprs[m..]}, Some((extra_vars, env)))
+            }
+
             else {Err(format!("No such function: {:?}", function_name))}
         },
         Expression::Assignment(lhs, rhs) => {
@@ -578,43 +608,6 @@ pub fn eval(
                 Ok(x) => Err(format!("Couldn't evaluate condition {} to 0 or 1; got {x}", &**condition)),
                 other => other
             }
-        }
-    }
-}
-
-fn eval_function(
-    function_name: &String,
-    func: &FunctionRepr,
-    given_arg_exprs: &[Expression],
-    extra_vars: &VarStack,
-    env: &mut Env
-) -> Result<Object, String> {
-    match func {
-        FunctionRepr::ByExpression(argnames, defining_expr) => {
-            tracing::info!("Evaluating BE function {} with given arg exprs {:?}.", function_name, given_arg_exprs);
-            let evaluated_args = given_arg_exprs.iter().map(
-                |given_arg_expr| {
-                    eval(given_arg_expr, extra_vars, env)
-                    .map_err(|e| format!("Couldn't resolve argument `{}`. Traceback: {}", given_arg_expr, e))
-                }
-            ).collect::<Result<Vec<_>, _>>()?;
-            if evaluated_args.len() != argnames.len() {
-                return Err(format!("Wrong number of arguments provided for function '{}' (expected {}, got {}).", function_name, argnames.len(), evaluated_args.len()));
-            }
-            let tmp_vars: HashMap<&String, &Object> = evaluated_args.iter().enumerate().map(|(i, x)| (&argnames[i], x)).collect();
-            let new_stack = VarStack::Frame { vars: &tmp_vars, parent: extra_vars };
-            eval(defining_expr, &new_stack, env)
-        }
-        FunctionRepr::Direct(f, (m, n, b)) => {
-            tracing::info!("Evaluating direct function {} with mask ({},{},{}) and given arg exprs {:?}.", function_name, m, n, b, given_arg_exprs);
-            if given_arg_exprs.len() < m + n {
-                return Err(format!("Wrong number of arguments provided for function '{}' (expected at least {}).", function_name, m + n));
-            }
-            let mut parsed_args = given_arg_exprs.iter().take(*m).map(|arg| eval(arg, extra_vars, env)).collect::<Result<Vec<_>, _>>()?;
-            if *b {
-                parsed_args.extend(given_arg_exprs.iter().skip(m+n).map(|arg| eval(arg, extra_vars, env)).collect::<Result<Vec<_>, _>>()?)
-            }
-            f(&parsed_args, if *b {&given_arg_exprs[*m .. (m+n)]} else {&given_arg_exprs[*m..]}, Some((extra_vars, env)))
         }
     }
 }
