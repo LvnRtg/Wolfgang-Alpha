@@ -10,9 +10,9 @@ pub fn eval_line(input: &str, env: &mut math::Env) -> Vec<String> {
     };
     let mut parser = lang::Parser::from(tokens);
     let mut output = Vec::<String>::new();
-    match parser.parse(env) {
-        Ok(expressions) => {
-            for expr in expressions {
+    while let Some(res) = parser.parse_next(env) {
+        match res {
+            Ok(expr) => {
                 if expr == math::Expression::Identifier("debug".to_string()) {
                     output.push(format!("Constants: {:?}", env.constants));
                     output.push(format!("Functions: {:?}", env.functions));
@@ -27,9 +27,9 @@ pub fn eval_line(input: &str, env: &mut math::Env) -> Vec<String> {
                     }
                 }
             }
-        }
-        Err(e) => {
-            output.push(format!("[ERROR] {}", e));
+            Err(e) => {
+                output.push(format!("[ERROR] {}", e));
+            }
         }
     }
     output

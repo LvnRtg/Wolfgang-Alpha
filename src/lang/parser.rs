@@ -175,10 +175,12 @@ impl Parser {
                 let rest = id.strip_prefix("int_").unwrap(); // Safe because of `starts_with` call above
                 let subscript = if !rest.is_empty() {
                     // Parse `rest` and expect to get a single expression out.
-                    match Parser::from(tokenize(rest)?).parse(env)? {
-                        v if v.len() == 1 => v.into_iter().next().unwrap(), // Safe to unwrap because of length check before
-                        other => return Err(format!("Subscript after integral must be single expression (got {:?}).", other))
+                    let mut rest_parser = Parser::from(tokenize(rest)?);
+                    let rest = rest_parser.parse_next(env).ok_or("No expression to parse for subscript of integral.".to_string())??;
+                    if rest_parser.parse_next(env).is_some() {
+                        return Err("Multiple expressions encountered while parsing subscript of integral.".to_string())
                     }
+                    rest
                 } else {
                     self.expect_brace_expr(env)?
                 };
@@ -361,8 +363,12 @@ impl Parser {
             if consume { // Implicit operators, e.g. left parentheses interpreted as "*(", do not lead to the consumption of the next token.
                 if let Token::Comparison(c, param) = self.next()? { // As mentioned above, fetch the missing comparison parameter (if there is one)
                     let parsed_param = if let Some(p) = param {
-                        // `unwrap` in the following line is acceptable since the `map` at the beginning ensures that `param` is `Some`
-                        Some(Box::new(Parser::from(p).parse(env)?.into_iter().next().unwrap()))
+                        let mut param_parser = Parser::from(p);
+                        let res = param_parser.parse_next(env).ok_or(format!("No expression to parse for parameter of comparison {c}."))??;
+                        if param_parser.parse_next(env).is_some() {
+                            return Err(format!("Multiple expressions encountered while parsing parameter of comparison {c}."))
+                        }
+                        Some(Box::new(res))
                     } else {None};
                     op = BinaryOperation::Comp(c, parsed_param)
                 }
@@ -423,7 +429,9 @@ impl Parser {
         Ok(lhs)
     }
 
-    /// Parse the entire given vector of tokens recursively while consuming it.
+    /// Parse the given vector of tokens recursively while consuming it until the end of the expression is met
+    /// (marked by a semicolon in the right context or the EOF). Returns `None` once the EOF is reached.
+    /// If an error occurs while parsing, return `Some(Err(...))`.
     /// 
     /// Note that we need knowledge of the environment here, since e.g. "x(y+1)" can be interpreted either as function call or as multiplication;
     /// knowledge of the environment resolves such ambiguities.
@@ -442,16 +450,21 @@ impl Parser {
     /// <tr> <td>^<td/> <td>7<td/> </tr>
     /// <tr> <td>d/dx, D<td/> <td>8<td/> </tr>
     /// </table>
-    pub fn parse(&mut self, env: &mut Env) -> Result<Vec<Expression>, String> {
-        let mut exprs = Vec::<Expression>::new();
-        loop {
-            let expr = self.parse_expression(0, None, env)?;
-            exprs.push(expr);
-            match self.next()? {
-                Token::EOF => {return Ok(exprs);},
-                Token::Semicolon => {continue;}
-                other => return Err(format!("Unexpected trailing token: {:?}", other))
-            }
+    pub fn parse_next(&mut self, env: &mut Env) -> Option<Result<Expression, String>> {
+        // Note on design choice: works as an iterator instead of a vector because in some cases,
+        // the parsing depends on the environment (e.g. `x(y+z)` is parsed differently depending on whether
+        // `x` is a function or constant). Therefore, in some specific cases, it is important to evaluate the
+        // expressions one by one, modifying the environment step by step, e.g. for `f(x) := x^2; g(x) := f(2x)`.
+        // Hence, a part should only be parsed once all previous parts have been parsed _and_ evaluated.
+        self.tokens.peek()?; // Return `None` if there are no tokens left in `self.tokens`
+        let expr = match self.parse_expression(0, None, env) {
+            Ok(e) => e,
+            Err(e) => return Some(Err(e))
+        };
+        match self.next() {
+            Ok(Token::EOF) | Ok(Token::Semicolon) => Some(Ok(expr)),
+            Ok(other) => Some(Err(format!("Unexpected trailing token: {:?}", other))),
+            Err(e) => Some(Err(e))
         }
     }
 }
