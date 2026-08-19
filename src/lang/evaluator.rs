@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
+use dioxus::logger::tracing;
 use statrs::function::gamma;
 use itertools::Itertools;
 
@@ -28,8 +29,12 @@ const KEYWORDS: [&str; 2] = [
 /// (this will be needed for evaluation). For example, if 'constants = {"x": 1, "y": 2}', the RHS of the literal expression
 /// "f(y, z) := x + 3*y + z" will become "1 + 3*___tmp_y + ___tmp_z".
 /// 
+/// If an `Expression::Function(f, args)` is encountered where `f` corresponds to a direct function with mask `(m, n, b)`,
+/// we only recursively process the elements of `args` that would be evaluated by `f` when called. The other elements of `args`
+/// are left untouched. For instance, if `b == false`, we only recursively parse `args[..m]`.
+/// 
 /// I have decided that if the definition depends on another function (say, "f(x, y) = g(x) + y"), the other function shall
-/// not be replaced by its literal expression. It makes sense to me to capture the current values of free variables because
+/// _not_ be replaced by its literal expression. It makes sense to me to capture the current values of free variables because
 /// if this were not intended, one could simply include them as parameters, but this solution isn't available for functions
 /// (yet), hence the decision.
 /// 
@@ -112,10 +117,35 @@ pub fn parse_function_definition(
                 Box::new(parse_function_definition(inner, argument_names, extra_vars, env)?)
             }
         ),
-        Expression::Function(function_name, args) => Expression::Function(
-            function_name.clone(),
-            args.iter().map(|x| parse_function_definition(x, argument_names, extra_vars, env)).collect::<Result<Vec<_>, _>>()?
-        ),
+        Expression::Function(function_name, args) => {
+            // Direct function => only parse the elements of `args` that shall be evaluated in a call of `function_name`,
+            // i.e. `args[..m]`, and if `b == true`, then in addition `args[m+n..]`
+            // Below `opt` allows us to use `env` again later.
+            let opt = if let Some(FunctionRepr::Direct(_, (m, n, b))) = env.functions.get(function_name) {
+                Some((*m, *n, *b))
+            } else {None};
+            Expression::Function(
+                function_name.clone(),
+                if let Some((m, n, b)) = opt {
+                    if args.len() < m+n {
+                        return Err(format!("Wrong number of arguments provided for function '{}' (expected at least {}, got {}).", function_name, m+n, args.len()));
+                    }
+                    let mut processed_args = args.iter().take(m).map(|x| parse_function_definition(x, argument_names, extra_vars, env)).collect::<Result<Vec<_>, _>>()?;
+                    processed_args.extend(args.iter().skip(m).take(n).cloned());
+                    if b {
+                        processed_args.reserve(args.len() - (m+n));
+                        for x in args.iter().skip(m+n) {
+                            processed_args.push(parse_function_definition(x, argument_names, extra_vars, env)?)
+                        }
+                    } else {
+                        processed_args.extend(args.iter().skip(m+n).cloned());
+                    }
+                    processed_args
+                } else {
+                    args.iter().map(|x| parse_function_definition(x, argument_names, extra_vars, env)).collect::<Result<Vec<_>, _>>()?
+                }
+            )
+        }
         Expression::Assignment(lhs, rhs) => Expression::Assignment(
             Box::new(parse_function_definition(lhs, argument_names, extra_vars, env)?),
             Box::new(parse_function_definition(rhs, argument_names, extra_vars, env)?)
@@ -362,6 +392,8 @@ pub fn eval(
             }
         },
         Expression::FoldedOperation(op, index_var, from, conditions, to, inner) => {
+            // TODO evaluate conditions once at the start if acceptable
+            // TODO search for all other FoldedOperation evals and fix accordingly
             let mut i = eval(from, extra_vars, env)?.expect_int()?;
             let initial_to_eval = eval(to, &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: extra_vars }, env)?.expect_float()?;
             // We initialize `res` with the appropriate identity object (e.g. zero for a sum and one for a product). To do this, we must know the correct type,
@@ -431,10 +463,10 @@ pub fn eval(
                 } else { given_arg_exprs };
                 let rm = env.functions.remove(real_function_name);
                 let res = match rm {
-                    Some(FunctionRepr::Direct(f_ref)) => {
+                    Some(FunctionRepr::Direct(f_ref, _)) => {
                         let (point, direction) = parse_diff_num_args(arg_exprs, extra_vars, env)?;
-                        let mut mutable_version = |args: &[Object]| f_ref(args);
-                        math::differentiation::numerical_directional_derivative(&mut mutable_version, point, direction)
+                        let mut mutable_version = |x: &[Object], y: &[Expression], z: Option<(&VarStack, &mut Env)>| f_ref(x, y, z);
+                        math::differentiation::numerical_directional_derivative(&mut mutable_version, point, direction, extra_vars, env)
                     }
                     Some(FunctionRepr::ByExpression(ref f_varnames, ref f_expr)) => {
                         // This is rare, but if e.g. an integral should be differentiated, then we need this case
@@ -442,21 +474,25 @@ pub fn eval(
                         let (point, direction) = parse_diff_num_args(arg_exprs, extra_vars, env)?;
                         // This following closure is also the reason why we need `parse_diff_num_args` in a separate function.
                         #[allow(clippy::type_complexity)] 
-                        let mut f_as_direct: Box<dyn for<'a> FnMut(&'a [Object]) -> Result<Object, String>> = Box::new(|args: &[Object]| {
-                            if args.len() != f_varnames.len() {
-                                Err(format!("Wrong number of arguments for {} (expected {}, got {}).", real_function_name, f_varnames.len(), args.len()))
-                            } else {
-                                eval(
-                                    f_expr,
-                                    &VarStack::Frame {
-                                        vars: &(0..f_varnames.len()).map(|i| (&f_varnames[i], &args[i])).collect(),
-                                        parent: extra_vars
-                                    },
-                                    env
-                                )
+                        let mut f_as_direct: Box<dyn for<'a, 'b, 'c, 'd> FnMut(&'a [Object], &'b [Expression], Option<(&'c VarStack, &'d mut Env)>) -> Result<Object, String>> = Box::new(
+                            |parsed_args, _, context| {
+                                if parsed_args.len() != f_varnames.len() {
+                                    Err(format!("Wrong number of arguments provided for function '{}' (expected {}, got {}).", real_function_name, f_varnames.len(), parsed_args.len()))
+                                } else if let Some((_varstack, _env)) = context {
+                                    eval(
+                                        f_expr,
+                                        &VarStack::Frame {
+                                            vars: &f_varnames.iter().zip(parsed_args.iter()).collect(),
+                                            parent: _varstack
+                                        },
+                                        _env
+                                    )
+                                } else {
+                                    Err("[Unreachable] Function requires varstack and environment.".to_string())
+                                }
                             }
-                        });
-                        math::differentiation::numerical_directional_derivative(&mut f_as_direct, point, direction)
+                        );
+                        math::differentiation::numerical_directional_derivative(&mut f_as_direct, point, direction, extra_vars, env)
                     }
                     None => Err(format!("No such function: {:?}", function_name))
                 };
@@ -466,7 +502,7 @@ pub fn eval(
                 res
             }
 
-            // We can't define `del` as default function since default functions taked _parsed_ arguments (i.e. a `Vec<Object>`), but we specifically need to know the _unparsed_ arguments.
+            // TODO define as default function
             else if function_name == "del" {
                 let mut unknown_identifiers = Vec::<&String>::new();
                 let mut none_identifiers = Vec::<&Expression>::new();
@@ -505,14 +541,8 @@ pub fn eval(
             // By transfer of ownership, this is a very cheap operation compared to cloning a `FunctionRepr` because the latter's
             // defining expression (if present) can be highly nested.
             else if env.functions.contains_key(function_name) {
-                let evaluated_args = given_arg_exprs.iter().map(
-                    |given_arg_expr| {
-                        eval(given_arg_expr, extra_vars, env)
-                        .map_err(|e| format!("Couldn't resolve argument `{}`. Traceback: {}", given_arg_expr, e))
-                    }
-                ).collect::<Result<Vec<_>, _>>()?;
                 let func = env.functions.remove(function_name).unwrap(); // Safe
-                let ret_value = eval_function(function_name, &func, &evaluated_args, extra_vars, env);
+                let ret_value = eval_function(function_name, &func, given_arg_exprs, extra_vars, env);
                 env.functions.insert(function_name.clone(), func); // Reinsert the removed function
                 ret_value
             }
@@ -555,12 +585,19 @@ pub fn eval(
 fn eval_function(
     function_name: &String,
     func: &FunctionRepr,
-    evaluated_args: &[Object],
+    given_arg_exprs: &[Expression],
     extra_vars: &VarStack,
     env: &mut Env
 ) -> Result<Object, String> {
     match func {
         FunctionRepr::ByExpression(argnames, defining_expr) => {
+            tracing::info!("Evaluating BE function {} with given arg exprs {:?}.", function_name, given_arg_exprs);
+            let evaluated_args = given_arg_exprs.iter().map(
+                |given_arg_expr| {
+                    eval(given_arg_expr, extra_vars, env)
+                    .map_err(|e| format!("Couldn't resolve argument `{}`. Traceback: {}", given_arg_expr, e))
+                }
+            ).collect::<Result<Vec<_>, _>>()?;
             if evaluated_args.len() != argnames.len() {
                 return Err(format!("Wrong number of arguments provided for function '{}' (expected {}, got {}).", function_name, argnames.len(), evaluated_args.len()));
             }
@@ -568,8 +605,16 @@ fn eval_function(
             let new_stack = VarStack::Frame { vars: &tmp_vars, parent: extra_vars };
             eval(defining_expr, &new_stack, env)
         }
-        FunctionRepr::Direct(f) => {
-            f(evaluated_args)
+        FunctionRepr::Direct(f, (m, n, b)) => {
+            tracing::info!("Evaluating direct function {} with mask ({},{},{}) and given arg exprs {:?}.", function_name, m, n, b, given_arg_exprs);
+            if given_arg_exprs.len() < m + n {
+                return Err(format!("Wrong number of arguments provided for function '{}' (expected at least {}).", function_name, m + n));
+            }
+            let mut parsed_args = given_arg_exprs.iter().take(*m).map(|arg| eval(arg, extra_vars, env)).collect::<Result<Vec<_>, _>>()?;
+            if *b {
+                parsed_args.extend(given_arg_exprs.iter().skip(m+n).map(|arg| eval(arg, extra_vars, env)).collect::<Result<Vec<_>, _>>()?)
+            }
+            f(&parsed_args, if *b {&given_arg_exprs[*m .. (m+n)]} else {&given_arg_exprs[*m..]}, Some((extra_vars, env)))
         }
     }
 }

@@ -82,6 +82,13 @@ impl Expression {
         }
     }
 
+    pub fn expect_ident(&self) -> Result<&String, String> {
+        match self {
+            Expression::Identifier(id) => Ok(id),
+            other => Err(format!("Expected identifier, found `{:?}`.", other))
+        }
+    }
+
     /// Formats an object to a string that may stretch over multiple lines.
     /// The lines will be returned as a vector of strings, not as a single string containing newline chars.
     /// 
@@ -393,7 +400,7 @@ impl Expression {
                             env
                         )
                     }
-                    Some(super::FunctionRepr::Direct(_)) => crate::defaults::get_default_fn_type(
+                    Some(super::FunctionRepr::Direct(..)) => crate::defaults::get_default_fn_type(
                         name,
                         &args.iter().map(|x| x.get_type(extra_vars, env)).collect::<Result<Vec<_>, _>>()?
                     ),

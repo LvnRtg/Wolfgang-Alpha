@@ -1,13 +1,14 @@
 use std::iter::zip;
 use std::collections::HashMap;
 
+use crate::lang::eval;
 use crate::math::matrices_and_vectors::{VectorNorm, MatrixNorm};
 use crate::math::objects::{try_operation};
 use crate::math::expressions::*;
 use crate::math::utils::{approx_eq, min};
 use crate::math::{Env, FunctionRepr, integration, Object, Matrix, VarStack, Vector};
 use crate::math::operations::{BinaryOperation, FoldedOperation, UnaryOperation};
-use crate::{defaults, expr_compare, expr_if_else, expr_sub, expr_mul, expr_div, expr_pow, expr_neg, expr_1arg_func, lang};
+use crate::{defaults, expr_compare, expr_if_else, expr_sub, expr_mul, expr_div, expr_pow, expr_neg, expr_1arg_func};
 
 /// Differentiates the given expression w.r.t. the variable `wrt` analytically, that is, by parsing the expression recursively and
 /// applying known differentiation rules (e.g. product rule, chain rule).
@@ -178,16 +179,26 @@ pub fn analytic_partial_derivative(
             to.clone(),
             Box::new(analytic_partial_derivative(inner, wrt, extra_vars, env)?)
         )),
-        Expression::FoldedOperation(FoldedOperation::Product, varname, from, conditions, to, inner) => {
-            if let (Expression::Number(f_a), Expression::Number(f_b)) = (&**from, &**to) && conditions.is_empty() {
-                let (a, b) = (f_a.round() as usize, f_b.round() as usize);
-                Ok(Expression::Function("___helper_prod_rule".to_string(), vec![
-                    Expression::Vector((a..=b).map(|i| analytic_partial_derivative(&inner.replace_identifiers(varname, &Expression::Number(i as f64)), wrt, extra_vars, env)).collect::<Result<Vec<_>, _>>()?),
-                    Expression::Vector((a..=b).map(|i| inner.replace_identifiers(varname, &Expression::Number(i as f64))).collect())
-                ]))
-            } else {
-                Err("Differentiation of product over non-constant range not implemented yet.".to_string())
-            }
+        Expression::FoldedOperation(FoldedOperation::Product, index_var, from, conditions, to, inner) => {
+            // If the product is of the form `\prod_{i=a(x)}^{b(x)} f(i,x)`, it isn't immediately clear how to differentiate it w.r.t. `x`.
+            // However, as long as `a, b` are sufficiently well-behaved (it suffices for them to be continuous or be càdlàg/càglàd with jumps of size <1),
+            // we will have `\prod_{i=a(y)}^{b(y)} f(i,y) = \prod_{i=a(x)}^{b(x)} f(i,y)` for `|x-y|` sufficiently small, so
+            // `d/dx \prod_{i=a(x)}^{b(x)} f(i,x) |_{x_0} = d/dx \prod_{i=a(x_0)}^{b(x_0)} f(i,x) |_{x_0}`,
+            // meaning we can apply the standard product rule.
+            // I have never encountered a product that is of this form for badly behaved `a, b`, so I decided that `a, b` are always assumed
+            // to be continuous so we can apply the above formula. The same assumption is made for the conditions. A warning is then emitted.
+            // TODO emit warning
+            let mut args = vec![
+                Expression::Identifier(wrt.clone()), // x, once to be evaluated
+                Expression::Identifier(wrt.clone()), // x, once as literal expression
+                Expression::Identifier(index_var.clone()), // i
+                *from.clone(), // a(x)
+                *to.clone(), // b(x)
+                *inner.clone(), // f(i, x)
+                analytic_partial_derivative(inner, wrt, extra_vars, env)? // f'(i, x)
+            ];
+            args.append(&mut conditions.clone()); // Add conditions at the end
+            Ok(Expression::Function("___helper_prod_rule".to_string(), args))
         }
         Expression::Function(function_name, g_exprs) => {
             // Standard trick. To be able to create mutable references of `functions` within the `match` block, we don't call
@@ -279,7 +290,7 @@ fn analytic_partial_derivative_for_function(
                 ))
             }
         }
-        FunctionRepr::Direct(_) => {
+        FunctionRepr::Direct(..) => {
             // If `function_name` refers to a default function (e.g. `exp`), we can spare ourselves the below code.
             if defaults::FUNCTIONS_WITH_PROVIDED_DERIVATIVE.contains(&function_name.as_str()) {
                 // Similar to the chain rule block in `analytic_directional_derivative`, with a little change: with the same f, g as there, we have
@@ -400,7 +411,7 @@ pub fn analytic_directional_derivative(
             let diff_r = analytic_directional_derivative(vars, rhs, point, direction, extra_vars, env)?;
             let new_frame = (0..vars.len()).map(|i| (&vars[i], &point[i])).collect();
             let varstack = VarStack::Frame { vars: &new_frame, parent: extra_vars };
-            match lang::eval(rhs, &varstack, env)? {
+            match eval(rhs, &varstack, env)? {
                 Object::Real(x) => if x > 0.0 {
                     Ok(diff_r)
                 } else if x < 0.0 {
@@ -425,16 +436,16 @@ pub fn analytic_directional_derivative(
                     let new_frame = (0..vars.len()).map(|i| (&vars[i], &point[i])).collect();
                     let varstack = VarStack::Frame { vars: &new_frame, parent: extra_vars };
                     try_operation(
-                        &try_operation(&diff_l, &lang::eval(rhs, &varstack, env)?, &BinaryOperation::Mul)?, // f'(x) * g(x)
-                        &try_operation(&lang::eval(lhs, &varstack, env)?, &diff_r, &BinaryOperation::Mul)?,  // f(x) * g'(x)
+                        &try_operation(&diff_l, &eval(rhs, &varstack, env)?, &BinaryOperation::Mul)?, // f'(x) * g(x)
+                        &try_operation(&eval(lhs, &varstack, env)?, &diff_r, &BinaryOperation::Mul)?,  // f(x) * g'(x)
                         &BinaryOperation::Add
                     )
                 },
                 BinaryOperation::Div => {
                     let new_frame = (0..vars.len()).map(|i| (&vars[i], &point[i])).collect();
                     let varstack = VarStack::Frame { vars: &new_frame, parent: extra_vars };
-                    let eval_lhs = lang::eval(lhs, &varstack, env)?;
-                    let eval_rhs = lang::eval(rhs, &varstack, env)?;
+                    let eval_lhs = eval(lhs, &varstack, env)?;
+                    let eval_rhs = eval(rhs, &varstack, env)?;
                     try_operation( // d/dx (f(x) / g(x)) = (f'(x)g(x) - f(x)g'(x)) / g(x)²
                         &try_operation(
                             &try_operation(&diff_l, &eval_rhs, &BinaryOperation::Mul)?,
@@ -448,8 +459,8 @@ pub fn analytic_directional_derivative(
                 BinaryOperation::Pow(_) => {
                     let new_frame = (0..vars.len()).map(|i| (&vars[i], &point[i])).collect();
                     let varstack = VarStack::Frame { vars: &new_frame, parent: extra_vars };
-                    let eval_lhs = lang::eval(lhs, &varstack, env)?;
-                    let eval_rhs = lang::eval(rhs, &varstack, env)?;
+                    let eval_lhs = eval(lhs, &varstack, env)?;
+                    let eval_rhs = eval(rhs, &varstack, env)?;
                     try_operation( // d/dx (f(x) ^ g(x)) = f(x)^(g(x)-1) * (f'(x)g(x) + f(x)g'(x)ln(f(x)))
                         &try_operation(
                             &eval_lhs,
@@ -476,11 +487,11 @@ pub fn analytic_directional_derivative(
         Expression::FoldedOperation(FoldedOperation::Sum, index_var, from, conditions, to, inner) => {
             // Note: since the bounds of the sum must be integers, taking them into consideration when differentiating is useless.
             // Therefore, we simply treat `D sum_{i=a}^b ...(p)[d]` as `sum_{i=a(p)}^{b(p)} D ... (p)[d]`.
-            // The following code is adapted from lang::eval (case Expression::FoldedOperation).
+            // The following code is adapted from eval (case Expression::FoldedOperation).
             // Copying and adapting it is more efficient than to try to call `eval` instead.
             let varstack = VarStack::Frame { vars: &zip(vars, point).collect(), parent: extra_vars };
-            let mut i = lang::eval(from, extra_vars, env)?.expect_int()?;
-            let initial_to_eval = lang::eval(to, &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: &varstack }, env)?.expect_float()?;
+            let mut i = eval(from, extra_vars, env)?.expect_int()?;
+            let initial_to_eval = eval(to, &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: &varstack }, env)?.expect_float()?;
             let mut res = FoldedOperation::Sum.if_empty(&inner.get_type(
                 &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(initial_to_eval))]), parent: extra_vars },
                 env
@@ -488,9 +499,9 @@ pub fn analytic_directional_derivative(
             if i > initial_to_eval {
                 return Ok(res);
             }
-            'outer: while i <= lang::eval(to, &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: &varstack }, env)?.expect_float()? {
+            'outer: while i <= eval(to, &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: &varstack }, env)?.expect_float()? {
                 for cond in conditions {
-                    match lang::eval(cond, &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: &varstack }, env)? {
+                    match eval(cond, &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: &varstack }, env)? {
                         Object::Real(1.0) => {}
                         Object::Real(0.0) => { i += 1.0; continue 'outer; }
                         other => return Err(format!("Expected 1 or 0 when evaluating condition, got {:?}.", other))
@@ -507,6 +518,7 @@ pub fn analytic_directional_derivative(
             Ok(res)
         }
         Expression::FoldedOperation(FoldedOperation::Product, varname, from, conditions, to, inner) => {
+            // The directional derivative follows the standard product rule too.
             // TODO
             unimplemented!()
         }
@@ -522,7 +534,7 @@ pub fn analytic_directional_derivative(
             let new_frame = (0..vars.len()).map(|i| (&vars[i], &point[i])).collect();
             let varstack = VarStack::Frame { vars: &new_frame, parent: extra_vars };
             let g_of_point = arg_expressions.iter().map(
-                |g_i| lang::eval(g_i, &varstack, env)
+                |g_i| eval(g_i, &varstack, env)
             ).collect::<Result<Vec<_>, _>>()?;
             // Finally, apply the chain rule. If `f` has a representation via expression, we can get Df by a recursive call of this function.
             // In case of a direct representation, we have to fall back on a numerical directional derivative.
@@ -531,8 +543,8 @@ pub fn analytic_directional_derivative(
                 FunctionRepr::ByExpression(ref argnames, ref function_expr) => analytic_directional_derivative(
                     argnames, function_expr, &g_of_point, &differentiated_components_of_g, &varstack, env
                 ),
-                FunctionRepr::Direct(ref mut f) => numerical_directional_derivative(
-                    f, g_of_point, differentiated_components_of_g
+                FunctionRepr::Direct(ref mut f, _) => numerical_directional_derivative(
+                    f, g_of_point, differentiated_components_of_g, extra_vars, env
                 )
             };
             env.functions.insert(function_name.clone(), reinsert_later);
@@ -555,22 +567,22 @@ pub fn analytic_directional_derivative(
                 let dva = analytic_directional_derivative(vars, a_expr, point, direction, extra_vars, env)?;
                 let dvb = analytic_directional_derivative(vars, b_expr, point, direction, extra_vars, env)?;
                 let new_frame = (0..vars.len()).map(|i| (&vars[i], &point[i])).collect();
-                let bx = lang::eval(
+                let bx = eval(
                     b_expr,
                     &VarStack::Frame { vars: &new_frame, parent: extra_vars },
                     env
                 )?;
-                let ax = lang::eval(
+                let ax = eval(
                     a_expr,
                     &VarStack::Frame { vars: &new_frame, parent: extra_vars },
                     env
                 )?;
-                let hbx = lang::eval(
+                let hbx = eval(
                     inner,
                     &VarStack::Frame { vars: &HashMap::from([(int_var, &bx)]), parent: extra_vars },
                     env
                 )?;
-                let hax = lang::eval(
+                let hax = eval(
                     inner,
                     &VarStack::Frame { vars: &HashMap::from([(int_var, &ax)]), parent: extra_vars },
                     env
@@ -581,18 +593,21 @@ pub fn analytic_directional_derivative(
                     &BinaryOperation::Sub
                 )
             } else {
-                numerical_directional_derivative(&mut (|args: &[Object]| lang::eval(
-                    expr,
-                    &VarStack::Frame { vars: &(0..vars.len()).map(|i| (&vars[i], &args[i])).collect(), parent: extra_vars },
-                    env
-                )), point.to_vec(), direction.to_vec())
+                numerical_directional_derivative(&mut (|parsed_args: &[Object], _: &[Expression], context: Option<(&VarStack, &mut Env)>| {
+                    let (_varstack, _env) = context.ok_or("[Unreachable] Function needs varstack and environment.".to_string())?;
+                    eval(
+                        expr,
+                        &VarStack::Frame { vars: &vars.iter().zip(parsed_args.iter()).collect(), parent: _varstack },
+                        _env
+                    )}
+                ), point.to_vec(), direction.to_vec(), extra_vars, env)
             }
         }
         Expression::IfElse(condition, iftrue, iffalse) => {
             // D (if c(x) {a(x)} else {b(x)})(x)[d] = if c(x) {Da(x)[d]} else {Db(x)[d]}
             let new_frame = (0..vars.len()).map(|i| (&vars[i], &point[i])).collect();
             let varstack = VarStack::Frame { vars: &new_frame, parent: extra_vars };
-            match lang::eval(condition, &varstack, env) {
+            match eval(condition, &varstack, env) {
                 Ok(Object::Real(1.0)) => analytic_directional_derivative(vars, iftrue, point, direction, &varstack, env),
                 Ok(Object::Real(0.0)) => analytic_directional_derivative(vars, iffalse, point, direction, &varstack, env),
                 Ok(x) => Err(format!("Couldn't evaluate condition {condition} to 0 or 1; got {x}")),
@@ -612,7 +627,15 @@ pub fn analytic_directional_derivative(
 /// 
 /// Unfortunately, `point` has to be owned (or we'd have to clone it) since we want to modify it and the original passed vector need not to be mutable.
 /// Moreover, also owning `direction` allows to decrease the number of required operations.
-pub fn numerical_directional_derivative<F: FnMut(&[Object]) -> Result<Object, String>>(f: &mut F, mut point: Vec<Object>, mut direction: Vec<Object>) -> Result<Object, String> {
+/// 
+/// Note: to see why we even need to pass around varstacks and envs, see `evaluator::eval`.
+pub fn numerical_directional_derivative<F: FnMut(&[Object], &[Expression], Option<(&VarStack, &mut Env)>) -> Result<Object, String>>(
+    f: &mut F,
+    mut point: Vec<Object>,
+    mut direction: Vec<Object>,
+    extra_vars: &VarStack,
+    env: &mut Env
+) -> Result<Object, String> {
     if point.len() != direction.len() {
         return Err("`point` and `direction` for derivative must be vectors of the same length (possibly 1).".to_string());
     }
@@ -629,12 +652,12 @@ pub fn numerical_directional_derivative<F: FnMut(&[Object]) -> Result<Object, St
         direction[i] = h * &direction[i]; // Spares us another operation later
         *coord = try_operation(coord, &direction[i], &BinaryOperation::Add)?; // point + h*direction
     }
-    let left_res = f(&point)?;
+    let left_res = f(&point, &[], Some((extra_vars, env)))?;
     for (i, coord) in point.iter_mut().enumerate() {
         // If the previous loop worked, this one will too.
         *coord = try_operation(coord, &(2.0 * &direction[i]), &BinaryOperation::Sub).unwrap();
     }
-    let right_res = f(&point)?;
+    let right_res = f(&point, &[], Some((extra_vars, env)))?;
     match (left_res, right_res) {
         (Object::Real(lhs), Object::Real(rhs)) => Ok(Object::Real((lhs - rhs) / (2.0 * h))),
         (Object::Vector(lhs), Object::Vector(rhs)) => {

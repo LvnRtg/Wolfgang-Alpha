@@ -2,8 +2,11 @@ use std::collections::HashMap;
 use std::f64::consts;
 use std::sync::LazyLock;
 
+use dioxus::logger::tracing;
+
+use crate::lang::eval;
 use crate::math::expressions;
-use crate::math::{Complex, DirectFunction, Expression, Matrix, Object, ObjType, FunctionRepr};
+use crate::math::{Complex, DirectFunction, Expression, FunctionRepr, Matrix, Object, ObjType, VarStack};
 use crate::math::operations::{UnaryOperation, BinaryOperation};
 use crate::{expr_if_else, expr_and, expr_compare, expr_add, expr_sub, expr_mul, expr_div, expr_square, expr_neg, expr_1arg_func};
 
@@ -18,68 +21,85 @@ pub fn default_constants() -> HashMap<String, Object> {
     ])
 }
 
-/// Takes a function name `name`, e.g. `exp`, and returns the tuple consisting of
-/// 1. Stringified name of the function
-/// 2. `FunctionRepr::Direct`: expect exactly one `f64` as argument; if so, return `Ok(x.name())`, otherwise, the appropriate `Err`.
+/// Takes a function name `name`, e.g. `exp`, and returns a `FunctionRepr::Direct` (along with its mask) which expects
+/// exactly one `f64` as argument; if such an argument is given, it returns `Ok(x.name())`, otherwise, the appropriate `Err`.
+/// 
+/// Note: "`FunctionRepr::Direct` which expects exactly one `f64`-arg" implies that in reality, three args are expected:
+/// the `f64`, the varstack and the environment.
 macro_rules! float_1_function {
     ($name:ident) => {
-        Box::new(|args| {
-            if args.len() != 1 {
-                Err(format!(
-                    "Wrong number of arguments provided for function '{}' (expected 1, got {}).",
-                    stringify!($name),
-                    args.len()
-                ))
-            } else {
-                match args[0] {
-                    Object::Real(x) => Ok(Object::Real(x.$name())),
-                    _ => Err(format!(
-                        "Wrong type of argument provided for function '{}' (expected float).",
-                        stringify!($name)
-                    )),
+        (
+            Box::new(|parsed_args, _, _| {
+                // TODO warn if unparsed args are given
+                if parsed_args.len() != 1 {
+                    Err(format!(
+                        "Wrong number of arguments provided for function '{}' (expected 1, got {}).",
+                        stringify!($name),
+                        parsed_args.len()
+                    ))
+                } else {
+                    match &parsed_args[0] {
+                        Object::Real(x) => Ok(Object::Real(x.$name())),
+                        other => Err(format!(
+                            "Wrong type of argument provided for function '{}' (expected float, got {}).",
+                            stringify!($name),
+                            other.get_type()
+                        )),
+                    }
                 }
-            }
-        })
+            }),
+            (1, 0, false)
+        )
     };
 }
 
-/// Takes a function name `name` (e.g. `log`), a number `n` and an expression `expr`. Returns the tuple consisting of
-/// 1. Stringified name of the function
-/// 2. `FunctionRepr::Direct`: expect exactly `n` arguments; if so, return `expr(args)`, otherwise, the appropriate `Err`.
-macro_rules! expect_n_args {
+/// Takes a function name `name` (e.g. `log`), a number `n` and an expression `expr`. Returns a `FunctionRepr::Direct`
+/// (along with its mask) which expects exactly `n` arguments that can be parsed to `Object`; if such arguments are given,
+/// it returns `expr(args.map(eval))`, otherwise, the appropriate `Err`.
+/// 
+/// Note: "`FunctionRepr::Direct` which expects exactly `n` args" implies that in reality, `n+2` args are expected:
+/// the `n` args, the varstack and the environment.
+macro_rules! expect_n_objs {
     ($name:ident, $n:expr, $e:expr) => {
-        Box::new(|args: &[Object]| {
-            if args.len() != $n {
-                Err(format!(
-                    "Wrong number of arguments provided for function '{}' (expected {}, got {}).",
-                    stringify!($name),
-                    $n,
-                    args.len()
-                ))
-            } else {
-                $e(args)
-            }
-        })
+        (
+            Box::new(|parsed_args, _, _| {
+                // TODO warn if unparsed args are given
+                if parsed_args.len() != $n {
+                    Err(format!(
+                        "Wrong number of arguments provided for function '{}' (expected {}, got {}).",
+                        stringify!($name),
+                        $n,
+                        parsed_args.len()
+                    ))
+                } else {
+                    $e(parsed_args)
+                }
+            }),
+            ($n, 0, false)
+        )
     };
 }
 
 /// For examples, see the use of the macro in `default_functions`.
 macro_rules! apply_matrix_fn {
     ($name:ident, $e:expr) => {
-        Box::new(|args| {
-            if args.len() != 1 {
-                Err(format!(
-                    "Wrong number of arguments provided for function '{}' (expected 1, got {}).",
-                    stringify!($name),
-                    args.len()
-                ))
-            } else {
-                if let Object::Matrix(mat) = &args[0] {
-                    $e(mat.$name(), &mat)
+        (
+            Box::new(|parsed_args, _, _| {
+                if parsed_args.len() != 1 {
+                    Err(format!(
+                        "Wrong number of arguments provided for function '{}' (expected 1, got {}).",
+                        stringify!($name),
+                        parsed_args.len()
+                    ))
+                } else {
+                    if let Object::Matrix(mat) = &parsed_args[0] {
+                        $e(mat.$name(), &mat)
+                    }
+                    else { Err(format!("Wrong type for argument of function '{}' (expected Matrix).", stringify!($name))) }
                 }
-                else { Err(format!("Wrong type for argument of function '{}' (expected Matrix).", stringify!($name))) }
-            }
-        })
+            }),
+            (1, 0, false)
+        )
     };
 }
 
@@ -88,8 +108,9 @@ macro_rules! apply_matrix_fn {
 /// to be permanently stored at a fixed location. This location is here.
 /// 
 /// Note that the user can't create new direct functions, so this approach works.
-pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[DirectFunction; 23]> = LazyLock::new(|| [
-    expect_n_args!(sign, 1, |args: &[Object]| {
+#[allow(clippy::type_complexity)]
+pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, bool)); 23]> = LazyLock::new(|| [
+    expect_n_objs!(sign, 1, |args: &[Object]| {
         match &args[0] {
             Object::Real(x) => Ok(Object::Real(if *x >= 0.0 {1.0} else {-1.0})),
             Object::Vector(v) => Ok(Object::Vector(v.transform(|x| if x >= 0.0 {1.0} else {-1.0}))),
@@ -100,7 +121,7 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[DirectFunction; 23]> = LazyLock::
 
     float_1_function!(exp),
     float_1_function!(ln),
-    expect_n_args!(log, 2, |args: &[Object]| {
+    expect_n_objs!(log, 2, |args: &[Object]| {
         if let Object::Real(base) = args[1] {
             match args[0] {
                 Object::Real(x) => Ok(Object::Real(x.log(base))),
@@ -115,7 +136,7 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[DirectFunction; 23]> = LazyLock::
     float_1_function!(sin), float_1_function!(sinh), float_1_function!(asin), float_1_function!(asinh),
     float_1_function!(tan), float_1_function!(tanh), float_1_function!(atan), float_1_function!(atanh),
 
-    expect_n_args!(eig, 1, |args: &[Object]| {
+    expect_n_objs!(eig, 1, |args: &[Object]| {
         if let Object::Matrix(mat) = &args[0] {
             match mat.eigenvalues() {
                 Some(eig) => Ok(Object::Tuple(eig)),
@@ -134,19 +155,68 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[DirectFunction; 23]> = LazyLock::
     }),
     apply_matrix_fn!(tr, |r: Result<f64, String>, _| {r.map(Object::Real)}),
     apply_matrix_fn!(transpose, |r: Matrix, _| {Ok(Object::Matrix(r))}),
-    Box::new(|args|
-        if args.len() == 2
-        && let (Object::Vector(x), Object::Vector(y)) = (&args[0], &args[1])
-        && x.len() == y.len() {
-            let n = x.len();
-            Ok(Object::Real((0..n).map(|i|
-                x[i]
-                * if i > 0 {(0..i).map(|j| y[j]).product()} else {1.0}
-                * if i < n-1 {(i+1..n).map(|j| y[j]).product()} else {1.0}
-            ).sum()))
-        } else {
-            Err("Arguments to `___helper_prod_rule` must be two vectors of equal length.".to_string())
-        }
+
+    // ___helper_prod_rule
+    // Takes an object `x_val`, expressions `x`, `i`, `a(x)`, `b(x)`, `f(i,x)` and `f'(i,x)`, a `&mut Env env` and a `&VarStack`.
+    // Afterwards, there can be an arbitrary additional amount of expressions: these will be considered as conditions.
+    // Then, returns `\sum_{i=a(x), all_conditions(i)}^{b(x)} f'(i,x) * \prod_{j=a(x), j!=i, all_conditions(j)}^{b(x)} f(j,x)`.
+    (
+        Box::new(|parsed_args, unparsed_args, context| {
+            if parsed_args.len() != 1 || unparsed_args.len() < 6 {
+                return Err(format!("Wrong number of arguments provided for function '___helper_prod_rule' (expected ==1 parsed and >=6 unparsed, got {}, {} respectively).", parsed_args.len(), unparsed_args.len()));
+            }
+            if context.is_none() {
+                return Err("Function '___helper_prod_rule' needs `VarStack` and `Env`.".to_string());
+            }
+            tracing::info!("{:?}", parsed_args);
+            tracing::info!("{:?}", unparsed_args);
+            let (base_stack, env) = context.unwrap(); // Safe
+            let (x, i) = (unparsed_args[0].expect_ident()?, unparsed_args[1].expect_ident()?);
+            let [a_x, b_x, f, f_prime] = &unparsed_args[2..6] else {unreachable!()};
+            let conditions = &unparsed_args[6..];
+            let varstack = VarStack::Frame { vars: &HashMap::from([(x, &parsed_args[0])]), parent: base_stack };
+            // `b` can be non-integer but, to the best of my knowledge, there is no canonical understanding for non-integer `a`.
+            let (a, b) = (eval(a_x, &varstack, env)?.expect_int()? as i64, eval(b_x, &varstack, env)?.expect_float()?.floor() as i64);
+            if a > b {return Ok(Object::Real(0.0));} // Empty sum
+            let mut sum = 0.0;
+            'outer: for i_val in a..=b {
+                let i_as_obj = Object::Real(i_val as f64);
+                let vs = VarStack::Frame {
+                    vars: &HashMap::from([(i, &i_as_obj)]),
+                    parent: &varstack
+                };
+                // Check if all conditions are met (o/w skip)
+                for cond in conditions {
+                    match eval(cond, &vs, env)? {
+                        Object::Real(1.0) => {}
+                        Object::Real(0.0) => {continue 'outer;}
+                        other => return Err(format!("Expected 1 or 0 when evaluating condition, got {:?}.", other))
+                    }
+                }
+                // Start with f'(i, x)
+                let mut product = eval(f_prime, &vs, env)?.expect_float()?;
+                // Multiply with all f(j, x)
+                'middle: for j_val in a..=b {
+                    if j_val == i_val {continue;}
+                    let j_as_obj = Object::Real(j_val as f64);
+                    let vsj = VarStack::Frame {
+                        vars: &HashMap::from([(i, &j_as_obj)]),
+                        parent: &varstack
+                    };
+                    for cond in conditions {
+                        match eval(cond, &vsj, env)? {
+                            Object::Real(1.0) => {}
+                            Object::Real(0.0) => {continue 'middle;}
+                            other => return Err(format!("Expected 1 or 0 when evaluating condition, got {:?}.", other))
+                        }
+                    }
+                    product *= eval(f, &vsj, env)?.expect_float()?;
+                }
+                sum += product;
+            }
+            Ok(Object::Real(sum))
+        }),
+        (1, 6, false)
     )
 ]);
 
@@ -162,7 +232,7 @@ pub fn default_functions() -> HashMap<String, FunctionRepr> {
         "___helper_prod_rule"
     ].into_iter().enumerate().map(
         |(i, n)|
-        (n.to_string(), FunctionRepr::Direct(&DEFAULT_DIRECT_FUNCTIONS[i]))
+        (n.to_string(), FunctionRepr::Direct(&DEFAULT_DIRECT_FUNCTIONS[i].0, DEFAULT_DIRECT_FUNCTIONS[i].1))
     ).collect();
     res.insert("1".to_string(), FunctionRepr::ByExpression(
         vec!["___tmp_x".to_string()],

@@ -3,12 +3,11 @@ use std::fmt;
 
 use crate::expr_add;
 use crate::expr_mul;
-use crate::math::Complex;
+use crate::math::{Complex, Env, VarStack};
 use crate::math::matrices_and_vectors::{Matrix, Vector};
 use crate::math::expressions::Expression;
 use crate::math::operations::*;
-use crate::math::utils;
-use crate::math::utils::{approx_eq, Quo};
+use crate::math::utils::{approx_eq, Quo, quo, format_trimmed};
 
 
 /// Here, objects are things an identifier (e.g. "x") can represent, that is:
@@ -85,6 +84,18 @@ impl ObjType {
         }
     }
 }
+impl fmt::Display for ObjType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ObjType::NonObject => write!(f, "NonObject"),
+            ObjType::Scalar => write!(f, "Scalar"),
+            ObjType::Vector(n) => write!(f, "Vector<{}>", n),
+            ObjType::Matrix(m, n) => write!(f, "Matrix<{}x{}>", m, n),
+            ObjType::Tuple(n) => write!(f, "Tuple<{}>", n),
+            ObjType::LiteralExpression => write!(f, "Expression")
+        }
+    }
+}
 
 impl fmt::Display for Object {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -129,7 +140,7 @@ impl Object {
                     res
                 }
             }
-            Object::Vector(v) => vec![format!("({})", &v.values.iter().map(|x| utils::format_trimmed(*x, 8)).collect::<Vec<String>>().join(", "))],
+            Object::Vector(v) => vec![format!("({})", &v.values.iter().map(|x| format_trimmed(*x, 8)).collect::<Vec<String>>().join(", "))],
             Object::Matrix(x) => {
                 // First, we go through all element to know how much space each column needs.
                 let mut column_lengths = Vec::<usize>::with_capacity(x.n());
@@ -137,7 +148,7 @@ impl Object {
                 for j in 0..x.n() {
                     column_lengths.push((0..x.m()).map(
                         |i| {
-                            let s = utils::format_trimmed(x.get(i, j), 8);
+                            let s = format_trimmed(x.get(i, j), 8);
                             let len = s.len();
                             entries.push(s);
                             len
@@ -270,8 +281,8 @@ impl ops::Not for &Object {
     }
 }
 
-/// Type abbreviation, nothing special to say about its definition.
-pub type DirectFunction = Box<dyn for<'a> Fn(&'a [Object]) -> Result<Object, String> + Send + Sync>;
+/// Type abbreviation. A _direct function_ can take any number of `Object` and `Expression` and, optionally, a `VarStack` and an `Env`.
+pub type DirectFunction = Box<dyn for<'a, 'b, 'c, 'd> Fn(&'a [Object], &'b [Expression], Option<(&'c VarStack, &'d mut Env)>) -> Result<Object, String> + Send + Sync>;
 
 /// Different representations for a function
 #[derive(Clone)]
@@ -281,14 +292,17 @@ pub enum FunctionRepr {
     ///    the user is not allowed to define a variable whose name starts with three underscores.
     /// 2. E.g. `"5 * ___tmp_x + 2"` where `arguments` is `["___tmp_x"]`. The variable names here will already be prefixed.
     ByExpression(Vec<String>, Expression),
-    Direct(&'static DirectFunction)
+    /// Contains a reference to a default function as well as the corresponding argtype mask, that is, a tuple `(m, n, b)`
+    /// signifying the first `m` arguments should be parsed, the next `n` arguments should not be parsed and
+    /// all arguments thereafter should be parsed iff `b` is true.
+    Direct(&'static DirectFunction, (usize, usize, bool))
 }
 
 impl fmt::Debug for FunctionRepr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             FunctionRepr::ByExpression(argnames, expr) => write!(f, "({}) ↦ {}", argnames.join(", "), expr),
-            FunctionRepr::Direct(_) => write!(f, "<Closure>")
+            FunctionRepr::Direct(..) => write!(f, "<Closure>")
         }
     }
 }
@@ -347,7 +361,7 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
                     BinaryOperation::Mul => x*y,
                     BinaryOperation::Div => x/y,
                     BinaryOperation::Rem => x.rem_euclid(*y),
-                    BinaryOperation::Quo => utils::quo(*x, *y),
+                    BinaryOperation::Quo => quo(*x, *y),
                     BinaryOperation::Pow(_) => x.powf(*y),
                     BinaryOperation::Comp(comp, _) => compare(*x, *y, comp) as i8 as f64,
                     BinaryOperation::Or => if *x != 0.0 || *y != 0.0 {1.0} else {0.0},
@@ -385,7 +399,7 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result
                     BinaryOperation::Mul => Object::Complex(Complex { real: x * z.real, imag: x * z.imag }),
                     BinaryOperation::Div => Object::Complex(Complex { real: z.real / x, imag: z.imag / x }),
                     BinaryOperation::Rem => Object::Complex(Complex { real: z.real.rem_euclid(*x), imag: z.imag.rem_euclid(*x) }),
-                    BinaryOperation::Quo => Object::Complex(Complex { real: utils::quo(z.real, *x), imag: utils::quo(z.imag, *x) }),
+                    BinaryOperation::Quo => Object::Complex(Complex { real: quo(z.real, *x), imag: quo(z.imag, *x) }),
                     BinaryOperation::Pow(_) => Object::Complex(z.pow(&Complex { real: *x, imag: 0.0 })),
                     BinaryOperation::Comp(comp, _) => compare_complex(z, &Complex { real: *x, imag: 0.0 }, comp),
                     BinaryOperation::Or => Object::Real(if *x != 0.0 || z.real != 0.0 || z.imag != 0.0 {1.0} else {0.0}),

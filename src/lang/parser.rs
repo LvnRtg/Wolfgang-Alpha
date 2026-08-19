@@ -139,7 +139,7 @@ impl Parser {
                     (Token::LBracket, Expression::Function(name, args)) if env.functions.contains_key(name) => {
                         argnames = match env.functions.get(name).unwrap() {
                             FunctionRepr::ByExpression(argnames, _) => argnames.clone(),
-                            FunctionRepr::Direct(_) => (0..args.len()).map(|i| format!("x_{}", i)).collect()
+                            FunctionRepr::Direct(..) => (0..args.len()).map(|i| format!("x_{}", i)).collect()
                         };
                         std::mem::replace(args, argnames.iter().map(|x| Expression::Identifier(x.clone())).collect())
                     }
