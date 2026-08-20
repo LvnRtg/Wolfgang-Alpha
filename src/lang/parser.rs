@@ -51,6 +51,10 @@ impl Parser {
     /// Consumes the closer.
     fn parse_comma_expression(&mut self, closer: &Token, env: &mut Env) -> Result<Vec<Expression>, String> {
         let mut exprs = Vec::<Expression>::new();
+        if let Ok(t) = self.peek() && t == closer {
+            _ = self.next();
+            return Ok(exprs);
+        }
         loop {
             exprs.push(self.parse_expression(0, None, env)?);
             match self.next()? {
@@ -221,9 +225,10 @@ impl Parser {
             }
             Token::LParenthesis => {
                 // Parse expression between parentheses recursively. It could just be a single expression of multiple entries separated by commas.
+                // It could also be empty.
                 let mut entries = self.parse_comma_expression(&Token::RParenthesis, env)?;
                 match entries.len() {
-                    0 => Expression::Vector(Vec::new()),
+                    0 => Expression::Tuple(Vec::new()),
                     1 => entries.pop().unwrap(), // I decided to not box the elements rightaway since the case `entries.len() == 1` is more common.
                     _ => Expression::Tuple(entries)
                 }
