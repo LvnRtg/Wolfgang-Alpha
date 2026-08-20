@@ -12,12 +12,12 @@ const MONO_BOLD: Asset = asset!("/style/fonts/JetBrainsMono-Bold.woff2");
 
 const EXAMPLES: [Example; 4] = [
     Example {
-        label: "Quick arithmetic",
-        expression: "sqrt(144) + 2^5",
-    },
-    Example {
         label: "Differentiate",
         expression: "d/dx (x^3 + 2x + 1)",
+    },
+    Example {
+        label: "Integrate",
+        expression: "int_1^∞ 1/x^2 dx",
     },
     Example {
         label: "Matrix determinant",
