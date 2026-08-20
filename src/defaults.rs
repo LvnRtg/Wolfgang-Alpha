@@ -1,8 +1,7 @@
+use itertools::Itertools;
 use std::collections::HashMap;
 use std::f64::consts;
 use std::sync::LazyLock;
-
-use dioxus::logger::tracing;
 
 use crate::lang::eval;
 use crate::math::expressions;
@@ -109,7 +108,7 @@ macro_rules! apply_matrix_fn {
 /// 
 /// Note that the user can't create new direct functions, so this approach works.
 #[allow(clippy::type_complexity)]
-pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, bool)); 23]> = LazyLock::new(|| [
+pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, bool)); 24]> = LazyLock::new(|| [
     expect_n_objs!(sign, 1, |args: &[Object]| {
         match &args[0] {
             Object::Real(x) => Ok(Object::Real(if *x >= 0.0 {1.0} else {-1.0})),
@@ -168,8 +167,6 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, b
             if context.is_none() {
                 return Err("Function '___helper_prod_rule' needs `VarStack` and `Env`.".to_string());
             }
-            tracing::info!("{:?}", parsed_args);
-            tracing::info!("{:?}", unparsed_args);
             let (base_stack, env) = context.unwrap(); // Safe
             let (x, i) = (unparsed_args[0].expect_ident()?, unparsed_args[1].expect_ident()?);
             let [a_x, b_x, f, f_prime] = &unparsed_args[2..6] else {unreachable!()};
@@ -217,6 +214,50 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, b
             Ok(Object::Real(sum))
         }),
         (1, 6, false)
+    ),
+
+    // del
+    // Arbitrary amount of args (technically including 0), all not evaluated. Only accepts identifiers.
+    // Warns if an argument is passed that is not an identifier.
+    // TODO warn if an argument is passed that is not an identifier
+    (
+        Box::new(|_, not_evaluated_args, context| {
+            if context.is_none() {
+                return Err("Function 'del' needs `Env`.".to_string());
+            }
+            let env = context.unwrap().1;
+            let mut unknown_identifiers = Vec::<&String>::new();
+            let mut none_identifiers = Vec::<&Expression>::new();
+            for arg in not_evaluated_args {
+                match arg {
+                    Expression::Identifier(id) => {
+                        // No bugs with short-circuiting here because if `constants.remove(id)` is `Some`, then `id` was in `constants`,
+                        // so it can't be in `functions` too.
+                        if env.constants.remove(id).is_none() && env.functions.remove(id).is_none() {
+                            unknown_identifiers.push(id);
+                        }
+                    }
+                    other => none_identifiers.push(other)
+                }
+            }
+            if unknown_identifiers.is_empty() && none_identifiers.is_empty() {
+                Ok(Object::Success)
+            } else {
+                let mut err_str = "Some arguments couldn't be deleted from the environment.".to_string();
+                if !unknown_identifiers.is_empty() {
+                    err_str.push_str("\nNot present in environment: ");
+                    err_str.push_str(unknown_identifiers.into_iter().join(", ").as_str());
+                    err_str.push('.');
+                }
+                if !none_identifiers.is_empty() {
+                    err_str.push_str("\nNot identifiers: ");
+                    err_str.push_str( none_identifiers.into_iter().join(", ").as_str());
+                    err_str.push('.');
+                }
+                Err(err_str)
+            }
+        }),
+        (0, 0, false)
     )
 ]);
 
@@ -229,7 +270,7 @@ pub fn default_functions() -> HashMap<String, FunctionRepr> {
         "sin", "sinh", "asin", "asinh",
         "tan", "tanh", "atan", "atanh",
         "eig", "det", "adj", "tr", "transpose",
-        "___helper_prod_rule"
+        "___helper_prod_rule", "del"
     ].into_iter().enumerate().map(
         |(i, n)|
         (n.to_string(), FunctionRepr::Direct(&DEFAULT_DIRECT_FUNCTIONS[i].0, DEFAULT_DIRECT_FUNCTIONS[i].1))

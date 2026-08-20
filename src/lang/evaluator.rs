@@ -501,40 +501,6 @@ pub fn eval(
                 res
             }
 
-            // TODO define as default function
-            else if function_name == "del" {
-                let mut unknown_identifiers = Vec::<&String>::new();
-                let mut none_identifiers = Vec::<&Expression>::new();
-                for arg in given_arg_exprs {
-                    match arg {
-                        Expression::Identifier(id) => {
-                            // No bugs with short-circuiting here because if `constants.remove(id)` is `Some`, then `id` was in `constants`,
-                            // so it can't be in `functions` too.
-                            if env.constants.remove(id).is_none() && env.functions.remove(id).is_none() {
-                                unknown_identifiers.push(id);
-                            }
-                        }
-                        other => none_identifiers.push(other)
-                    }
-                }
-                if unknown_identifiers.is_empty() && none_identifiers.is_empty() {
-                    Ok(Object::Success)
-                } else {
-                    let mut err_str = "Some arguments couldn't be deleted from the environment.".to_string();
-                    if !unknown_identifiers.is_empty() {
-                        err_str.push_str("\nNot present in environment: ");
-                        err_str.push_str(unknown_identifiers.into_iter().join(", ").as_str());
-                        err_str.push('.');
-                    }
-                    if !none_identifiers.is_empty() {
-                        err_str.push_str("\nNot identifiers: ");
-                        err_str.push_str( none_identifiers.into_iter().join(", ").as_str());
-                        err_str.push('.');
-                    }
-                    Err(err_str)
-                }
-            }
-
             // Check if `function_name` corresponds to a known `FunctionRepr::ByExpression(argnames, defining_expr)` in `env.functions`.
             // If so, we need to clone `argnames` and `defining_expr`:
             // Indeed, it would theoretically be possible that the final `eval` call in the subsequent block modifies the
