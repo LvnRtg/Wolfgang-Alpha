@@ -434,6 +434,29 @@ impl Expression {
             Expression::IfElse(_, iftrue, _) => iftrue.get_type(extra_vars, env),
         }
     }
+
+    /// Returns whether or not `self` contains an assignment operator.
+    /// 
+    /// This is used e.g. to determine if in a folded operations, it suffices to evaluate upper bound and conditions once
+    /// or if they need to be recomputed in every iteration.
+    pub fn includes_assignment(&self) -> bool {
+        match self {
+            Expression::Assignment(..) => true,
+            Expression::None | Expression::Identifier(_) | Expression::Number(_) => false,
+            Expression::Vector(v) | Expression::Matrix(.., v) | Expression::Function(_, v) | Expression::Tuple(v)
+                => v.iter().any(|x| x.includes_assignment()),
+            Expression::UnaryOperation(_, x) | Expression::PartialDerivative(_, x)
+                => x.includes_assignment(),
+            Expression::BinaryOperation(x, _, y)
+                => x.includes_assignment() || y.includes_assignment(),
+            Expression::FoldedOperation(.., x, v, y, z)
+                => x.includes_assignment() || y.includes_assignment() || z.includes_assignment() || v.iter().any(|u| u.includes_assignment()),
+            Expression::DirectionalDerivative(_, x, v, w)
+                => x.includes_assignment() || v.iter().any(|y| y.includes_assignment()) || w.iter().any(|y| y.includes_assignment()),
+            Expression::Integral(x, y, z, _) | Expression::IfElse(x, y, z)
+                => x.includes_assignment() || y.includes_assignment() || z.includes_assignment()
+        }
+    }
 }
 
 /// Allows to simplify literal expressions.

@@ -4,7 +4,7 @@ use std::iter::Peekable;
 use std::str::Chars;
 use std::fmt;
 
-use crate::math::Comparison;
+use crate::math::operations::Comparison;
 
 const SPECIAL_CHARS: [char; 1] = [
     '∞'

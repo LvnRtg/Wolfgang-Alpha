@@ -4,7 +4,8 @@ use std::collections::HashSet;
 use std::iter::Peekable;
 use std::vec::IntoIter;
 
-use crate::math::{BinaryOperation, Comparison, UnaryOperation, FoldedOperation, Expression, FunctionRepr, Env, VarStack};
+use crate::math::operations::{BinaryOperation, Comparison, UnaryOperation, FoldedOperation};
+use crate::math::{Expression, FunctionRepr, Env, VarStack};
 use crate::lang::lexer::{Keyword, Token, tokenize};
 
 pub struct Parser {

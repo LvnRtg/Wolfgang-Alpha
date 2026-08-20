@@ -3,8 +3,9 @@ use std::ops::{Add, AddAssign, Div, Mul, Neg};
 use num_traits::float::Float;
 
 use crate::lang::eval;
-use crate::math::{BinaryOperation, Env, Expression, FoldedOperation, Object, UnaryOperation, VarStack};
+use crate::math::{Env, Expression, Object, VarStack};
 use crate::math::objects::try_operation;
+use crate::math::operations::{BinaryOperation, FoldedOperation, UnaryOperation};
 use crate::{expr_add, expr_div, expr_mul, expr_neg, expr_pow, expr_sub};
 
 /// Approximates the integral `\int_a^b f(x) dx` by splitting `[a, b]` into
