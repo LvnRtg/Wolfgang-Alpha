@@ -14,6 +14,7 @@ pub fn default_constants() -> HashMap<String, Object> {
     HashMap::<String, Object>::from([
         ("e".to_string(), Object::Real(consts::E)),
         ("pi".to_string(), Object::Real(consts::PI)),
+        ("π".to_string(), Object::Real(consts::PI)),
         ("i".to_string(), Object::Complex(Complex { real: 0.0, imag: 1.0 })),
         ("inf".to_string(), Object::Real(f64::INFINITY)),
         ("∞".to_string(), Object::Real(f64::INFINITY))

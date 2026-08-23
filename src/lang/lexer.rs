@@ -238,7 +238,7 @@ fn tokenize_recursive(chars: &mut Peekable<Chars>, return_early: Vec<char>) -> R
                     _ => {tokens.push(Token::Pipe);}
                 }
             }
-            c if c.is_ascii_alphabetic() || c.is_ascii_digit() || c == '_' || SPECIAL_CHARS.contains(&c) => {
+            c if c.is_alphabetic() || c.is_ascii_digit() || c == '_' || SPECIAL_CHARS.contains(&c) => {
                 // Encountered first character of a "word" (potential identifier, but maybe of the form "2x").
                 // First, parse all leading digits (which may include a point), then the rest of the word.
                 let mut digits = String::new();
@@ -256,7 +256,7 @@ fn tokenize_recursive(chars: &mut Peekable<Chars>, return_early: Vec<char>) -> R
                     else {break;}
                 }
                 let mut ident = String::new();
-                while let Some(&nc) = chars.peek() && (nc.is_ascii_alphabetic() || nc.is_ascii_digit() || nc == '_' || SPECIAL_CHARS.contains(&nc)) {
+                while let Some(&nc) = chars.peek() && (nc.is_alphabetic() || nc.is_ascii_digit() || nc == '_' || SPECIAL_CHARS.contains(&nc)) {
                     ident.push(nc);
                     chars.next();
                 };
