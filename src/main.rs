@@ -1,8 +1,9 @@
-use dioxus::prelude::*;
 use std::cell::RefCell;
-use web_sys::window;
-use wolfgang_alpha::{defaults, math, repl};
 
+use dioxus::prelude::*;
+use web_sys::window;
+
+use wolfgang_alpha::{defaults, math, repl};
 mod js_snippets;
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
@@ -29,33 +30,10 @@ const EXAMPLES: [Example; 4] = [
     },
 ];
 
-/// Symbols shown in the character sidebar
-const SPECIAL_SYMBOLS: &[SpecialSymbol] = &[
-    SpecialSymbol { symbol: "α", name: "alpha" },
-    SpecialSymbol { symbol: "β", name: "beta" },
-    SpecialSymbol { symbol: "γ", name: "gamma" },
-    SpecialSymbol { symbol: "δ", name: "delta" },
-    SpecialSymbol { symbol: "ε", name: "epsilon" },
-    SpecialSymbol { symbol: "θ", name: "theta" },
-    SpecialSymbol { symbol: "λ", name: "lambda" },
-    SpecialSymbol { symbol: "μ", name: "mu" },
-    SpecialSymbol { symbol: "π", name: "pi" },
-    SpecialSymbol { symbol: "σ", name: "sigma" },
-    SpecialSymbol { symbol: "φ", name: "phi" },
-    SpecialSymbol { symbol: "ω", name: "omega" },
-    SpecialSymbol { symbol: "∞", name: "infinity" },
-];
-
 #[derive(Clone, Copy)]
 struct Example {
     label: &'static str,
     expression: &'static str,
-}
-
-#[derive(Clone, Copy)]
-struct SpecialSymbol {
-    symbol: &'static str,
-    name: &'static str,
 }
 
 #[derive(Clone, PartialEq)]
@@ -88,7 +66,7 @@ fn scroll_to_bottom(id: &str) {
     }
 }
 
-fn insert_symbol_at_cursor(symbol: &'static str) {
+fn insert_symbol_at_cursor(symbol: char) {
     let eval = dioxus::document::eval(js_snippets::INSERT_SYMBOL_AT_CURSOR);
     if eval.send(symbol).is_ok() {
         spawn(async move {
@@ -279,25 +257,23 @@ fn App() -> Element {
                         h2 { "Symbols" }
                     }
                     div { class: "symbol-list",
-                        for item in SPECIAL_SYMBOLS {
+                        for (symbol , name) in wolfgang_alpha::lang::lexer::SPECIAL_SYMBOLS {
                             button {
-                                key: "{item.symbol}",
+                                key: "{symbol}",
                                 class: "symbol-button",
                                 r#type: "button",
-                                title: "Insert {item.name} ({item.symbol})",
-                                aria_label: "Insert {item.name}",
+                                title: "Insert {name} ({symbol})",
+                                aria_label: "Insert {name}",
                                 onmousedown: move |event| event.prevent_default(),
                                 onclick: move |_| {
                                     rollback_index.set(0);
-                                    insert_symbol_at_cursor(item.symbol);
+                                    insert_symbol_at_cursor(symbol);
                                 },
-                                "{item.symbol}"
+                                "{symbol}"
                             }
                         }
                     }
-                    p { class: "symbol-sidebar-hint",
-                        "Select a symbol to place it at the cursor."
-                    }
+                    p { class: "symbol-sidebar-hint", "Select a symbol to place it at the cursor." }
                 }
 
                 section {

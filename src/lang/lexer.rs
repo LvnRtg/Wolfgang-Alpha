@@ -1,13 +1,50 @@
 //! Responsible for tokenizing input strings.
 
+use std::fmt;
 use std::iter::Peekable;
 use std::str::Chars;
-use std::fmt;
 
 use crate::math::operations::Comparison;
 
-const SPECIAL_CHARS: [char; 1] = [
-    '∞'
+
+/// Special symbols accessible through sidebar.
+pub const SPECIAL_SYMBOLS: [(char, &'static str); 36] = [
+    ('α', "alpha"),
+    ('β', "beta"),
+    ('Γ', "Gamma"),
+    ('γ', "gamma"),
+    ('Δ', "Delta"),
+    ('δ', "delta"),
+    ('ε', "epsilon"),
+    ('ζ', "zeta"),
+    ('η', "eta"),
+    ('Θ', "Theta"),
+    ('θ', "theta"),
+    ('ι', "iota"),
+    ('κ', "kappa"),
+    ('Λ', "Lambda"),
+    ('λ', "lambda"),
+    ('μ', "mu"),
+    ('ν', "nu"),
+    ('Ξ', "Xi"),
+    ('ξ', "xi"),
+    ('Π', "Pi"),
+    ('π', "pi"),
+    ('ρ', "rho"),
+    ('ϱ', "varrho"),
+    ('Σ', "Sigma"),
+    ('σ', "sigma"),
+    ('τ', "tau"),
+    ('υ', "upsilon"),
+    ('Φ', "Phi"),
+    ('ϕ', "phi"),
+    ('φ', "varphi"),
+    ('χ', "chi"),
+    ('Ψ', "Psi"),
+    ('ψ', "psi"),
+    ('Ω', "Omega"),
+    ('ω', "omega"),
+    ('∞', "infinity")
 ];
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -238,7 +275,7 @@ fn tokenize_recursive(chars: &mut Peekable<Chars>, return_early: Vec<char>) -> R
                     _ => {tokens.push(Token::Pipe);}
                 }
             }
-            c if c.is_alphabetic() || c.is_ascii_digit() || c == '_' || SPECIAL_CHARS.contains(&c) => {
+            c if c.is_ascii_alphabetic() || c.is_ascii_digit() || c == '_' || SPECIAL_SYMBOLS.iter().any(|(x, _)| *x == c) => {
                 // Encountered first character of a "word" (potential identifier, but maybe of the form "2x").
                 // First, parse all leading digits (which may include a point), then the rest of the word.
                 let mut digits = String::new();
@@ -256,7 +293,7 @@ fn tokenize_recursive(chars: &mut Peekable<Chars>, return_early: Vec<char>) -> R
                     else {break;}
                 }
                 let mut ident = String::new();
-                while let Some(&nc) = chars.peek() && (nc.is_alphabetic() || nc.is_ascii_digit() || nc == '_' || SPECIAL_CHARS.contains(&nc)) {
+                while let Some(&nc) = chars.peek() && (nc.is_ascii_alphabetic() || nc.is_ascii_digit() || nc == '_' || SPECIAL_SYMBOLS.iter().any(|(x, _)| *x == c)) {
                     ident.push(nc);
                     chars.next();
                 };

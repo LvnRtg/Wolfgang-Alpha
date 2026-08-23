@@ -102,7 +102,15 @@ impl fmt::Display for Object {
         match self {
             Object::Success => write!(f, "Object::Success"),
             Object::Undefined => write!(f, "Undefined"),
-            Object::Real(x) => write!(f, "{}", x),
+            Object::Real(x) => {
+                if *x == f64::INFINITY {
+                    write!(f, "∞")
+                } else if *x == -f64::INFINITY {
+                    write!(f, "-∞")
+                } else {
+                    write!(f, "{}", x)
+                }
+            }
             Object::Complex(x) => write!(f, "{}", x),
             Object::Tuple(x) => write!(f, "({})", x.iter().map(|o| format!("{:?}", o)).collect::<Vec<String>>().join(", ")),
             Object::Vector(x) => write!(f, "{:?}", x),
