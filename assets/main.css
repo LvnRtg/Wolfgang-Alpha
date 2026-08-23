@@ -159,16 +159,19 @@ input:focus-visible {
     height: max(660px, calc(100dvh - 134px));
     margin: 0 auto;
     display: grid;
-    grid-template-columns: minmax(260px, 330px) minmax(0, 1fr);
+    grid-template-areas: "reference calculator symbols";
+    grid-template-columns: minmax(250px, 315px) minmax(0, 1fr) 144px;
     gap: 18px;
 }
 
 .reference-panel,
-.calculator-panel {
+.calculator-panel,
+.symbol-sidebar {
     border-radius: 28px;
 }
 
 .reference-panel {
+    grid-area: reference;
     position: relative;
     min-height: 660px;
     padding: clamp(26px, 3vw, 40px);
@@ -361,6 +364,7 @@ input:focus-visible {
 }
 
 .calculator-panel {
+    grid-area: calculator;
     min-width: 0;
     min-height: 0;
     height: 100%;
@@ -370,6 +374,84 @@ input:focus-visible {
     border: 1px solid rgb(24 49 48 / 10%);
     background: var(--surface);
     box-shadow: 0 22px 50px rgb(44 58 51 / 10%);
+}
+
+.symbol-sidebar {
+    grid-area: symbols;
+    min-width: 0;
+    min-height: 0;
+    padding: 22px 14px 17px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid rgb(24 49 48 / 10%);
+    background: var(--surface);
+    box-shadow: 0 22px 50px rgb(44 58 51 / 8%);
+}
+
+.symbol-sidebar-header {
+    padding: 0 3px 17px;
+    border-bottom: 1px solid var(--line);
+}
+
+.symbol-sidebar-header .panel-kicker {
+    margin-bottom: 6px;
+    font-size: 8px;
+}
+
+.symbol-sidebar-header h2 {
+    margin: 0;
+    color: var(--ink);
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 23px;
+    font-weight: 400;
+    letter-spacing: -0.025em;
+}
+
+.symbol-list {
+    min-height: 0;
+    padding: 16px 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: start;
+    gap: 8px;
+    overflow-y: auto;
+    scrollbar-color: var(--line-strong) transparent;
+    scrollbar-width: thin;
+}
+
+.symbol-button {
+    aspect-ratio: 1;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    color: var(--forest);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--surface-muted);
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 20px;
+    transition: color 150ms ease, border-color 150ms ease, background 150ms ease, transform 150ms ease;
+}
+
+.symbol-button:hover {
+    color: var(--coral-dark);
+    border-color: rgb(243 108 79 / 40%);
+    background: rgb(243 108 79 / 7%);
+    transform: translateY(-1px);
+}
+
+.symbol-button:active {
+    transform: translateY(0);
+}
+
+.symbol-sidebar-hint {
+    margin: auto 3px 0;
+    padding-top: 14px;
+    color: #7f8d89;
+    border-top: 1px solid var(--line);
+    font-size: 9px;
+    line-height: 1.55;
 }
 
 .panel-header {
@@ -866,9 +948,13 @@ kbd {
     }
 }
 
-@media (max-width: 1080px) {
+@media (max-width: 1180px) {
     .workspace {
-        grid-template-columns: 270px minmax(0, 1fr);
+        grid-template-areas:
+            "reference symbols"
+            "reference calculator";
+        grid-template-columns: 250px minmax(0, 1fr);
+        grid-template-rows: auto minmax(0, 1fr);
     }
 
     .reference-panel {
@@ -881,6 +967,46 @@ kbd {
 
     .reference-footer {
         display: none;
+    }
+
+    .symbol-sidebar {
+        padding: 11px 14px;
+        flex-direction: row;
+        align-items: center;
+        gap: 14px;
+        border-radius: 18px;
+    }
+
+    .symbol-sidebar-header {
+        width: 108px;
+        padding: 0;
+        flex: 0 0 auto;
+        border: 0;
+    }
+
+    .symbol-sidebar-header .panel-kicker,
+    .symbol-sidebar-hint {
+        display: none;
+    }
+
+    .symbol-sidebar-header h2 {
+        font-size: 19px;
+    }
+
+    .symbol-list {
+        padding: 0 0 3px;
+        display: flex;
+        flex: 1;
+        gap: 7px;
+        overflow-x: auto;
+        overflow-y: hidden;
+    }
+
+    .symbol-button {
+        width: 39px;
+        height: 39px;
+        flex: 0 0 39px;
+        font-size: 17px;
     }
 }
 
@@ -909,7 +1035,12 @@ kbd {
     .workspace {
         height: auto;
         min-height: 0;
+        grid-template-areas:
+            "reference"
+            "symbols"
+            "calculator";
         grid-template-columns: 1fr;
+        grid-template-rows: auto auto auto;
     }
 
     .reference-panel {
