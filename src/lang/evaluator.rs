@@ -385,7 +385,7 @@ pub fn eval(
             let lhs_eval = eval(lhs, extra_vars, env)?;
             // If the LHS is evaluated to zero and `op` is `*` or `&&`, we can skip evaluating the RHS.
             // Furthermore, we actually SHOULD skip it, since this enables us to use indicator functions smartly.
-            if let Object::Real(x) = &lhs_eval && approx_eq(*x, 0.0) && (*op == BinaryOperation::Mul || *op == BinaryOperation::And) {
+            if let Object::Real(x) = &lhs_eval && x.is_finite() && approx_eq(*x, 0.0) && (*op == BinaryOperation::Mul || *op == BinaryOperation::And) {
                 rhs.get_type(extra_vars, env).map(|t| t.zero())
             } else {
                 try_operation(&lhs_eval, &eval(rhs, extra_vars, env)?, op)
