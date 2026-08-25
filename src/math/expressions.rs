@@ -803,7 +803,7 @@ impl Expression {
 #[macro_export]
 macro_rules! expr_if_else {
     ($condition:expr, $iftrue:expr, $iffalse:expr) => {
-        Expression::IfElse(
+        crate::math::Expression::IfElse(
             Box::new($condition),
             Box::new($iftrue),
             Box::new($iffalse)
@@ -813,9 +813,9 @@ macro_rules! expr_if_else {
 #[macro_export]
 macro_rules! expr_compare {
     ($lhs:expr, $comparison_operator:ident, $rhs:expr) => {
-        Expression::BinaryOperation(
+        crate::math::Expression::BinaryOperation(
             Box::new($lhs),
-            BinaryOperation::Comp($crate::math::operations::Comparison::$comparison_operator, None),
+            crate::math::operations::BinaryOperation::Comp($crate::math::operations::Comparison::$comparison_operator, None),
             Box::new($rhs)
         )
     };
@@ -823,9 +823,9 @@ macro_rules! expr_compare {
 #[macro_export]
 macro_rules! expr_add {
     ($lhs:expr, $rhs:expr) => {
-        Expression::BinaryOperation(
+        crate::math::Expression::BinaryOperation(
             Box::new($lhs),
-            BinaryOperation::Add,
+            crate::math::operations::BinaryOperation::Add,
             Box::new($rhs)
         )
     };
@@ -833,9 +833,9 @@ macro_rules! expr_add {
 #[macro_export]
 macro_rules! expr_sub {
     ($lhs:expr, $rhs:expr) => {
-        Expression::BinaryOperation(
+        crate::math::Expression::BinaryOperation(
             Box::new($lhs),
-            BinaryOperation::Sub,
+            crate::math::operations::BinaryOperation::Sub,
             Box::new($rhs)
         )
     };
@@ -843,9 +843,9 @@ macro_rules! expr_sub {
 #[macro_export]
 macro_rules! expr_mul {
     ($lhs:expr, $rhs:expr) => {
-        Expression::BinaryOperation(
+        crate::math::Expression::BinaryOperation(
             Box::new($lhs),
-            BinaryOperation::Mul,
+            crate::math::operations::BinaryOperation::Mul,
             Box::new($rhs)
         )
     };
@@ -860,9 +860,9 @@ macro_rules! expr_mul {
 #[macro_export]
 macro_rules! expr_div {
     ($lhs:expr, $rhs:expr) => {
-        Expression::BinaryOperation(
+        crate::math::Expression::BinaryOperation(
             Box::new($lhs),
-            BinaryOperation::Div,
+            crate::math::operations::BinaryOperation::Div,
             Box::new($rhs)
         )
     };
@@ -870,9 +870,9 @@ macro_rules! expr_div {
 #[macro_export]
 macro_rules! expr_pow {
     ($lhs:expr, $rhs:expr) => {
-        Expression::BinaryOperation(
+        crate::math::Expression::BinaryOperation(
             Box::new($lhs),
-            BinaryOperation::Pow(true),
+            crate::math::operations::BinaryOperation::Pow(true),
             Box::new($rhs)
         )
     };
@@ -880,9 +880,9 @@ macro_rules! expr_pow {
 #[macro_export]
 macro_rules! expr_inv {
     ($rhs:expr) => {
-        Expression::BinaryOperation(
+        crate::math::Expression::BinaryOperation(
             Box::new(Expression::Number(1.0)),
-            BinaryOperation::Div,
+            crate::math::operations::BinaryOperation::Div,
             Box::new($rhs)
         )
     };
@@ -890,9 +890,9 @@ macro_rules! expr_inv {
 #[macro_export]
 macro_rules! expr_square {
     ($lhs:expr) => {
-        Expression::BinaryOperation(
+        crate::math::Expression::BinaryOperation(
             Box::new($lhs),
-            BinaryOperation::Pow(true),
+            crate::math::operations::BinaryOperation::Pow(true),
             Box::new(Expression::Number(2.0))
         )
     };
@@ -900,9 +900,9 @@ macro_rules! expr_square {
 #[macro_export]
 macro_rules! expr_and {
     ($lhs:expr, $rhs:expr) => {
-        Expression::BinaryOperation(
+        crate::math::Expression::BinaryOperation(
             Box::new($lhs),
-            BinaryOperation::And,
+            crate::math::operations::BinaryOperation::And,
             Box::new($rhs)
         )
     };
@@ -910,8 +910,8 @@ macro_rules! expr_and {
 #[macro_export]
 macro_rules! expr_neg {
     ($rhs:expr) => {
-        Expression::UnaryOperation(
-            UnaryOperation::Neg,
+        crate::math::Expression::UnaryOperation(
+            crate::math::operations::UnaryOperation::Neg,
             Box::new($rhs)
         )
     };
@@ -919,7 +919,7 @@ macro_rules! expr_neg {
 #[macro_export]
 macro_rules! expr_1arg_func {
     ($name:expr, $arg:expr) => {
-        Expression::Function(
+        crate::math::Expression::Function(
             $name.to_string(),
             vec![$arg]
         )
