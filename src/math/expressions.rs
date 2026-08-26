@@ -72,6 +72,36 @@ impl fmt::Display for Expression {
         }
     }
 }
+
+macro_rules! multline_vector {
+    ($left_delimiter:expr, $elements:expr, $right_delimiter:expr) => {{
+        // We display the vector in expanded form (i.e. one component per line) if at least one of the following holds:
+        // - A component spans multiple lines
+        // - A component has at least 15 chars.
+        let mut multlines = $elements.iter().map(|y| y.to_multline()).collect::<Vec<Vec<String>>>();
+        if multlines.iter().any(|v| v.len() > 1 || v.iter().any(|elem| elem.chars().count() >= 15)) {
+            let mut result = vec![$left_delimiter.to_string()];
+            multlines.iter_mut().for_each(
+                |v| {
+                    v.last_mut().unwrap().push(',');
+                    v.iter_mut().for_each(|x| x.insert_str(0, "  "));
+                }
+            );
+            result.reserve(multlines.iter().map(|r| r.len()).sum());
+            result.extend(multlines.into_iter().flatten());
+            result.push($right_delimiter.to_string());
+            result
+        } else {
+            vec![format!(
+                "{}{}{}",
+                $left_delimiter,
+                multlines.into_iter().map(|v| v.into_iter().next().unwrap()).collect::<Vec<String>>().join(", "),
+                $right_delimiter
+            )]
+        }
+    }};
+}
+
 impl Expression {
     /// Returns `format!("{}", self)` surrounded by braces if the expression isn't an identifier or a number.
     pub fn to_string_with_braces(&self) -> String {
@@ -98,54 +128,22 @@ impl Expression {
             Expression::None => vec!["None".to_string()],
             Expression::Identifier(s) => vec![format!("{}", s)],
             Expression::Number(x) => vec![format!("{}", x)],
-            Expression::Tuple(components) => {
-                let mut multlines = components.iter().map(|y| y.to_multline()).collect::<Vec<Vec<String>>>();
-                // We display the vector in expanded form (i.e. one component per line) if at least one of the following holds:
-                // A component spans multiple lines; a component has length >= 15 chars.
-                if multlines.iter().any(|v| v.len() > 1 || v.iter().any(|elem| elem.len() >= 15)) {
-                    let mut result = vec!["(".to_string()];
-                    multlines.iter_mut().for_each( // Indent every component of the vector and add a comma at the very end
-                        |v| {
-                            v.last_mut().unwrap().push(',');
-                            v.iter_mut().for_each(|x| x.insert_str(0, "  "));
-                        }
-                    );
-                    result.reserve(multlines.iter().map(|r| r.len()).sum());
-                    result.extend(multlines.into_iter().flatten());
-                    result.push(")".to_string());
+            Expression::Tuple(components) => multline_vector!('(', components, ')'),
+            Expression::Vector(components) => multline_vector!('[', components, ']'),
+            Expression::Function(name, args) => {
+                let mut result = multline_vector!('(', args, ')');
+                if let Some(first) = result.first_mut() {
+                    first.insert_str(0, name);
                     result
-                }
-                else {
-                    vec![format!("[{}]", multlines.into_iter().map(|v| v.into_iter().next().unwrap()).collect::<Vec<String>>().join(", "))]
-                }
-            }
-            Expression::Vector(components) => {
-                let mut multlines = components.iter().map(|y| y.to_multline()).collect::<Vec<Vec<String>>>();
-                // We display the vector in expanded form (i.e. one component per line) if at least one of the following holds:
-                // A component spans multiple lines; a component has length >= 15 chars.
-                if multlines.iter().any(|v| v.len() > 1 || v.iter().any(|elem| elem.len() >= 15)) {
-                    let mut result = vec!["[".to_string()];
-                    multlines.iter_mut().for_each( // Indent every component of the vector and add a comma at the very end
-                        |v| {
-                            v.last_mut().unwrap().push(',');
-                            v.iter_mut().for_each(|x| x.insert_str(0, "  "));
-                        }
-                    );
-                    result.reserve(multlines.iter().map(|r| r.len()).sum());
-                    result.extend(multlines.into_iter().flatten());
-                    result.push("]".to_string());
-                    result
-                }
-                else {
-                    vec![format!("[{}]", multlines.into_iter().map(|v| v.into_iter().next().unwrap()).collect::<Vec<String>>().join(", "))]
+                } else {
+                    vec![name.clone()]
                 }
             }
             Expression::Matrix(m, n, x) => {
                 let values = x.iter().map(|b| b.to_multline().join(" ")).collect::<Vec<String>>();
                 let column_lengths: Vec<usize> = (0..*n).map(
                     |j| (0..*m).map(
-                        |i| values[i*n+j]
-                        .len()
+                        |i| values[i*n+j].chars().count()
                     ).max().unwrap_or(0)
                 ).collect();
                 let row_length = column_lengths.iter().sum::<usize>() + 2*n; // Between two columns, add 2 spaces. Before the first columns and after the last one, only 1 space.
@@ -218,27 +216,6 @@ impl Expression {
                     multlined_inner.first_mut().unwrap().insert_str(0, format!("{}_{{{}={}{}{}}}^{{{}}} ", op, ident, from, if conditions.is_empty() {""} else {", "}, conditions.iter().map(|e| format!("{}", e)).collect::<Vec<_>>().join(", "), to).as_str());
                 }
                 multlined_inner
-            }
-            Expression::Function(name, args) => {
-                let mut multlines = args.iter().map(|y| y.to_multline()).collect::<Vec<Vec<String>>>();
-                // We display the vector in expanded form (i.e. one component per line) if at least one of the following holds:
-                // A component spans multiple lines; a component has length >= 15 chars.
-                if multlines.iter().any(|v| v.len() > 1 || v.iter().any(|elem| elem.len() >= 15)) {
-                    let mut result = vec![format!("{name}(")];
-                    multlines.iter_mut().for_each( // Indent every component of the vector and add a comma at the very end
-                        |v| {
-                            v.last_mut().unwrap().push(',');
-                            v.iter_mut().for_each(|x| x.insert_str(0, "  "));
-                        }
-                    );
-                    result.reserve(multlines.iter().map(|r| r.len()).sum());
-                    result.extend(multlines.into_iter().flatten());
-                    result.push(")".to_string());
-                    result
-                }
-                else {
-                    vec![format!("{}({})", name, multlines.into_iter().map(|v| v.into_iter().next().unwrap()).collect::<Vec<String>>().join(", "))]
-                }
             }
             Expression::Assignment(l, r) => {
                 let mut multlined_left = l.to_multline();
@@ -912,6 +889,15 @@ macro_rules! expr_neg {
     ($rhs:expr) => {
         crate::math::Expression::UnaryOperation(
             crate::math::operations::UnaryOperation::Neg,
+            Box::new($rhs)
+        )
+    };
+}
+#[macro_export]
+macro_rules! expr_not {
+    ($rhs:expr) => {
+        crate::math::Expression::UnaryOperation(
+            crate::math::operations::UnaryOperation::Not,
             Box::new($rhs)
         )
     };
