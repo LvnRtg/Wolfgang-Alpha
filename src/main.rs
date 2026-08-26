@@ -76,6 +76,19 @@ fn insert_symbol_at_cursor(symbol: char) {
     }
 }
 
+fn copy_to_clipboard(text: String) {
+    wasm_bindgen_futures::spawn_local(async move {
+    if let Some(window) = web_sys::window() {
+        let clipboard = window.navigator().clipboard();
+        if let Err(err) = wasm_bindgen_futures::JsFuture::from(
+            clipboard.write_text(&text),
+        ).await {
+            web_sys::console::error_1(&err);
+        }
+    }
+});
+}
+
 /// Given the user input as parameter, returns the new lines to be added to the console.
 /// 
 /// If `reset` is set to `true`, resets the environment to defaults and ignores `input`.
@@ -330,7 +343,6 @@ fn App() -> Element {
                             div { class: "calculation-list",
                                 for (index , calculation) in calculations().into_iter().enumerate() {
                                     {
-                                        let query = calculation.query.clone();
                                         let output = calculation.output.join("\n");
                                         rsx! {
                                             article {
@@ -342,16 +354,14 @@ fn App() -> Element {
                                                         span { class: "query-prompt", aria_hidden: "true", "ƒ" }
                                                         code { "{calculation.query}" }
                                                         button {
-                                                            class: "reuse-button",
+                                                            class: "copy-button",
                                                             r#type: "button",
-                                                            aria_label: "Reuse expression {calculation.query}",
-                                                            title: "Edit and run again",
+                                                            aria_label: "Copy expression {calculation.query}",
+                                                            title: "Copy to clipboard",
                                                             onclick: move |_| {
-                                                                input_value.set(query.clone());
-                                                                rollback_index.set(0);
-                                                                call_js_on_dom_update!(MOVE_CURSOR_TO_RIGHT_END);
+                                                                copy_to_clipboard(calculation.query.clone());
                                                             },
-                                                            "Reuse"
+                                                            "Copy"
                                                         }
                                                     }
                                                     div { class: "result-row",

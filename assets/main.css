@@ -696,7 +696,7 @@ input:focus-visible {
     line-height: 1.35;
 }
 
-.reuse-button {
+.copy-button {
     padding: 6px 8px;
     cursor: pointer;
     color: var(--ink-soft);
@@ -710,12 +710,12 @@ input:focus-visible {
     transition: color 150ms ease, background 150ms ease, opacity 150ms ease;
 }
 
-.query-row:hover .reuse-button,
-.reuse-button:focus-visible {
+.query-row:hover .copy-button,
+.copy-button:focus-visible {
     opacity: 1;
 }
 
-.reuse-button:hover {
+.copy-button:hover {
     color: var(--coral-dark);
     background: rgb(243 108 79 / 9%);
 }
@@ -1127,7 +1127,7 @@ kbd {
         grid-template-columns: auto minmax(0, 1fr);
     }
 
-    .reuse-button {
+    .copy-button {
         display: none;
     }
 

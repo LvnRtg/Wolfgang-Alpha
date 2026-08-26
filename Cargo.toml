@@ -7,9 +7,14 @@ edition = "2024"
 [dependencies]
 # getrandom is needed by wasm/dioxus for whatever reason
 getrandom = { version = "0.2.17", features = ["js"] }
-dioxus = { version = "0.7.5", features = [] }
+dioxus = { version = "0.7.9", features = [] }
+wasm-bindgen-futures = "0.4.77"
 tracing-wasm = "0.2.1"
-web-sys = "0.3.91"
+web-sys = { version = "0.3.91", features = [
+    "Window",
+    "Navigator",
+    "Clipboard"
+]}
 statrs = "0.18.0"
 itertools = "0.14.0"
 num-traits = "0.2.19"
