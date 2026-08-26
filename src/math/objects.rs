@@ -150,7 +150,7 @@ impl Object {
                     res
                 }
             }
-            Object::Vector(v) => vec![format!("[{}]", &v.values.iter().map(|x| format_trimmed(*x, 8)).collect::<Vec<String>>().join(", "))],
+            Object::Vector(v) => vec![format!("[{}]", &v.values.iter().map(|x| format_trimmed(*x, 8)).collect::<Vec<String>>().join("; "))],
             Object::Matrix(x) => {
                 // First, we go through all element to know how much space each column needs.
                 let mut column_lengths = Vec::<usize>::with_capacity(x.n());
