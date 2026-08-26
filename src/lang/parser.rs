@@ -4,9 +4,9 @@ use std::collections::HashSet;
 use std::iter::Peekable;
 use std::vec::IntoIter;
 
+use crate::lang::lexer::{Keyword, Token, tokenize};
 use crate::math::operations::{BinaryOperation, Comparison, UnaryOperation, FoldedOperation};
 use crate::math::{Expression, FunctionRepr, Env, VarStack};
-use crate::lang::lexer::{Keyword, Token, tokenize};
 
 pub struct Parser {
     pub tokens: Peekable<IntoIter<Token>>
@@ -191,11 +191,11 @@ impl Parser {
                 };
                 self.expect_token(Token::Circumflex, Some(" to specify end of range"))?;
                 let superscript = self.expect_brace_expr(env)?;
-                // Parse inner expression but stop immediately if an identifier of length >= 2 starting with `d` is encountered.
-                let stopper: Box<dyn Fn(&Token) -> bool> = Box::new(|t: &Token| matches!(t, Token::Identifier(id) if id.starts_with('d') && id.len() >= 2));
+                // Parse inner expression but stop immediately if an identifier of length > 1 starting with `d` is encountered.
+                let stopper: Box<dyn Fn(&Token) -> bool> = Box::new(|t: &Token| matches!(t, Token::Identifier(id) if id.starts_with('d') && id.len() > 1));
                 let inner = self.parse_expression(0, Some(&stopper), env)?;
                 let int_var = match self.next()? {
-                    Token::Identifier(id) if id.starts_with("d") && id.len() >= 2 => id.strip_prefix("d").unwrap().to_string(),
+                    Token::Identifier(id) if id.starts_with("d") && id.len() > 1 => id.strip_prefix("d").unwrap().to_string(),
                     other => return Err(format!("Expected \"dv\" where \"v\" is some identifier; got {:?}.", other))
                 };
                 Expression::Integral(Box::new(inner), Box::new(subscript), Box::new(superscript), int_var)

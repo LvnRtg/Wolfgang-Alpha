@@ -1,3 +1,4 @@
+use num_traits::NumCast;
 use std::ops;
 use std::fmt;
 
@@ -8,6 +9,7 @@ use crate::math::matrices_and_vectors::{Matrix, Vector};
 use crate::math::expressions::Expression;
 use crate::math::operations::*;
 use crate::math::utils::{approx_eq, Quo, quo, format_trimmed};
+use crate::status::ExtResult;
 
 
 /// Here, objects are things an identifier (e.g. "x") can represent, that is:
@@ -157,7 +159,7 @@ impl Object {
                     column_lengths.push((0..x.m()).map(
                         |i| {
                             let s = format_trimmed(x.get(i, j), 8);
-                            let len = s.len();
+                            let len = s.chars().count();
                             entries.push(s);
                             len
                         }
@@ -200,11 +202,11 @@ impl Object {
         }
     }
 
-    pub fn expect_int(self) -> Result<f64, String> {
+    pub fn expect_int<T: NumCast>(self) -> Result<T, String> {
         let f = self.expect_float()?;
         let i = f.round();
         if approx_eq(f, i) {
-            Ok(i)
+            Ok(T::from(i).unwrap())
         } else {
             Err(format!("Expected number close to integer; got {f}."))
         }
@@ -221,6 +223,10 @@ impl Object {
         }
     }
 }
+
+
+// TODO remove unnecessary ops implementations below
+
 impl<'a> ops::Mul<&'a Object> for f64 {
     type Output = Object;
     fn mul(self, rhs: &'a Object) -> Self::Output {
@@ -270,27 +276,36 @@ impl ops::Neg for &Object {
 impl ops::Neg for Object {
     type Output = Result<Object, String>;
     fn neg(self) -> Self::Output {
-        (&self).neg()
+        match self {
+            Object::Success => Ok(Object::Success),
+            Object::Undefined => Err("Operation 'Neg' not valid for undefined operand.".to_string()),
+            Object::Real(x) => Ok(Object::Real(-x)),
+            Object::Complex(x) => Ok(Object::Complex(-&x)),
+            Object::Tuple(x) => Ok(Object::Tuple(x.iter().map(|o| -o).collect::<Result<Vec<_>, _>>()?)),
+            Object::Vector(x) => Ok(Object::Vector(-&x)),
+            Object::Matrix(x) => Ok(Object::Matrix(-&x)),
+            Object::LiteralExpression(expr) => Ok(Object::LiteralExpression(crate::expr_neg!(expr.clone()))),
+        }
     }
 }
-impl ops::Not for &Object {
+impl ops::Not for Object {
     type Output = Result<Object, String>;
     fn not(self) -> Self::Output {
         match self {
             Object::Success => Ok(Object::Success),
             Object::Undefined => Err("Operation 'Not' not valid for undefined operand.".to_string()),
-            Object::Real(x) => Ok(Object::Real(if *x == 0.0 {1.0} else {0.0})),
+            Object::Real(x) => Ok(Object::Real(if x == 0.0 {1.0} else {0.0})),
             Object::Complex(x) => Ok(Object::Real(if x.real == 0.0 && x.imag == 0.0 {1.0} else {0.0})),
-            Object::Tuple(v) => Ok(Object::Tuple(v.iter().map(|o| !o).collect::<Result<Vec<_>, _>>()?)),
+            Object::Tuple(v) => Ok(Object::Tuple(v.into_iter().map(|o| !o).collect::<Result<Vec<_>, _>>()?)),
             Object::Vector(v) => Ok(Object::Vector(v.transform(|x| if x == 0.0 {1.0} else {0.0}))),
             Object::Matrix(m) => Ok(Object::Matrix(m.transform(|x| if x == 0.0 {1.0} else {0.0}))),
-            Object::LiteralExpression(e) => Ok(Object::LiteralExpression(Expression::UnaryOperation(UnaryOperation::Not, Box::new(e.clone())))),
+            Object::LiteralExpression(e) => Ok(Object::LiteralExpression(crate::expr_not!(e))),
         }
     }
 }
 
 /// Type abbreviation. A _direct function_ can take any number of `Object` and `Expression` and, optionally, a `VarStack` and an `Env`.
-pub type DirectFunction = Box<dyn for<'a, 'b, 'c, 'd> Fn(&'a [Object], &'b [Expression], Option<(&'c VarStack, &'d mut Env)>) -> Result<Object, String> + Send + Sync>;
+pub type DirectFunction = Box<dyn for<'a, 'b, 'c, 'd> Fn(&'a [Object], &'b [Expression], Option<(&'c VarStack, &'d mut Env)>) -> ExtResult + Send + Sync>;
 
 /// Different representations for a function
 #[derive(Clone)]

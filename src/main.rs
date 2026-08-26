@@ -6,6 +6,7 @@ use web_sys::window;
 use wolfgang_alpha::{defaults, math, repl};
 mod js_snippets;
 
+
 const FAVICON: Asset = asset!("/assets/favicon.ico");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 const MONO_REGULAR: Asset = asset!("/style/fonts/JetBrainsMono-Regular.woff2");

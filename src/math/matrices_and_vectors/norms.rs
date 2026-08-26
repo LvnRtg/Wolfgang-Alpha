@@ -5,6 +5,7 @@ use std::f64::consts::PI;
 use crate::lang::eval;
 use crate::math::utils;
 use crate::math::{Env, Expression, Matrix, Object, VarStack, Vector};
+use crate::status::Status;
 
 pub enum VectorNorm {
     P(f64)
@@ -12,19 +13,19 @@ pub enum VectorNorm {
 impl VectorNorm {
     /// If `opt` is `None`, use the euclidian 2-norm. If `opt` is "inf" or "infty", use the supremum norm.
     /// Otherwise, evaluate `opt` and use the corresponding p-norm.
-    pub fn from_expr(opt: &Option<Box<Expression>>, extra_vars: &VarStack, env: &mut Env) -> Result<VectorNorm, String> {
+    pub fn from_expr(opt: &Option<Box<Expression>>, extra_vars: &VarStack, env: &mut Env) -> Result<Status<VectorNorm>, String> {
         if let Some(inner) = opt {match &**inner {
             Expression::Identifier(ident) if ident == "inf" || ident == "infty"
-                => Ok(VectorNorm::P(f64::INFINITY)),
+                => Ok(Status::ok(VectorNorm::P(f64::INFINITY))),
             other => {
-                if let Object::Real(z) = eval(other, extra_vars, env)? {
-                    Ok(VectorNorm::P(z))
+                if let Status{value: Object::Real(z), warnings} = eval(other, extra_vars, env)? {
+                    Ok(Status{value: VectorNorm::P(z), warnings})
                 }
                 else {
                     Err(format!("Couldn't evaluate {other} to float."))
                 }
             }
-        }} else {Ok(VectorNorm::P(2.0))}
+        }} else {Ok(Status::ok(VectorNorm::P(2.0)))}
     }
 }
 
@@ -36,21 +37,21 @@ impl MatrixNorm {
     /// If `opt` is `None`, use the spectral norm. If `opt` is "inf" or "infty", use the supremum norm.
     /// If it is a string starting with f, use the Frobenius norm.
     /// Otherwise, evaluate `opt` and use the corresponding p-norm.
-    pub fn from_expr(opt: &Option<Box<Expression>>, extra_vars: &VarStack, env: &mut Env) -> Result<MatrixNorm, String> {
+    pub fn from_expr(opt: &Option<Box<Expression>>, extra_vars: &VarStack, env: &mut Env) -> Result<Status<MatrixNorm>, String> {
         if let Some(inner) = opt {match &**inner {
             Expression::Identifier(ident) if ident == "inf" || ident == "infty"
-                => Ok(MatrixNorm::P(f64::INFINITY)),
+                => Ok(Status::ok(MatrixNorm::P(f64::INFINITY))),
             Expression::Identifier(ident) if ident.starts_with('f')
-                => Ok(MatrixNorm::Frobenius),
+                => Ok(Status::ok(MatrixNorm::Frobenius)),
             other => {
-                if let Object::Real(z) = eval(other, extra_vars, env)? {
-                    Ok(MatrixNorm::P(z))
+                if let Status{value: Object::Real(z), warnings} = eval(other, extra_vars, env)? {
+                    Ok(Status{value: MatrixNorm::P(z), warnings})
                 }
                 else {
                     Err(format!("Couldn't evaluate {other} to float."))
                 }
             }
-        }} else {Ok(MatrixNorm::P(2.0))}
+        }} else {Ok(Status::ok(MatrixNorm::P(2.0)))}
     }
 }
 

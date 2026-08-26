@@ -18,8 +18,8 @@ pub fn eval_line(input: &str, env: &mut math::Env) -> Vec<String> {
                     output.push(format!("Functions: {:?}", env.functions));
                 } else {
                     match lang::eval(&expr, &math::VarStack::Empty, env) {
-                        Ok(obj) => {
-                            output.append(&mut obj.to_multline());
+                        Ok(status) => {
+                            output.append(&mut status.into_multline());
                         }
                         Err(e) => {
                             output.push(format!("[ERROR] {}", e));

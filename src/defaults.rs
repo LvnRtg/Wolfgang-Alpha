@@ -3,11 +3,11 @@ use std::collections::HashMap;
 use std::f64::consts;
 use std::sync::LazyLock;
 
+use crate::{expr_if_else, expr_and, expr_compare, expr_add, expr_sub, expr_mul, expr_div, expr_square, expr_neg, expr_1arg_func};
 use crate::lang::eval;
 use crate::math::expressions;
 use crate::math::{Complex, DirectFunction, Expression, FunctionRepr, Matrix, Object, ObjType, VarStack};
-use crate::math::operations::{UnaryOperation, BinaryOperation};
-use crate::{expr_if_else, expr_and, expr_compare, expr_add, expr_sub, expr_mul, expr_div, expr_square, expr_neg, expr_1arg_func};
+use crate::status::Status;
 
 /// Wrapped in a function because const hashmaps aren't available yet.
 pub fn default_constants() -> HashMap<String, Object> {
@@ -29,17 +29,24 @@ pub fn default_constants() -> HashMap<String, Object> {
 macro_rules! float_1_function {
     ($name:ident) => {
         (
-            Box::new(|parsed_args, _, _| {
-                // TODO warn if unparsed args are given
-                if parsed_args.len() != 1 {
+            Box::new(|evaluated_args, unevaluated_args, _| {
+                let warnings = if unevaluated_args.is_empty() {
+                    vec![]
+                } else {
+                    vec![format!(
+                        "Provided {} unevaluated arguments although none are expected.",
+                        unevaluated_args.len()
+                    )]
+                };
+                if evaluated_args.len() != 1 {
                     Err(format!(
-                        "Wrong number of arguments provided for function '{}' (expected 1, got {}).",
+                        "Wrong number of evaluated arguments provided for function '{}' (expected 1, got {}).",
                         stringify!($name),
-                        parsed_args.len()
+                        evaluated_args.len()
                     ))
                 } else {
-                    match &parsed_args[0] {
-                        Object::Real(x) => Ok(Object::Real(x.$name())),
+                    match &evaluated_args[0] {
+                        Object::Real(x) => Ok(Status{value: Object::Real(x.$name()), warnings}),
                         other => Err(format!(
                             "Wrong type of argument provided for function '{}' (expected float, got {}).",
                             stringify!($name),
@@ -54,7 +61,7 @@ macro_rules! float_1_function {
 }
 
 /// Takes a function name `name` (e.g. `log`), a number `n` and an expression `expr`. Returns a `FunctionRepr::Direct`
-/// (along with its mask) which expects exactly `n` arguments that can be parsed to `Object`; if such arguments are given,
+/// (along with its mask) which expects exactly `n` arguments that can be evaluated to `Object`; if such arguments are given,
 /// it returns `expr(args.map(eval))`, otherwise, the appropriate `Err`.
 /// 
 /// Note: "`FunctionRepr::Direct` which expects exactly `n` args" implies that in reality, `n+2` args are expected:
@@ -62,17 +69,24 @@ macro_rules! float_1_function {
 macro_rules! expect_n_objs {
     ($name:ident, $n:expr, $e:expr) => {
         (
-            Box::new(|parsed_args, _, _| {
-                // TODO warn if unparsed args are given
-                if parsed_args.len() != $n {
+            Box::new(|evaluated_args, unevaluated_args, _| {
+                let warnings = if unevaluated_args.is_empty() {
+                    vec![]
+                } else {
+                    vec![format!(
+                        "Provided {} unevaluated arguments although none are expected.",
+                        unevaluated_args.len()
+                    )]
+                };
+                if evaluated_args.len() != $n {
                     Err(format!(
-                        "Wrong number of arguments provided for function '{}' (expected {}, got {}).",
+                        "Wrong number of evaluated arguments provided for function '{}' (expected {}, got {}).",
                         stringify!($name),
                         $n,
-                        parsed_args.len()
+                        evaluated_args.len()
                     ))
                 } else {
-                    $e(parsed_args)
+                    $e(evaluated_args).map(|value| Status{value, warnings})
                 }
             }),
             ($n, 0, false)
@@ -84,16 +98,24 @@ macro_rules! expect_n_objs {
 macro_rules! apply_matrix_fn {
     ($name:ident, $e:expr) => {
         (
-            Box::new(|parsed_args, _, _| {
-                if parsed_args.len() != 1 {
+            Box::new(|evaluated_args, unevaluated_args, _| {
+                let warnings = if unevaluated_args.is_empty() {
+                    vec![]
+                } else {
+                    vec![format!(
+                        "Provided {} unevaluated arguments although none are expected.",
+                        unevaluated_args.len()
+                    )]
+                };
+                if evaluated_args.len() != 1 {
                     Err(format!(
-                        "Wrong number of arguments provided for function '{}' (expected 1, got {}).",
+                        "Wrong number of evaluated arguments provided for function '{}' (expected 1, got {}).",
                         stringify!($name),
-                        parsed_args.len()
+                        evaluated_args.len()
                     ))
                 } else {
-                    if let Object::Matrix(mat) = &parsed_args[0] {
-                        $e(mat.$name(), &mat)
+                    if let Object::Matrix(mat) = &evaluated_args[0] {
+                        $e(mat.$name(), &mat).map(|value| Status{value, warnings})
                     }
                     else { Err(format!("Wrong type for argument of function '{}' (expected Matrix).", stringify!($name))) }
                 }
@@ -161,21 +183,26 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, b
     // Afterwards, there can be an arbitrary additional amount of expressions: these will be considered as conditions.
     // Then, returns `\sum_{i=a(x), all_conditions(i)}^{b(x)} f'(i,x) * \prod_{j=a(x), j!=i, all_conditions(j)}^{b(x)} f(j,x)`.
     (
-        Box::new(|parsed_args, unparsed_args, context| {
-            if parsed_args.len() != 1 || unparsed_args.len() < 6 {
-                return Err(format!("Wrong number of arguments provided for function '___helper_prod_rule' (expected ==1 parsed and >=6 unparsed, got {}, {} respectively).", parsed_args.len(), unparsed_args.len()));
+        Box::new(|evaluated_args, unevaluated_args, context| {
+            if evaluated_args.len() != 1 || unevaluated_args.len() < 6 {
+                return Err(format!("Wrong number of arguments provided for function '___helper_prod_rule' (expected ==1 evaluated and >=6 unevaluated, got {}, {} respectively).", evaluated_args.len(), unevaluated_args.len()));
             }
             if context.is_none() {
                 return Err("Function '___helper_prod_rule' needs `VarStack` and `Env`.".to_string());
             }
             let (base_stack, env) = context.unwrap(); // Safe
-            let (x, i) = (unparsed_args[0].expect_ident()?, unparsed_args[1].expect_ident()?);
-            let [a_x, b_x, f, f_prime] = &unparsed_args[2..6] else {unreachable!()};
-            let conditions = &unparsed_args[6..];
-            let varstack = VarStack::Frame { vars: &HashMap::from([(x, &parsed_args[0])]), parent: base_stack };
+            let (x, i) = (unevaluated_args[0].expect_ident()?, unevaluated_args[1].expect_ident()?);
+            let [a_x, b_x, f, f_prime] = &unevaluated_args[2..6] else {unreachable!()};
+            let conditions = &unevaluated_args[6..];
+
+            let mut warnings = Vec::<String>::new();
+            let varstack = VarStack::Frame { vars: &HashMap::from([(x, &evaluated_args[0])]), parent: base_stack };
             // `b` can be non-integer but, to the best of my knowledge, there is no canonical understanding for non-integer `a`.
-            let (a, b) = (eval(a_x, &varstack, env)?.expect_int()? as i64, eval(b_x, &varstack, env)?.expect_float()?.floor() as i64);
-            if a > b {return Ok(Object::Real(0.0));} // Empty sum
+            let (a, b) = (
+                eval(a_x, &varstack, env)?.unpack_into(&mut warnings).expect_int::<i64>()?,
+                eval(b_x, &varstack, env)?.unpack_into(&mut warnings).expect_float()?.floor() as i64
+            );
+            if a > b {return Ok(Status{value: Object::Real(0.0), warnings});} // Empty sum
             let mut sum = 0.0;
             'outer: for i_val in a..=b {
                 let i_as_obj = Object::Real(i_val as f64);
@@ -185,14 +212,15 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, b
                 };
                 // Check if all conditions are met (o/w skip)
                 for cond in conditions {
-                    match eval(cond, &vs, env)? {
+                    // We put a cap on the number of warnings emitted in order to not saturate the console
+                    match eval(cond, &vs, env)?.unpack_into_with_cap(&mut warnings, 10) {
                         Object::Real(1.0) => {}
                         Object::Real(0.0) => {continue 'outer;}
                         other => return Err(format!("Expected 1 or 0 when evaluating condition, got {:?}.", other))
                     }
                 }
                 // Start with f'(i, x)
-                let mut product = eval(f_prime, &vs, env)?.expect_float()?;
+                let mut product = eval(f_prime, &vs, env)?.unpack_into_with_cap(&mut warnings, 10).expect_float()?;
                 // Multiply with all f(j, x)
                 'middle: for j_val in a..=b {
                     if j_val == i_val {continue;}
@@ -202,17 +230,17 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, b
                         parent: &varstack
                     };
                     for cond in conditions {
-                        match eval(cond, &vsj, env)? {
+                        match eval(cond, &vsj, env)?.unpack_into_with_cap(&mut warnings, 10) {
                             Object::Real(1.0) => {}
                             Object::Real(0.0) => {continue 'middle;}
                             other => return Err(format!("Expected 1 or 0 when evaluating condition, got {:?}.", other))
                         }
                     }
-                    product *= eval(f, &vsj, env)?.expect_float()?;
+                    product *= eval(f, &vsj, env)?.unpack_into_with_cap(&mut warnings, 10).expect_float()?;
                 }
                 sum += product;
             }
-            Ok(Object::Real(sum))
+            Ok(Status{value: Object::Real(sum), warnings})
         }),
         (1, 6, false)
     ),
@@ -220,16 +248,23 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, b
     // del
     // Arbitrary amount of args (technically including 0), all not evaluated. Only accepts identifiers.
     // Warns if an argument is passed that is not an identifier.
-    // TODO warn if an argument is passed that is not an identifier
     (
-        Box::new(|_, not_evaluated_args, context| {
+        Box::new(|evaluated_args, unevaluated_args, context| {
             if context.is_none() {
                 return Err("Function 'del' needs `Env`.".to_string());
             }
+            let warnings = if evaluated_args.is_empty() {
+                vec![]
+            } else {
+                vec![format!(
+                    "Provided {} evaluated arguments although none are expected.",
+                    evaluated_args.len()
+                )]
+            };
             let env = context.unwrap().1;
             let mut unknown_identifiers = Vec::<&String>::new();
             let mut none_identifiers = Vec::<&Expression>::new();
-            for arg in not_evaluated_args {
+            for arg in unevaluated_args {
                 match arg {
                     Expression::Identifier(id) => {
                         // No bugs with short-circuiting here because if `constants.remove(id)` is `Some`, then `id` was in `constants`,
@@ -242,7 +277,7 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, b
                 }
             }
             if unknown_identifiers.is_empty() && none_identifiers.is_empty() {
-                Ok(Object::Success)
+                Ok(Status{value: Object::Success, warnings})
             } else {
                 let mut err_str = "Some arguments couldn't be deleted from the environment.".to_string();
                 if !unknown_identifiers.is_empty() {
