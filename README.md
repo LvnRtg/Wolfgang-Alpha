@@ -20,6 +20,8 @@ cargo run --bin cli
 
 The CLI REPL reads expressions line by line. Type `exit` or `quit` to quit.
 
+It has less front-end features for the user's convenience than the web version, but the back-end is identical.
+
 ---
 
 ## Syntax
@@ -47,6 +49,11 @@ The basic syntax is the natural one with usual operator precedence. A few specia
   The same holds for `prod`.
 - An arbitrary amount of conditions can be added to a sum as follows: `sum_{i=a, i != 5, ...}^b ...`.
   All values of `i` that do not satisfy all of the given conditions will be skipped.
+- Consider `sum_{i=a}^b f(i)`. Non-constant bounds `a`, `b` are supported in the following sense.
+  - `a` is only evaluated once: it may _not_ depend on `i` and it is useless to have it change as `f` is evaluated.
+  - `b` is allowed to depend on `i` or change as `f` is evaluated. Then, `b` will be freshly evaluated after every iteration until `i > b`, after which the iteration is terminated. If no such variability of `b` is detected, it is only evaluated once at the start of the iteration. The precise criterion is: the expression `b` is evaluated in every iteration iff `b` contains the identifier `i` (in any form) or `f(i)` contains an assignment `x := ...` for which `b` contains the identifier `x`.
+  - Conditions will evidently depend on `i`, but they may also change as `f` is evaluated. Usually, conditions will be evaluated during the iteration anyway, so no further checks need to be done here.
+  - In certain built-in double-sums, further optimizations are done to evaluate `a`, `b` and all conditions as few times as possible (for instance `compute_product_derivative_helper` [here](./src/math/operations/folded_operations.rs)).
 
 ### Custom definitions
 - Definition of constants: `identifier := expr`, where `expr` can be any expression that can be evaluated at the time of the definition.<br/>
