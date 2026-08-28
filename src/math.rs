@@ -13,7 +13,6 @@ use std::collections::HashMap;
 pub mod complex;
 pub mod differentiation;
 pub mod expressions;
-pub mod folded_operations;
 pub mod integration;
 pub mod matrices_and_vectors;
 pub mod objects;
@@ -57,7 +56,7 @@ pub enum VarStack<'a> {
     Frame {
         vars: &'a HashMap<&'a String, &'a Object>,
         parent: &'a VarStack<'a>,
-    },
+    }
 }
 
 impl<'a> VarStack<'a> {

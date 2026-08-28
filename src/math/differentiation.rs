@@ -1,14 +1,16 @@
+use std::borrow::Cow;
 use std::iter::zip;
 use std::collections::HashMap;
 
 use crate::{defaults, expr_compare, expr_if_else, expr_sub, expr_mul, expr_div, expr_pow, expr_neg, expr_1arg_func};
 use crate::lang::eval;
+use crate::math::{Env, FunctionRepr, integration, Object, Matrix, VarStack, Vector};
+use crate::math::expressions::*;
 use crate::math::matrices_and_vectors::{VectorNorm, MatrixNorm};
 use crate::math::objects::{try_operation};
-use crate::math::expressions::*;
-use crate::math::utils::{approx_eq, min};
-use crate::math::{Env, FunctionRepr, integration, Object, Matrix, VarStack, Vector};
 use crate::math::operations::{BinaryOperation, FoldedOperation, UnaryOperation};
+use crate::math::operations::folded_operations::compute_folded_operation;
+use crate::math::utils::{approx_eq, min};
 use crate::status::{ExtResult, Status};
 
 /// Differentiates the given expression w.r.t. the variable `wrt` analytically, that is, by parsing the expression recursively and
@@ -171,16 +173,28 @@ pub fn analytic_partial_derivative(
                 BinaryOperation::Comp(..) => Err(format!("Cannot differentiate comparison {:?}", expr)),
             }
         ),
-        Expression::FoldedOperation(FoldedOperation::Sum, varname, from, conditions, to, inner)
-            => analytic_partial_derivative(inner, wrt, extra_vars, env)
-            .map(|s| s.map(|diff_inner| Expression::FoldedOperation(
-                FoldedOperation::Sum,
-                varname.clone(),
-                from.clone(),
-                conditions.clone(),
-                to.clone(),
-                Box::new(diff_inner)
-            ))),
+        Expression::FoldedOperation(FoldedOperation::Sum, varname, from, conditions, to, inner) => {
+            // As for the product (but slightly simpler since `d/dx sum_{i=a}^b f(i, x) = sum_{i=a}^b d/dx f(i, x)`),
+            // see case `Expression::FoldedOperation` below.
+            let Status{value: inner_diff, mut warnings} = analytic_partial_derivative(inner, wrt, extra_vars, env)?;
+            match (from.contains_identifier(wrt), to.contains_identifier(wrt)) { // Typically, both expressions must be checked anyway
+                (true, true) => warnings.push(format!("Assuming that both `{}` and `{}` are continuous in {} to differentiate product.", from, to, wrt)),
+                (true, false) => warnings.push(format!("Assuming that `{}` is continuous in {} to differentiate product.", from, wrt)),
+                (false, true) => warnings.push(format!("Assuming that `{}` is continuous in {} to differentiate product.", to, wrt)),
+                (false, false) => {}
+            };
+            Ok(Status{
+                value: Expression::FoldedOperation(
+                    FoldedOperation::Sum,
+                    varname.clone(),
+                    from.clone(),
+                    conditions.clone(),
+                    to.clone(),
+                    Box::new(inner_diff)
+                ),
+                warnings
+            })
+        }
         Expression::FoldedOperation(FoldedOperation::Product, index_var, from, conditions, to, inner) => {
             // If the product is of the form `\prod_{i=a(x)}^{b(x)} f(i,x)`, it isn't immediately clear how to differentiate it w.r.t. `x`.
             // However, as long as `a, b` are sufficiently well-behaved (it suffices for them to be continuous or be càdlàg/càglàd with jumps of size <1),
@@ -495,44 +509,45 @@ pub fn analytic_directional_derivative(
             .map(|value| Status{value, warnings})
         }
         Expression::FoldedOperation(FoldedOperation::Sum, index_var, from, conditions, to, inner) => {
-            // Note: since the bounds of the sum must be integers, taking them into consideration when differentiating is useless.
-            // Therefore, we simply treat `D sum_{i=a}^b ...(p)[d]` as `sum_{i=a(p)}^{b(p)} D ... (p)[d]`.
-            // The following code is adapted from eval (case Expression::FoldedOperation).
-            // Copying and adapting it is more efficient than to try to call `eval` instead.
+            // As in `analytic_partial_derivative`,
+            // `D sum_{i=a}^b ...(p)[d]` is interpreted as `sum_{i=a(p)}^{b(p)} D ... (p)[d]`.
             let varstack = VarStack::Frame { vars: &zip(vars, point).collect(), parent: extra_vars };
-            let Status{value: mut i, mut warnings} = eval(from, extra_vars, env)?.try_map(|i| i.expect_int())?;
-            let initial_to_eval = eval(
-                to,
-                &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: &varstack },
+            let Status{value: from_eval, mut warnings} = eval(from, &varstack, env)?;
+            let to_eval = eval(to, &varstack, env)?.unpack_into(&mut warnings);
+            match (from.contains_identifier(index_var), to.contains_identifier(index_var)) {
+                (true, true) => warnings.push(format!("Assuming that both `{}` and `{}` are continuous in {} to differentiate sum.", from, to, index_var)),
+                (true, false) => warnings.push(format!("Assuming that `{}` is continuous in {} to differentiate sum.", from, index_var)),
+                (false, true) => warnings.push(format!("Assuming that `{}` is continuous in {} to differentiate sum.", to, index_var)),
+                (false, false) => {}
+            };
+            compute_folded_operation(
+                &FoldedOperation::Sum,
+                index_var,
+                |_, _| Ok(Status::ok(from_eval)),
+                conditions.iter().map(|condition: &Expression| {
+                    |_varstack: &VarStack<'_>, _env: &mut Env| eval(condition, _varstack, _env)
+                }).collect(),
+                |_, _| Ok(Status::ok(Cow::Borrowed(&to_eval))),
+                |_varstack, _env| analytic_directional_derivative(
+                    vars,
+                    inner,
+                    point,
+                    direction,
+                    extra_vars, // Use old varstack here
+                    _env
+                ),
+                // The type of Df(p)[d] is the same as the type of f(p)
+                |_some_index_var_value, _varstack, _env| inner.get_type(
+                    &VarStack::Frame { vars: &HashMap::from([(index_var, _some_index_var_value)]), parent: &varstack }, _env
+                )
+                .map(|t| FoldedOperation::Sum.if_empty(&t))
+                .map(|o| Status::ok(o)),
+                extra_vars,
                 env
-            )?.unpack_into(&mut warnings).expect_float()?;
-            let mut res = FoldedOperation::Sum.if_empty(&inner.get_type(
-                &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(initial_to_eval))]), parent: extra_vars },
-                env
-            )?);
-            if i > initial_to_eval {
-                return Ok(Status{value: res, warnings});
-            }
-            'outer: while i <= eval(to, &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: &varstack }, env)?.unpack_into_with_cap(&mut warnings, 8).expect_float()? {
-                for cond in conditions {
-                    match eval(cond, &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: &varstack }, env)?.unpack_into_with_cap(&mut warnings, 8) {
-                        Object::Real(1.0) => {}
-                        Object::Real(0.0) => { i += 1.0; continue 'outer; }
-                        other => return Err(format!("Expected 1 or 0 when evaluating condition, got {:?}.", other))
-                    }
-                }
-                let next_term = analytic_directional_derivative(
-                    vars, inner, point, direction,
-                    &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: extra_vars }, // Notice we don't use `varstack` but `extra_vars` here
-                    env
-                )?.unpack_into_with_cap(&mut warnings, 8);
-                res = try_operation(&res, &next_term, &BinaryOperation::Add)?;
-                i += 1.0;
-            }
-            Ok(Status{value: res, warnings})
+            )
         }
         Expression::FoldedOperation(FoldedOperation::Product, varname, from, conditions, to, inner) => {
-            // The directional derivative follows the standard product rule too.
+            // As before. The directional derivative follows the standard product rule too.
             // TODO
             unimplemented!()
         }

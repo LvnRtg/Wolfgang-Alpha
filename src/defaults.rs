@@ -6,7 +6,8 @@ use std::sync::LazyLock;
 use crate::{expr_if_else, expr_and, expr_compare, expr_add, expr_sub, expr_mul, expr_div, expr_square, expr_neg, expr_1arg_func};
 use crate::lang::eval;
 use crate::math::expressions;
-use crate::math::{Complex, DirectFunction, Expression, FunctionRepr, Matrix, Object, ObjType, VarStack};
+use crate::math::operations::folded_operations;
+use crate::math::{Complex, DirectFunction, Env, Expression, FunctionRepr, Matrix, Object, ObjType, VarStack};
 use crate::status::Status;
 
 /// Wrapped in a function because const hashmaps aren't available yet.
@@ -187,60 +188,24 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, b
             if evaluated_args.len() != 1 || unevaluated_args.len() < 6 {
                 return Err(format!("Wrong number of arguments provided for function '___helper_prod_rule' (expected ==1 evaluated and >=6 unevaluated, got {}, {} respectively).", evaluated_args.len(), unevaluated_args.len()));
             }
-            if context.is_none() {
-                return Err("Function '___helper_prod_rule' needs `VarStack` and `Env`.".to_string());
-            }
-            let (base_stack, env) = context.unwrap(); // Safe
-            let (x, i) = (unevaluated_args[0].expect_ident()?, unevaluated_args[1].expect_ident()?);
+            let (base_stack, env) = context.ok_or("Function '___helper_prod_rule' needs `VarStack` and `Env`.".to_string())?;
+            let (x, index_var) = (unevaluated_args[0].expect_ident()?, unevaluated_args[1].expect_ident()?);
             let [a_x, b_x, f, f_prime] = &unevaluated_args[2..6] else {unreachable!()};
             let conditions = &unevaluated_args[6..];
 
-            let mut warnings = Vec::<String>::new();
             let varstack = VarStack::Frame { vars: &HashMap::from([(x, &evaluated_args[0])]), parent: base_stack };
-            // `b` can be non-integer but, to the best of my knowledge, there is no canonical understanding for non-integer `a`.
-            let (a, b) = (
-                eval(a_x, &varstack, env)?.unpack_into(&mut warnings).expect_int::<i64>()?,
-                eval(b_x, &varstack, env)?.unpack_into(&mut warnings).expect_float()?.floor() as i64
-            );
-            if a > b {return Ok(Status{value: Object::Real(0.0), warnings});} // Empty sum
-            let mut sum = 0.0;
-            'outer: for i_val in a..=b {
-                let i_as_obj = Object::Real(i_val as f64);
-                let vs = VarStack::Frame {
-                    vars: &HashMap::from([(i, &i_as_obj)]),
-                    parent: &varstack
-                };
-                // Check if all conditions are met (o/w skip)
-                for cond in conditions {
-                    // We put a cap on the number of warnings emitted in order to not saturate the console
-                    match eval(cond, &vs, env)?.unpack_into_with_cap(&mut warnings, 10) {
-                        Object::Real(1.0) => {}
-                        Object::Real(0.0) => {continue 'outer;}
-                        other => return Err(format!("Expected 1 or 0 when evaluating condition, got {:?}.", other))
-                    }
-                }
-                // Start with f'(i, x)
-                let mut product = eval(f_prime, &vs, env)?.unpack_into_with_cap(&mut warnings, 10).expect_float()?;
-                // Multiply with all f(j, x)
-                'middle: for j_val in a..=b {
-                    if j_val == i_val {continue;}
-                    let j_as_obj = Object::Real(j_val as f64);
-                    let vsj = VarStack::Frame {
-                        vars: &HashMap::from([(i, &j_as_obj)]),
-                        parent: &varstack
-                    };
-                    for cond in conditions {
-                        match eval(cond, &vsj, env)?.unpack_into_with_cap(&mut warnings, 10) {
-                            Object::Real(1.0) => {}
-                            Object::Real(0.0) => {continue 'middle;}
-                            other => return Err(format!("Expected 1 or 0 when evaluating condition, got {:?}.", other))
-                        }
-                    }
-                    product *= eval(f, &vsj, env)?.unpack_into_with_cap(&mut warnings, 10).expect_float()?;
-                }
-                sum += product;
-            }
-            Ok(Status{value: Object::Real(sum), warnings})
+            folded_operations::compute_product_derivative_helper(
+                index_var,
+                eval(a_x, &varstack, env)?,
+                eval(b_x, &varstack, env)?,
+                conditions.iter().map(|condition: &Expression| {
+                    |_varstack: &VarStack<'_>, _env: &mut Env| eval(condition, _varstack, _env)
+                }).collect(),
+                |_varstack, _env| eval(f, _varstack, _env),
+                |_varstack, _env| eval(f_prime, _varstack, _env),
+                &varstack,
+                env
+            )
         }),
         (1, 6, false)
     ),

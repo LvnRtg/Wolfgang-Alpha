@@ -2,7 +2,8 @@
 
 use std::collections::HashSet;
 
-use crate::math::Object;
+use crate::math::objects::{Object, try_operation};
+use crate::math::operations::BinaryOperation;
 
 
 const ABS_TOL: f64 = 1e-12;
@@ -126,4 +127,18 @@ pub fn linspace_as_objects(a: f64, b: f64, n: usize) -> Vec<Object> {
     if n == 1 {return vec![Object::Real(a)];}
     let step = (b-a) / ((n-1) as f64);
     (0..n).map(|i| Object::Real(a + i as f64 * step)).collect()
+}
+
+
+/// Folds all elements in the iterator, short-circuiting if an `Err` is found. Returns `None` iff the iterator is empty.
+pub fn fold_res_obj_iter(mut iter: impl Iterator<Item=Result<Object, String>>, binop: &BinaryOperation) -> Option<Result<Object, String>> {
+    let first = iter.next()?;
+    Some(iter.fold(
+        first,
+        |acc, new| acc.and_then(
+            |lhs| new.and_then(
+                |rhs| try_operation(&lhs, &rhs, binop)
+            )
+        )
+    ))
 }

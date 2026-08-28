@@ -240,46 +240,34 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
         // Only consider sums if all bounds do not include the integration variable (i.e. `w.r.t.`).
         Expression::FoldedOperation(FoldedOperation::Sum, index_var, from, conditions, to, inner)
         if !from.contains_identifier(wrt) && !to.contains_identifier(wrt) && conditions.iter().all(|e| !e.contains_identifier(wrt)) => {
-            // This code is _borrowed_ from `lang::evaluator::eval` as well.
-            let mut warnings = Vec::<String>::new();
-            let mut i = eval(from, extra_vars, env)?.unpack_into(&mut warnings).expect_int()?;
-            let initial_to_eval = eval(
+            // Evaluate sum_{i=from, all(conditions(i))}^{to} int_a^b expr d(wrt)
+            crate::math::operations::folded_operations::folded_operation_helper(
+                &FoldedOperation::Sum,
+                index_var,
+                from,
+                conditions,
                 to,
-                &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: extra_vars },
-                env
-            )?
-            .unpack_into(&mut warnings)
-            .expect_float()?;
-            let mut res = FoldedOperation::Sum.if_empty(&inner.get_type(
-                &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(initial_to_eval))]), parent: extra_vars },
-                env
-            )?);
-            if i > initial_to_eval {
-                return Ok(Status{value: res, warnings});
-            }
-            'outer: while i <= eval(to, &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: extra_vars }, env)?.unpack_into_with_cap(&mut warnings, 10).expect_float()? {
-                for cond in conditions {
-                    match eval(cond, &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: extra_vars }, env)?.unpack_into_with_cap(&mut warnings, 10) {
-                        Object::Real(1.0) => {}
-                        Object::Real(0.0) => {
-                            i += 1.0;
-                            continue 'outer;
-                        }
-                        other => return Err(format!("Expected 1 or 0 when evaluating condition, got {:?}.", other))
-                    }
-                }
-                let next_term = integrate(
+                // The integral operator doesn't assign any new variables and doesn't affect the type of `inner`
+                inner,
+                |_varstack, _env| integrate(
                     inner,
                     a, b,
                     wrt,
-                    &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: extra_vars },
-                    env
-                )?
-                .unpack_into_with_cap(&mut warnings, 10);
-                res = try_operation(&res, &next_term, &BinaryOperation::Add)?;
-                i += 1.0;
-            }
-            Ok(Status{value: res, warnings})
+                    _varstack, // index_var is placed on the varstack by the caller of this closure
+                    _env
+                ),
+                |_some_index_var_value, _varstack, _env| {
+                    inner.get_type(
+                        &VarStack::Frame { vars: &HashMap::from([
+                            (index_var, _some_index_var_value),
+                            (wrt, &Object::Real(1.0)) // Placeholder to detect type, only thing that matters is that it is real
+                        ]), parent: _varstack },
+                        _env
+                    )
+                },
+                extra_vars,
+                env
+            )
         }
         Expression::Tuple(v) => {
             Status::from_iter(

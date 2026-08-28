@@ -53,7 +53,7 @@ impl fmt::Display for Expression {
                     UnaryOperation::Not => write!(f, "!({})", r),
                     UnaryOperation::Factorial => write!(f, "({})!", r),
                     UnaryOperation::Abs => write!(f, "|{}|", r),
-                    UnaryOperation::Norm(opt) => write!(f, "||{}||{}", r, format_optional_subscript(opt)),
+                    UnaryOperation::Norm(opt) => write!(f, "||{}||{}", r, unary_operations::format_optional_subscript(opt)),
                 }
             },
             Expression::BinaryOperation(l, op, r) => write!(f, "({} {} {})", l, op, r),
@@ -413,9 +413,6 @@ impl Expression {
     }
 
     /// Returns whether or not `self` contains an assignment operator.
-    /// 
-    /// This is used e.g. to determine if in a folded operations, it suffices to evaluate upper bound and conditions once
-    /// or if they need to be recomputed in every iteration.
     pub fn includes_assignment(&self) -> bool {
         match self {
             Expression::Assignment(..) => true,
@@ -432,6 +429,38 @@ impl Expression {
                 => x.includes_assignment() || v.iter().any(|y| y.includes_assignment()) || w.iter().any(|y| y.includes_assignment()),
             Expression::Integral(x, y, z, _) | Expression::IfElse(x, y, z)
                 => x.includes_assignment() || y.includes_assignment() || z.includes_assignment()
+        }
+    }
+
+    /// Adds all identifiers `x` for which `x := ...` appears in `self` to `vars`.
+    pub fn get_assigned_to_variables<'a>(&'a self, vars: &mut HashSet<&'a String>) {
+        match self {
+            Expression::Assignment(lhs, _) if let Expression::Identifier(x) = &**lhs => {vars.insert(x);},
+            Expression::Vector(v) | Expression::Matrix(.., v) | Expression::Function(_, v) | Expression::Tuple(v)
+                => v.iter().for_each(|x| x.get_assigned_to_variables(vars)),
+            Expression::UnaryOperation(_, x) | Expression::PartialDerivative(_, x)
+                => x.get_assigned_to_variables(vars),
+            Expression::BinaryOperation(x, _, y) => {
+                x.get_assigned_to_variables(vars);
+                y.get_assigned_to_variables(vars);
+            }
+            Expression::FoldedOperation(.., x, v, y, z) => {
+                x.get_assigned_to_variables(vars);
+                y.get_assigned_to_variables(vars);
+                z.get_assigned_to_variables(vars);
+                v.iter().for_each(|u| u.get_assigned_to_variables(vars));
+            }
+            Expression::DirectionalDerivative(_, x, v, w) => {
+                x.get_assigned_to_variables(vars);
+                v.iter().for_each(|y| y.get_assigned_to_variables(vars));
+                w.iter().for_each(|y| y.get_assigned_to_variables(vars));
+            }
+            Expression::Integral(x, y, z, _) | Expression::IfElse(x, y, z) => {
+                x.get_assigned_to_variables(vars);
+                y.get_assigned_to_variables(vars);
+                z.get_assigned_to_variables(vars);
+            }
+            _ => {}
         }
     }
 }
@@ -673,10 +702,11 @@ impl Expression {
         }
     }
 
+    /// Returns whether or not `self` contains the given identifier.
     pub fn contains_identifier(&self, identifier: &String) -> bool {
         match self {
             Expression::None | Expression::Number(_) => false,
-            Expression::Identifier(x) => identifier == x,
+            Expression::Identifier(x) => x == identifier,
             Expression::Tuple(v) | Expression::Vector(v) | Expression::Matrix(.., v)
                 => v.iter().any(|e| e.contains_identifier(identifier)),
             Expression::UnaryOperation(_, expr) | Expression::Assignment(_, expr) | Expression::PartialDerivative(_, expr)
@@ -708,6 +738,104 @@ impl Expression {
                 a.contains_identifier(identifier)
                 || b.contains_identifier(identifier)
                 || (func.contains_identifier(identifier) && wrt != identifier) // Ignore presence of `identifier` in `func` if we integrate w.r.t. `identifier`
+            }
+        }
+    }
+
+    /// Returns whether `self` contains any identifier from `identifiers`.
+    pub fn contains_any_of(&self, identifiers: &HashSet<&String>) -> bool {
+        // Note: since in Rust, `impl<T: Hash> Hash for &T` just calls `T::hash` on the pointee, using a HashSet
+        // is not only functionally correct but even more efficient than using a `Vec`.
+        match self {
+            Expression::None | Expression::Number(_) => false,
+            Expression::Identifier(x) => identifiers.contains(x),
+            Expression::Tuple(v) | Expression::Vector(v) | Expression::Matrix(.., v)
+                => v.iter().any(|e| e.contains_any_of(identifiers)),
+            Expression::UnaryOperation(_, expr) | Expression::Assignment(_, expr) | Expression::PartialDerivative(_, expr)
+                => expr.contains_any_of(identifiers),
+            Expression::BinaryOperation(lhs, _, rhs) => {
+                lhs.contains_any_of(identifiers)
+                || rhs.contains_any_of(identifiers)
+            }
+            Expression::FoldedOperation(.., from, conditions, to, inner) => {
+                from.contains_any_of(identifiers)
+                || conditions.iter().any(|c| c.contains_any_of(identifiers))
+                || to.contains_any_of(identifiers)
+                || inner.contains_any_of(identifiers)
+            }
+            Expression::Function(_, args) => {
+                args.iter().any(|arg| arg.contains_any_of(identifiers))
+            }
+            Expression::DirectionalDerivative(_, expr, point, direction) => {
+                expr.contains_any_of(identifiers)
+                || point.iter().any(|v| v.contains_any_of(identifiers))
+                || direction.iter().any(|v| v.contains_any_of(identifiers))
+            }
+            Expression::IfElse(x, y, z) => {
+                x.contains_any_of(identifiers)
+                || y.contains_any_of(identifiers)
+                || z.contains_any_of(identifiers)
+            }
+            Expression::Integral(func, a, b, wrt) => {
+                a.contains_any_of(identifiers)
+                || b.contains_any_of(identifiers)
+                || {
+                    // Ignore presence of `identifier` in `func` if we integrate w.r.t. `identifier`
+                    let mut ids_in_f = func.get_contained_identifiers(identifiers);
+                    ids_in_f.remove(wrt);
+                    !ids_in_f.is_empty()
+                }
+            }
+        }
+    }
+
+    /// Returns the set of all identifiers among the given ones that appear in `self` to `contained_identifiers`.
+    pub fn get_contained_identifiers<'a>(&'a self, identifiers: &HashSet<&String>) -> HashSet<&'a String> {
+        let mut set = HashSet::new();
+        self.add_contained_identifiers(identifiers, &mut set);
+        set
+    }
+
+    /// Adds all identifiers among the given ones that appear in `self` to `contained_identifiers`.
+    pub fn add_contained_identifiers<'a>(&'a self, identifiers: &HashSet<&String>, contained_identifiers: &mut HashSet<&'a String>) {
+        // Note: since in Rust, `impl<T: Hash> Hash for &T` just calls `T::hash` on the pointee, using a HashSet
+        // is not only functionally correct but even more efficient than using a `Vec`.
+        match self {
+            Expression::None | Expression::Number(_) => {},
+            Expression::Identifier(x) => if identifiers.contains(x) {contained_identifiers.insert(x);},
+            Expression::Tuple(v) | Expression::Vector(v) | Expression::Matrix(.., v)
+                => v.iter().for_each(|e| e.add_contained_identifiers(identifiers, contained_identifiers)),
+            Expression::UnaryOperation(_, expr) | Expression::Assignment(_, expr) | Expression::PartialDerivative(_, expr)
+                => expr.add_contained_identifiers(identifiers, contained_identifiers),
+            Expression::BinaryOperation(lhs, _, rhs) => {
+                lhs.add_contained_identifiers(identifiers, contained_identifiers);
+                rhs.add_contained_identifiers(identifiers, contained_identifiers);
+            }
+            Expression::FoldedOperation(.., from, conditions, to, inner) => {
+                from.add_contained_identifiers(identifiers, contained_identifiers);
+                conditions.iter().for_each(|c| c.add_contained_identifiers(identifiers, contained_identifiers));
+                to.add_contained_identifiers(identifiers, contained_identifiers);
+                inner.add_contained_identifiers(identifiers, contained_identifiers);
+            }
+            Expression::Function(_, args) => {
+                args.iter().for_each(|arg| arg.add_contained_identifiers(identifiers, contained_identifiers));
+            }
+            Expression::DirectionalDerivative(_, expr, point, direction) => {
+                expr.add_contained_identifiers(identifiers, contained_identifiers);
+                point.iter().for_each(|v| v.add_contained_identifiers(identifiers, contained_identifiers));
+                direction.iter().for_each(|v| v.add_contained_identifiers(identifiers, contained_identifiers));
+            }
+            Expression::IfElse(x, y, z) => {
+                x.add_contained_identifiers(identifiers, contained_identifiers);
+                y.add_contained_identifiers(identifiers, contained_identifiers);
+                z.add_contained_identifiers(identifiers, contained_identifiers);
+            }
+            Expression::Integral(func, a, b, wrt) => {
+                a.add_contained_identifiers(identifiers, contained_identifiers);
+                b.add_contained_identifiers(identifiers, contained_identifiers);
+                let was_contained = contained_identifiers.contains(wrt); // Ignore presence of `identifier` in `func` if we integrate w.r.t. `identifier`
+                func.add_contained_identifiers(identifiers, contained_identifiers);
+                if !was_contained {contained_identifiers.remove(wrt);}
             }
         }
     }

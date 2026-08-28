@@ -5,6 +5,7 @@ use std::ops;
 use crate::math::Object;
 
 /// Contains a value of type `T` and a (potentially empty) list of warnings.
+#[derive(Clone)]
 pub struct Status<T> {
     pub value: T,
     pub warnings: Vec<String>

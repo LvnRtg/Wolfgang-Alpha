@@ -74,12 +74,8 @@ impl ObjType {
             ObjType::NonObject => Object::Undefined,
             ObjType::Scalar => Object::Real(1.0),
             ObjType::Vector(n) => Object::Vector(Vector { values: vec![1.0; *n] }), // Vector doesn't really have an identity
-            ObjType::Matrix(m, n) => {
-                let mut mat = Matrix::zeros(*m, *n);
-                for i in 0..*m.min(n) {
-                    mat.set(i, i, 1.0);
-                }
-                Object::Matrix(mat)
+            ObjType::Matrix(m, _) => { // In order to get out an mxn matrix after multiplying this with an mxn matrix, this must be an mxm matrix
+                Object::Matrix(Matrix::identity(*m))
             }
             ObjType::Tuple(n) => Object::Tuple(vec![Object::Undefined; *n]),
             ObjType::LiteralExpression => Object::LiteralExpression(Expression::None)
@@ -195,14 +191,20 @@ impl Object {
         }
     }
 
-    pub fn expect_float(self) -> Result<f64, String> {
+    /// Returns Ok(x) if `self` is `Object::Real(x)`, otherwise `Err`.
+    /// 
+    /// Works on `&self` because `f64` is `Copy`.
+    pub fn expect_float(&self) -> Result<f64, String> {
         match self {
-            Object::Real(x) => Ok(x),
+            Object::Real(x) => Ok(*x),
             other => Err(format!("Expected float, got {other}."))
         }
     }
 
-    pub fn expect_int<T: NumCast>(self) -> Result<T, String> {
+    /// Returns Ok(x as T) if `self` is `Object::Real(x)` for `x` close to an integer of type `T`, otherwise `Err`.
+    /// 
+    /// Works on `&self` because `T` is assumed to be `Copy`.
+    pub fn expect_int<T: NumCast + Copy>(&self) -> Result<T, String> {
         let f = self.expect_float()?;
         let i = f.round();
         if approx_eq(f, i) {
@@ -223,9 +225,6 @@ impl Object {
         }
     }
 }
-
-
-// TODO remove unnecessary ops implementations below
 
 impl<'a> ops::Mul<&'a Object> for f64 {
     type Output = Object;

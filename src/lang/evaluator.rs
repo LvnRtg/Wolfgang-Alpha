@@ -372,7 +372,23 @@ pub fn eval(
             }
         }
         Expression::FoldedOperation(op, index_var, from, conditions, to, inner)
-            => math::folded_operations::eval_folded_operation(op, index_var, from, conditions, to, inner, extra_vars, env),
+            => math::operations::folded_operations::folded_operation_helper(
+                op,
+                index_var,
+                from,
+                conditions,
+                to,
+                inner,
+                |_varstack, _env| eval(inner, _varstack, _env),
+                |_some_index_var_value, _varstack, _env| {
+                    inner.get_type(
+                        &VarStack::Frame { vars: &HashMap::from([(index_var, _some_index_var_value)]), parent: _varstack },
+                        _env
+                    )
+                },
+                extra_vars,
+                env
+            ),
         Expression::Function(function_name, given_arg_exprs) => {
             // Note this case can only occur when we actually have a function call, not an assignment.
             // We can be sure about this because the assignment operator is given the lowest priority level by the tokenizer
