@@ -27,7 +27,7 @@ pub enum Expression {
     Assignment(Box<Expression>, Box<Expression>),
     /// Compute the partial derivative of the given expression w.r.t. the given identifier. The direction to differentiate in is set to 1.0.
     PartialDerivative(String, Box<Expression>),
-    /// Compute the directional derivative of `SecondArg` at point `ThirdArg` in direction `FourthArg` where the variables w.r.t. which we differentiate are `first_args`.
+    /// Compute the directional derivative of `SecondArg` at point `ThirdArg` in direction `FourthArg` where the variables w.r.t. which we differentiate are `FirstArg`.
     DirectionalDerivative(Vec<String>, Box<Expression>, Vec<Expression>, Vec<Expression>),
     /// E.g. `int_a^b f(x) dx` gives `Integral(f(x), a, b, x)`.
     Integral(Box<Expression>, Box<Expression>, Box<Expression>, String),
@@ -100,6 +100,324 @@ macro_rules! multline_vector {
             )]
         }
     }};
+}
+
+/// Constructs a match statement that calls the given function recursively on all patterns for which no behavior is specified.
+/// 
+/// Ignores the return value of the given function; simply calls it on every contained sub-expression.
+/// 
+/// See `impl Expression` below for examples.
+macro_rules! fill_match {
+    ($self:expr; $iter:ident; $name:ident($($args:expr),*); $( $variant:ident($($b:pat),*) $(if let $lpat:pat = $lexpr:expr,)? $(if $guard:expr)? => $body:expr ),+ $(,)?) => {
+        match $self {
+            $( Expression::$variant($($b),*) $(if $guard)? $(if let $lpat = $lexpr)? => $body )+
+            #[allow(unreachable_patterns)]
+            other => fill_match!(@default other; $iter; $name($($args),*)),
+        }
+    };
+
+    (@default $self:expr; $iter:ident; $name:ident($($args:expr),*)) => {
+        match $self {
+            // Generally, do not process LHS of assignment
+            Expression::UnaryOperation(_, x) | Expression::PartialDerivative(_, x) | Expression::Assignment(_, x) => x.$name($($args),*),
+            Expression::BinaryOperation(x, _, y) => {
+                x.$name($($args),*);
+                y.$name($($args),*);
+            }
+            Expression::Integral(x, y, z, _) | Expression::IfElse(x, y, z) => {
+                x.$name($($args),*);
+                y.$name($($args),*);
+                z.$name($($args),*);
+            }
+            Expression::Vector(v) | Expression::Matrix(.., v) | Expression::Function(_, v) | Expression::Tuple(v)
+                => v.$iter().for_each(|x| x.$name($($args),*)),
+            Expression::DirectionalDerivative(_, x, v, w) => {
+                x.$name($($args),*);
+                v.$iter().for_each(|y| y.$name($($args),*));
+                w.$iter().for_each(|y| y.$name($($args),*));
+            }
+            Expression::FoldedOperation(.., x, v, y, z) => {
+                x.$name($($args),*);
+                y.$name($($args),*);
+                z.$name($($args),*);
+                v.$iter().for_each(|u| u.$name($($args),*));
+            }
+            _ => {}
+        }
+    };
+}
+
+impl Expression {
+    /// Adds all identifiers `x` for which `x := ...` appears in `self` to `vars`.
+    pub fn get_assigned_to_variables<'a>(&'a self, vars: &mut HashSet<&'a String>) {
+        fill_match!(
+            self; iter; get_assigned_to_variables(vars);
+            Assignment(lhs, rhs) => {
+                if let Expression::Identifier(x) = &**lhs {vars.insert(x);}
+                rhs.get_assigned_to_variables(vars); // Always call recursively on the RHS
+            }
+        )
+    }
+
+    /// Parses itself recursively and replaces every encountered `ident` by `by`.
+    /// 
+    /// Ignores the LHS of assignment operators and occurrences of `ident` that would be shadowed
+    /// in an evaluation (e.g. within integrals where the integration variable is exactly `ident`).
+    pub fn replace_identifiers_in_place(&mut self, ident: &String, by: &Expression) {
+        fill_match!(
+            self; iter_mut; replace_identifiers_in_place(ident, by);
+            Identifier(x) if x == ident => {
+                *self = by.clone();
+            },
+            // In the following cases, do not parse `inner` because `wrt` will shadow `ident` in an evaluation
+            FoldedOperation(_, wrt, from, conditions, to, inner) if wrt == ident => {
+                // Here, do not parse `to` and `conditions` either.
+                from.replace_identifiers_in_place(ident, by);
+            },
+            Integral(from, to, inner, wrt) if wrt == ident => {
+                from.replace_identifiers_in_place(ident, by);
+                to.replace_identifiers_in_place(ident, by);
+            },
+            PartialDerivative(wrt, inner) if wrt == ident => {},
+            DirectionalDerivative(vars, inner, point, direction) if vars.contains(ident) => {
+                point.iter_mut().for_each(|u| u.replace_identifiers_in_place(ident, by));
+                direction.iter_mut().for_each(|u| u.replace_identifiers_in_place(ident, by));
+            }
+        )
+    }
+
+    /// Parses the expression `expr` recursively and collects all identifiers that are neither in
+    /// `constants` nor in `extra_vars` nor bound by an outer expression (e.g. as the integration
+    /// variable of an integral) into a HashSet `modified_identifiers`.
+    /// 
+    /// Ignores the LHS of assignment operators.
+    pub fn list_unknown_identifiers(
+        &self,
+        extra_vars: &VarStack,
+        env: &Env,
+        modified_identifiers: &mut HashSet<String>
+    ) {
+        fill_match!(
+            self; iter; list_unknown_identifiers(extra_vars, env, modified_identifiers);
+            Identifier(x) => {
+                if !env.constants.contains_key(x) && extra_vars.lookup(x).is_none() {
+                    modified_identifiers.insert(x.clone());
+                }
+            },
+            FoldedOperation(_, varname, from, conditions, to, inner) => {
+                // Important: `varname` is no longer unknown within `conditions`, `inner` and `to`; however, it is still unknown within `from`.
+                let varstack = VarStack::Frame { // Varstack where `varname` is declared as known
+                    vars: &HashMap::from([(varname, &Object::Success)]),
+                    parent: extra_vars
+                };
+                from.list_unknown_identifiers(extra_vars, env, modified_identifiers); // Here, use old `extra_vars`
+                conditions.iter().for_each(|v| v.list_unknown_identifiers(&varstack, env, modified_identifiers));
+                to.list_unknown_identifiers(&varstack, env, modified_identifiers); // Here too
+                inner.list_unknown_identifiers(&varstack, env, modified_identifiers);
+            },
+            PartialDerivative(wrt, expr) => {
+                // Same as above
+                expr.list_unknown_identifiers(
+                    &VarStack::Frame {
+                        vars: &HashMap::from([(wrt, &Object::Success)]),
+                        parent: extra_vars
+                    },
+                    env,
+                    modified_identifiers
+                )
+            },
+            DirectionalDerivative(vars, expr, point, direction) => {
+                // Same again
+                expr.list_unknown_identifiers(
+                    &VarStack::Frame {
+                        vars: &vars.iter().map(|v| (v, &Object::Success)).collect(),
+                        parent: extra_vars
+                    },
+                    env,
+                    modified_identifiers
+                );
+                point.iter().for_each(|v| v.list_unknown_identifiers(extra_vars, env, modified_identifiers));
+                direction.iter().for_each(|v| v.list_unknown_identifiers(extra_vars, env, modified_identifiers));
+            },
+            Integral(func, a, b, wrt) => {
+                func.list_unknown_identifiers(
+                    &VarStack::Frame {
+                        vars: &HashMap::from([(wrt, &Object::Success)]),
+                        parent: extra_vars
+                    },
+                    env,
+                    modified_identifiers
+                );
+                a.list_unknown_identifiers(extra_vars, env, modified_identifiers);
+                b.list_unknown_identifiers(extra_vars, env, modified_identifiers);
+            }
+        )
+    }
+
+    /// Adds all identifiers among the given ones that appear in `self` to `contained_identifiers`.
+    /// 
+    /// Ignores the LHS of assignment operators and occurrences of an element `ident` of `identifiers` that would
+    /// be shadowed in an evaluation (e.g. within integrals where the integration variable is exactly `ident`).
+    pub fn add_contained_identifiers<'a>(&'a self, identifiers: &HashSet<&String>, contained_identifiers: &mut HashSet<&'a String>) {
+        // Note: since in Rust, `impl<T: Hash> Hash for &T` just calls `T::hash` on the pointee, using a HashSet
+        // is not only functionally correct but even more efficient than using a `Vec`.
+        fill_match!(
+            self; iter; add_contained_identifiers(identifiers, contained_identifiers);
+            Identifier(x) if identifiers.contains(x) => {contained_identifiers.insert(x);},
+            Integral(func, a, b, wrt) => {
+                a.add_contained_identifiers(identifiers, contained_identifiers);
+                b.add_contained_identifiers(identifiers, contained_identifiers);
+                // Ignore presence of `identifier` in `func` if we integrate w.r.t. `identifier`
+                let was_contained = contained_identifiers.contains(wrt);
+                func.add_contained_identifiers(identifiers, contained_identifiers);
+                if !was_contained {contained_identifiers.remove(wrt);}
+            },
+            FoldedOperation(_, wrt, from, conditions, to, inner) => {
+                from.add_contained_identifiers(identifiers, contained_identifiers);
+                let was_contained = contained_identifiers.contains(wrt);
+                conditions.iter().for_each(|c| c.add_contained_identifiers(identifiers, contained_identifiers));
+                to.add_contained_identifiers(identifiers, contained_identifiers);
+                inner.add_contained_identifiers(identifiers, contained_identifiers);
+                if !was_contained {contained_identifiers.remove(wrt);}
+            },
+            PartialDerivative(wrt, inner) => {
+                let was_contained = contained_identifiers.contains(wrt);
+                inner.add_contained_identifiers(identifiers, contained_identifiers);
+                if !was_contained {contained_identifiers.remove(wrt);}
+            },
+            DirectionalDerivative(vars, inner, point, direction) => {
+                point.iter().for_each(|v| v.add_contained_identifiers(identifiers, contained_identifiers));
+                direction.iter().for_each(|v| v.add_contained_identifiers(identifiers, contained_identifiers));
+                let not_previously_contained = vars.iter().filter(|var| !identifiers.contains(var)).collect::<Vec<&String>>();
+                inner.add_contained_identifiers(identifiers, contained_identifiers);
+                for var in not_previously_contained {
+                    contained_identifiers.remove(var);
+                }
+            }
+        )
+    }
+}
+
+/// Constructs a match statement that calls the given function recursively on all patterns for which no behavior is specified.
+/// 
+/// Expects the given function to return a boolean and, in case multiple sub-expressions are contained in an expression,
+/// returns the disjunction of the returned booleans.
+/// 
+/// See `impl Expression` below for examples.
+macro_rules! fill_match_bool {
+    ($self:expr; $name:ident($($args:expr),*); $( $variant:ident($($b:pat),*) $(if let $lpat:pat = $lexpr:expr,)? $(if $guard:expr)? => $body:expr ),+ $(,)?) => {
+        match $self {
+            $( Expression::$variant($($b),*) $(if $guard)? $(if let $lpat = $lexpr)? => $body, )+
+            #[allow(unreachable_patterns)]
+            other => fill_match_bool!(@default other; $name($($args),*)),
+        }
+    };
+
+    (@default $self:expr; $name:ident($($args:expr),*)) => {
+        match $self {
+            // Generally, do not process LHS of assignment
+            Expression::UnaryOperation(_, x) | Expression::PartialDerivative(_, x) | Expression::Assignment(_, x) => x.$name($($args),*),
+            Expression::BinaryOperation(x, _, y) => {
+                x.$name($($args),*)
+                || y.$name($($args),*)
+            }
+            Expression::Integral(x, y, z, _) | Expression::IfElse(x, y, z) => {
+                x.$name($($args),*)
+                || y.$name($($args),*)
+                || z.$name($($args),*)
+            }
+            Expression::Vector(v) | Expression::Matrix(.., v) | Expression::Function(_, v) | Expression::Tuple(v)
+                => v.iter().any(|x| x.$name($($args),*)),
+            Expression::DirectionalDerivative(_, x, v, w) => {
+                x.$name($($args),*)
+                || v.iter().any(|y| y.$name($($args),*))
+                || w.iter().any(|y| y.$name($($args),*))
+            }
+            Expression::FoldedOperation(.., x, v, y, z) => {
+                x.$name($($args),*)
+                || y.$name($($args),*)
+                || z.$name($($args),*)
+                || v.iter().any(|u| u.$name($($args),*))
+            }
+            Expression::None | Expression::Identifier(_) | Expression::Number(_) => false // Default
+        }
+    };
+}
+
+impl Expression {
+    /// Returns whether or not `self` contains an assignment operator.
+    pub fn includes_assignment(&self) -> bool {
+        fill_match_bool!(
+            self; includes_assignment();
+            Assignment(..) => true
+        )
+    }
+
+    /// Returns whether or not `self` contains the given identifier.
+    /// 
+    /// Ignores the LHS of assignment operators and occurrences of `ident` that would be shadowed
+    /// in an evaluation (e.g. within integrals where the integration variable is exactly `ident`).
+    pub fn contains_identifier(&self, ident: &String) -> bool {
+        fill_match_bool!(
+            self; contains_identifier(ident);
+            Identifier(x) => x == ident,
+            FoldedOperation(_, wrt, from, ..) if wrt == ident => from.contains_identifier(ident),
+            Integral(_, from, to, wrt) if wrt == ident => {
+                from.contains_identifier(ident) || to.contains_identifier(ident)
+            },
+            PartialDerivative(wrt, _) if wrt == ident => false,
+            DirectionalDerivative(vars, _, point, direction) if vars.contains(ident) => {
+                point.iter().any(|x| x.contains_identifier(ident))
+                || direction.iter().any(|x| x.contains_identifier(ident))
+            }
+        )
+    }
+
+    /// Returns whether `self` contains any identifier from `identifiers`.
+    /// 
+    /// Ignores the LHS of assignment operators and occurrences of an element `ident` of `identifiers` that would
+    /// be shadowed in an evaluation (e.g. within integrals where the integration variable is exactly `ident`).
+    pub fn contains_any_of(&self, identifiers: &HashSet<&String>) -> bool {
+        fill_match_bool!(
+            self; contains_any_of(identifiers);
+            Identifier(x) => identifiers.contains(x),
+            // Typically, we search for less identifiers than will realistically occur in an expression.
+            // More precisely, if we search for `n` identifiers, then it is reasonable to assume that `self`
+            // could have even more than `n` identifiers in it. Therefore, in the following cases, it is generally
+            // cheaper to copy the hashset `identifiers`, remove `wrt` and call `.contains_identifer(new_hashset)`
+            // (the hashset only contains references anyway) than to call `.add_contained_identifiers`
+            // and check if an element of `identifiers` other than `wrt` is in the result.
+            FoldedOperation(_, wrt, from, conditions, to, inner) if identifiers.contains(wrt) => {
+                let mut new_hashset = identifiers.clone();
+                new_hashset.remove(wrt);
+                from.contains_any_of(identifiers)
+                || conditions.iter().any(|x| x.contains_any_of(&new_hashset))
+                || to.contains_any_of(&new_hashset)
+                || inner.contains_any_of(&new_hashset)
+            },
+            Integral(inner, from, to, wrt) if identifiers.contains(wrt) => {
+                let mut new_hashset = identifiers.clone();
+                new_hashset.remove(wrt);
+                from.contains_any_of(identifiers)
+                || to.contains_any_of(identifiers)
+                || inner.contains_any_of(&new_hashset)
+            },
+            PartialDerivative(wrt, inner) if identifiers.contains(wrt) => {
+                let mut new_hashset = identifiers.clone();
+                new_hashset.remove(wrt);
+                inner.contains_any_of(&new_hashset)
+            },
+            DirectionalDerivative(vars, inner, point, direction) if vars.iter().any(|var| identifiers.contains(var)) => {
+                let mut new_hashset = identifiers.clone();
+                for var in vars {
+                    new_hashset.remove(var);
+                }
+                point.iter().any(|x| x.contains_any_of(identifiers))
+                || direction.iter().any(|x| x.contains_any_of(identifiers))
+                || inner.contains_any_of(&new_hashset)
+            }
+        )
+    }
 }
 
 impl Expression {
@@ -412,58 +730,12 @@ impl Expression {
         }
     }
 
-    /// Returns whether or not `self` contains an assignment operator.
-    pub fn includes_assignment(&self) -> bool {
-        match self {
-            Expression::Assignment(..) => true,
-            Expression::None | Expression::Identifier(_) | Expression::Number(_) => false,
-            Expression::Vector(v) | Expression::Matrix(.., v) | Expression::Function(_, v) | Expression::Tuple(v)
-                => v.iter().any(|x| x.includes_assignment()),
-            Expression::UnaryOperation(_, x) | Expression::PartialDerivative(_, x)
-                => x.includes_assignment(),
-            Expression::BinaryOperation(x, _, y)
-                => x.includes_assignment() || y.includes_assignment(),
-            Expression::FoldedOperation(.., x, v, y, z)
-                => x.includes_assignment() || y.includes_assignment() || z.includes_assignment() || v.iter().any(|u| u.includes_assignment()),
-            Expression::DirectionalDerivative(_, x, v, w)
-                => x.includes_assignment() || v.iter().any(|y| y.includes_assignment()) || w.iter().any(|y| y.includes_assignment()),
-            Expression::Integral(x, y, z, _) | Expression::IfElse(x, y, z)
-                => x.includes_assignment() || y.includes_assignment() || z.includes_assignment()
-        }
-    }
-
-    /// Adds all identifiers `x` for which `x := ...` appears in `self` to `vars`.
-    pub fn get_assigned_to_variables<'a>(&'a self, vars: &mut HashSet<&'a String>) {
-        match self {
-            Expression::Assignment(lhs, _) if let Expression::Identifier(x) = &**lhs => {vars.insert(x);},
-            Expression::Vector(v) | Expression::Matrix(.., v) | Expression::Function(_, v) | Expression::Tuple(v)
-                => v.iter().for_each(|x| x.get_assigned_to_variables(vars)),
-            Expression::UnaryOperation(_, x) | Expression::PartialDerivative(_, x)
-                => x.get_assigned_to_variables(vars),
-            Expression::BinaryOperation(x, _, y) => {
-                x.get_assigned_to_variables(vars);
-                y.get_assigned_to_variables(vars);
-            }
-            Expression::FoldedOperation(.., x, v, y, z) => {
-                x.get_assigned_to_variables(vars);
-                y.get_assigned_to_variables(vars);
-                z.get_assigned_to_variables(vars);
-                v.iter().for_each(|u| u.get_assigned_to_variables(vars));
-            }
-            Expression::DirectionalDerivative(_, x, v, w) => {
-                x.get_assigned_to_variables(vars);
-                v.iter().for_each(|y| y.get_assigned_to_variables(vars));
-                w.iter().for_each(|y| y.get_assigned_to_variables(vars));
-            }
-            Expression::Integral(x, y, z, _) | Expression::IfElse(x, y, z) => {
-                x.get_assigned_to_variables(vars);
-                y.get_assigned_to_variables(vars);
-                z.get_assigned_to_variables(vars);
-            }
-            _ => {}
-        }
+    /// Expands the given expression 
+    pub fn expand(&self) -> Result<ObjType, String> {
+        unimplemented!() // TODO implement `expand`
     }
 }
+
 
 /// Allows to simplify literal expressions.
 /// 
@@ -539,45 +811,6 @@ pub fn simplify_pow(lhs: Expression, rhs: Expression) -> Expression {
 
 
 impl Expression {
-    /// Parses itself recursively and replaces every encountered `ident` by `by`. Ignores the LHS of assignment operators
-    /// and the insides of FoldedOperations/Integrals of which the running variable is also named `ident`.
-    pub fn replace_identifiers_in_place(&mut self, ident: &String, by: &Expression) {
-        match self {
-            Expression::Identifier(x) if x == ident => {
-                *self = by.clone();
-            }
-            Expression::Tuple(v) | Expression::Vector(v) | Expression::Matrix(.., v) | Expression::Function(_, v)
-                => {v.iter_mut().for_each(|x| x.replace_identifiers_in_place(ident, by));}
-            Expression::UnaryOperation(_, x) | Expression::PartialDerivative(_, x) | Expression::Assignment(_, x) // Ignore LHS of assigment operator
-                => x.replace_identifiers_in_place(ident, by),
-            Expression::BinaryOperation(x, _, y)
-                => {x.replace_identifiers_in_place(ident, by); y.replace_identifiers_in_place(ident, by);}
-            Expression::FoldedOperation(_, varname, from, conditions, to, inner) => {
-                from.replace_identifiers_in_place(ident, by);
-                conditions.iter_mut().for_each(|x| x.replace_identifiers_in_place(ident, by));
-                to.replace_identifiers_in_place(ident, by);
-                if varname != ident {
-                    inner.replace_identifiers_in_place(ident, by);
-                }
-            }
-            Expression::DirectionalDerivative(_, x, point, direction) => {
-                x.replace_identifiers_in_place(ident, by);
-                point.iter_mut().for_each(|y| y.replace_identifiers_in_place(ident, by));
-                direction.iter_mut().for_each(|y| y.replace_identifiers_in_place(ident, by));
-            }
-            Expression::Integral(from, to, inner, varname) => {
-                from.replace_identifiers_in_place(ident, by);
-                to.replace_identifiers_in_place(ident, by);
-                if varname != ident {
-                    inner.replace_identifiers_in_place(ident, by);
-                }
-            }
-            Expression::IfElse(x, y, z)
-                => {x.replace_identifiers_in_place(ident, by); y.replace_identifiers_in_place(ident, by); z.replace_identifiers_in_place(ident, by);}
-            Expression::None | Expression::Number(_) | Expression::Identifier(_) => {}
-        }
-    }
-
     /// Clones `self` while replacing every encountered `ident` by `by`. Ignores the LHS of assignment operators.
     pub fn replace_identifiers(&self, ident: &String, by: &Expression) -> Expression {
         match self {
@@ -621,223 +854,11 @@ impl Expression {
         }
     }
 
-    /// Parses the expression `expr` recursively and collects all identifiers that are neither in `constants` nor in `extra_vars` into a HashSet `modified_identifiers`.
-    /// 
-    /// Returns whether or not anything was modified. The parameter `modified_anything` should be set to `false` for the first call and will then be passed down recursively.
-    pub fn list_unknown_identifiers(
-        &self,
-        extra_vars: &VarStack,
-        env: &Env,
-        modified_identifiers: &mut HashSet<String>
-    ) {
-        match self {
-            Expression::None | Expression::Number(_) => {},
-            Expression::Identifier(x) => {
-                if !env.constants.contains_key(x) && extra_vars.lookup(x).is_none() {
-                    modified_identifiers.insert(x.clone());
-                }
-            }
-            Expression::Tuple(v) | Expression::Vector(v) | Expression::Matrix(.., v)
-                => v.iter().for_each(|e| e.list_unknown_identifiers(extra_vars, env, modified_identifiers)),
-            Expression::UnaryOperation(_, expr) => expr.list_unknown_identifiers(extra_vars, env, modified_identifiers),
-            Expression::BinaryOperation(lhs, _, rhs) => {
-                lhs.list_unknown_identifiers(extra_vars, env, modified_identifiers);
-                rhs.list_unknown_identifiers(extra_vars, env, modified_identifiers);
-            }
-            Expression::FoldedOperation(_, varname, from, conditions, to, inner) => {
-                // Important: `varname` is no longer unknown within `inner`; however, it is still unknown within `from` and `to`.
-                from.list_unknown_identifiers(extra_vars, env, modified_identifiers); // Here, use old `extra_vars`
-                conditions.iter().for_each(|v| v.list_unknown_identifiers(extra_vars, env, modified_identifiers));
-                to.list_unknown_identifiers(extra_vars, env, modified_identifiers); // Here too
-                inner.list_unknown_identifiers( // But here, declare `varname` as known (temporarily for this function call)
-                    &VarStack::Frame {
-                        vars: &HashMap::from([(varname, &Object::Success)]),
-                        parent: extra_vars
-                    },
-                    env,
-                    modified_identifiers
-                )
-            }
-            Expression::Function(_, args) => {
-                args.iter().for_each(|arg| arg.list_unknown_identifiers(extra_vars, env, modified_identifiers));
-            }
-            Expression::Assignment(_, rhs) => rhs.list_unknown_identifiers(extra_vars, env, modified_identifiers), // Do not modify the LHS of assignment expressions
-            Expression::PartialDerivative(wrt, expr) => expr.list_unknown_identifiers(
-                &VarStack::Frame { // Same proceeding as in `Expression::FoldedOperation`
-                    vars: &HashMap::from([(wrt, &Object::Success)]),
-                    parent: extra_vars
-                },
-                env,
-                modified_identifiers
-            ),
-            Expression::DirectionalDerivative(vars, expr, point, direction) => {
-                expr.list_unknown_identifiers(
-                    &VarStack::Frame {
-                        vars: &vars.iter().map(|v| (v, &Object::Success)).collect(),
-                        parent: extra_vars
-                    },
-                    env,
-                    modified_identifiers
-                );
-                point.iter().for_each(|v| v.list_unknown_identifiers(extra_vars, env, modified_identifiers));
-                direction.iter().for_each(|v| v.list_unknown_identifiers(extra_vars, env, modified_identifiers));
-            }
-            Expression::IfElse(x, y, z) => {
-                x.list_unknown_identifiers(extra_vars, env, modified_identifiers);
-                y.list_unknown_identifiers(extra_vars, env, modified_identifiers);
-                z.list_unknown_identifiers(extra_vars, env, modified_identifiers);
-            }
-            Expression::Integral(func, a, b, wrt) => {
-                func.list_unknown_identifiers(
-                    &VarStack::Frame {
-                        vars: &HashMap::from([(wrt, &Object::Success)]),
-                        parent: extra_vars
-                    },
-                    env,
-                    modified_identifiers
-                );
-                a.list_unknown_identifiers(extra_vars, env, modified_identifiers);
-                b.list_unknown_identifiers(extra_vars, env, modified_identifiers);
-            }
-        }
-    }
-
-    /// Returns whether or not `self` contains the given identifier.
-    pub fn contains_identifier(&self, identifier: &String) -> bool {
-        match self {
-            Expression::None | Expression::Number(_) => false,
-            Expression::Identifier(x) => x == identifier,
-            Expression::Tuple(v) | Expression::Vector(v) | Expression::Matrix(.., v)
-                => v.iter().any(|e| e.contains_identifier(identifier)),
-            Expression::UnaryOperation(_, expr) | Expression::Assignment(_, expr) | Expression::PartialDerivative(_, expr)
-                => expr.contains_identifier(identifier),
-            Expression::BinaryOperation(lhs, _, rhs) => {
-                lhs.contains_identifier(identifier)
-                || rhs.contains_identifier(identifier)
-            }
-            Expression::FoldedOperation(.., from, conditions, to, inner) => {
-                from.contains_identifier(identifier)
-                || conditions.iter().any(|c| c.contains_identifier(identifier))
-                || to.contains_identifier(identifier)
-                || inner.contains_identifier(identifier)
-            }
-            Expression::Function(_, args) => {
-                args.iter().any(|arg| arg.contains_identifier(identifier))
-            }
-            Expression::DirectionalDerivative(_, expr, point, direction) => {
-                expr.contains_identifier(identifier)
-                || point.iter().any(|v| v.contains_identifier(identifier))
-                || direction.iter().any(|v| v.contains_identifier(identifier))
-            }
-            Expression::IfElse(x, y, z) => {
-                x.contains_identifier(identifier)
-                || y.contains_identifier(identifier)
-                || z.contains_identifier(identifier)
-            }
-            Expression::Integral(func, a, b, wrt) => {
-                a.contains_identifier(identifier)
-                || b.contains_identifier(identifier)
-                || (func.contains_identifier(identifier) && wrt != identifier) // Ignore presence of `identifier` in `func` if we integrate w.r.t. `identifier`
-            }
-        }
-    }
-
-    /// Returns whether `self` contains any identifier from `identifiers`.
-    pub fn contains_any_of(&self, identifiers: &HashSet<&String>) -> bool {
-        // Note: since in Rust, `impl<T: Hash> Hash for &T` just calls `T::hash` on the pointee, using a HashSet
-        // is not only functionally correct but even more efficient than using a `Vec`.
-        match self {
-            Expression::None | Expression::Number(_) => false,
-            Expression::Identifier(x) => identifiers.contains(x),
-            Expression::Tuple(v) | Expression::Vector(v) | Expression::Matrix(.., v)
-                => v.iter().any(|e| e.contains_any_of(identifiers)),
-            Expression::UnaryOperation(_, expr) | Expression::Assignment(_, expr) | Expression::PartialDerivative(_, expr)
-                => expr.contains_any_of(identifiers),
-            Expression::BinaryOperation(lhs, _, rhs) => {
-                lhs.contains_any_of(identifiers)
-                || rhs.contains_any_of(identifiers)
-            }
-            Expression::FoldedOperation(.., from, conditions, to, inner) => {
-                from.contains_any_of(identifiers)
-                || conditions.iter().any(|c| c.contains_any_of(identifiers))
-                || to.contains_any_of(identifiers)
-                || inner.contains_any_of(identifiers)
-            }
-            Expression::Function(_, args) => {
-                args.iter().any(|arg| arg.contains_any_of(identifiers))
-            }
-            Expression::DirectionalDerivative(_, expr, point, direction) => {
-                expr.contains_any_of(identifiers)
-                || point.iter().any(|v| v.contains_any_of(identifiers))
-                || direction.iter().any(|v| v.contains_any_of(identifiers))
-            }
-            Expression::IfElse(x, y, z) => {
-                x.contains_any_of(identifiers)
-                || y.contains_any_of(identifiers)
-                || z.contains_any_of(identifiers)
-            }
-            Expression::Integral(func, a, b, wrt) => {
-                a.contains_any_of(identifiers)
-                || b.contains_any_of(identifiers)
-                || {
-                    // Ignore presence of `identifier` in `func` if we integrate w.r.t. `identifier`
-                    let mut ids_in_f = func.get_contained_identifiers(identifiers);
-                    ids_in_f.remove(wrt);
-                    !ids_in_f.is_empty()
-                }
-            }
-        }
-    }
-
     /// Returns the set of all identifiers among the given ones that appear in `self` to `contained_identifiers`.
     pub fn get_contained_identifiers<'a>(&'a self, identifiers: &HashSet<&String>) -> HashSet<&'a String> {
         let mut set = HashSet::new();
         self.add_contained_identifiers(identifiers, &mut set);
         set
-    }
-
-    /// Adds all identifiers among the given ones that appear in `self` to `contained_identifiers`.
-    pub fn add_contained_identifiers<'a>(&'a self, identifiers: &HashSet<&String>, contained_identifiers: &mut HashSet<&'a String>) {
-        // Note: since in Rust, `impl<T: Hash> Hash for &T` just calls `T::hash` on the pointee, using a HashSet
-        // is not only functionally correct but even more efficient than using a `Vec`.
-        match self {
-            Expression::None | Expression::Number(_) => {},
-            Expression::Identifier(x) => if identifiers.contains(x) {contained_identifiers.insert(x);},
-            Expression::Tuple(v) | Expression::Vector(v) | Expression::Matrix(.., v)
-                => v.iter().for_each(|e| e.add_contained_identifiers(identifiers, contained_identifiers)),
-            Expression::UnaryOperation(_, expr) | Expression::Assignment(_, expr) | Expression::PartialDerivative(_, expr)
-                => expr.add_contained_identifiers(identifiers, contained_identifiers),
-            Expression::BinaryOperation(lhs, _, rhs) => {
-                lhs.add_contained_identifiers(identifiers, contained_identifiers);
-                rhs.add_contained_identifiers(identifiers, contained_identifiers);
-            }
-            Expression::FoldedOperation(.., from, conditions, to, inner) => {
-                from.add_contained_identifiers(identifiers, contained_identifiers);
-                conditions.iter().for_each(|c| c.add_contained_identifiers(identifiers, contained_identifiers));
-                to.add_contained_identifiers(identifiers, contained_identifiers);
-                inner.add_contained_identifiers(identifiers, contained_identifiers);
-            }
-            Expression::Function(_, args) => {
-                args.iter().for_each(|arg| arg.add_contained_identifiers(identifiers, contained_identifiers));
-            }
-            Expression::DirectionalDerivative(_, expr, point, direction) => {
-                expr.add_contained_identifiers(identifiers, contained_identifiers);
-                point.iter().for_each(|v| v.add_contained_identifiers(identifiers, contained_identifiers));
-                direction.iter().for_each(|v| v.add_contained_identifiers(identifiers, contained_identifiers));
-            }
-            Expression::IfElse(x, y, z) => {
-                x.add_contained_identifiers(identifiers, contained_identifiers);
-                y.add_contained_identifiers(identifiers, contained_identifiers);
-                z.add_contained_identifiers(identifiers, contained_identifiers);
-            }
-            Expression::Integral(func, a, b, wrt) => {
-                a.add_contained_identifiers(identifiers, contained_identifiers);
-                b.add_contained_identifiers(identifiers, contained_identifiers);
-                let was_contained = contained_identifiers.contains(wrt); // Ignore presence of `identifier` in `func` if we integrate w.r.t. `identifier`
-                func.add_contained_identifiers(identifiers, contained_identifiers);
-                if !was_contained {contained_identifiers.remove(wrt);}
-            }
-        }
     }
 
     /// Returns the first identifier of the form `prefixNumber` (e.g. `x2` if `prefix` is `x`) which
