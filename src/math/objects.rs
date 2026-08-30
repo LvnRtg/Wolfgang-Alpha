@@ -2,8 +2,6 @@ use num_traits::NumCast;
 use std::ops;
 use std::fmt;
 
-use crate::expr_add;
-use crate::expr_mul;
 use crate::math::{Complex, Env, VarStack};
 use crate::math::matrices_and_vectors::{Matrix, Vector};
 use crate::math::expressions::Expression;
@@ -180,7 +178,7 @@ impl Object {
         match self {
             Object::Success | Object::Undefined => Expression::None, // This would be a syntax error
             Object::Real(x) => Expression::Number(*x),
-            Object::Complex(x) => expr_add!(Expression::Number(x.real), expr_mul!(Expression::Number(x.imag), Expression::Identifier("i".to_string()))),
+            Object::Complex(x) => crate::expr_binop!(Expression::Number(x.real), Add, crate::expr_binop!(Expression::Number(x.imag), Mul, Expression::Identifier("i".to_string()))),
             Object::Tuple(v) => Expression::Tuple(v.iter().map(|o| o.to_expression()).collect()),
             Object::Vector(v) => Expression::Vector(v.values.iter().map(|entry| Expression::Number(*entry)).collect()),
             Object::Matrix(x) => Expression::Matrix(
@@ -268,7 +266,7 @@ impl ops::Neg for &Object {
             Object::Tuple(x) => Ok(Object::Tuple(x.iter().map(|o| -o).collect::<Result<Vec<_>, _>>()?)),
             Object::Vector(x) => Ok(Object::Vector(-x)),
             Object::Matrix(x) => Ok(Object::Matrix(-x)),
-            Object::LiteralExpression(expr) => Ok(Object::LiteralExpression(crate::expr_neg!(expr.clone()))),
+            Object::LiteralExpression(expr) => Ok(Object::LiteralExpression(crate::expr_unary_op!(Neg, expr.clone()))),
         }
     }
 }
@@ -283,7 +281,7 @@ impl ops::Neg for Object {
             Object::Tuple(x) => Ok(Object::Tuple(x.iter().map(|o| -o).collect::<Result<Vec<_>, _>>()?)),
             Object::Vector(x) => Ok(Object::Vector(-&x)),
             Object::Matrix(x) => Ok(Object::Matrix(-&x)),
-            Object::LiteralExpression(expr) => Ok(Object::LiteralExpression(crate::expr_neg!(expr.clone()))),
+            Object::LiteralExpression(expr) => Ok(Object::LiteralExpression(crate::expr_unary_op!(Neg, expr.clone()))),
         }
     }
 }
@@ -298,7 +296,7 @@ impl ops::Not for Object {
             Object::Tuple(v) => Ok(Object::Tuple(v.into_iter().map(|o| !o).collect::<Result<Vec<_>, _>>()?)),
             Object::Vector(v) => Ok(Object::Vector(v.transform(|x| if x == 0.0 {1.0} else {0.0}))),
             Object::Matrix(m) => Ok(Object::Matrix(m.transform(|x| if x == 0.0 {1.0} else {0.0}))),
-            Object::LiteralExpression(e) => Ok(Object::LiteralExpression(crate::expr_not!(e))),
+            Object::LiteralExpression(e) => Ok(Object::LiteralExpression(crate::expr_unary_op!(Not, e))),
         }
     }
 }

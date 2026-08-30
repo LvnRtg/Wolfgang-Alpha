@@ -2,7 +2,7 @@ use num_traits::float::Float;
 use std::collections::HashMap;
 use std::ops::{Add, AddAssign, Div, Mul, Neg};
 
-use crate::{expr_add, expr_div, expr_mul, expr_neg, expr_pow, expr_sub};
+use crate::{expr_binop, expr_square, expr_unary_op};
 use crate::lang::eval;
 use crate::math::{Env, Expression, Object, VarStack};
 use crate::math::objects::try_operation;
@@ -89,24 +89,27 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
         let ct = || if a != -1.0 {
             Expression::Identifier(wrt.clone())
         } else {
-            expr_mul!(Expression::Number(2.0), Expression::Identifier(wrt.clone()))
+            expr_binop!(Expression::Number(2.0), Mul, Expression::Identifier(wrt.clone()))
         };
-        let new_arg = expr_div!(
+        let new_arg = expr_binop!(
             Expression::Identifier(wrt.clone()),
-            expr_sub!(
+            Div,
+            expr_binop!(
                 Expression::Number(1.0),
+                Sub,
                 ct()
             )
         );
         return integrate(
-            &expr_div!(
+            &expr_binop!(
                 expr.replace_identifiers(wrt, &new_arg),
-                expr_pow!(
-                    expr_sub!(
+                Div,
+                expr_square!(
+                    expr_binop!(
                         Expression::Number(1.0),
+                        Sub,
                         ct()
-                    ),
-                    Expression::Number(2.0)
+                    )
                 )
             ),
             a / (1.0 + (if a != -1.0 {a} else {2.0*a})), // a / (1 + ac)
@@ -121,24 +124,27 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
         let ct = || if b != 1.0 {
             Expression::Identifier(wrt.clone())
         } else {
-            expr_mul!(Expression::Number(2.0), Expression::Identifier(wrt.clone()))
+            expr_binop!(Expression::Number(2.0), Mul, Expression::Identifier(wrt.clone()))
         };
-        let new_arg = expr_div!(
+        let new_arg = expr_binop!(
             Expression::Identifier(wrt.clone()),
-            expr_sub!(
+            Div,
+            expr_binop!(
                 ct(),
+                Sub,
                 Expression::Number(1.0)
             )
         );
         return integrate(
-            &expr_neg!(expr_div!(
+            &expr_unary_op!(Neg, expr_binop!(
                 expr.replace_identifiers(wrt, &new_arg),
-                expr_pow!(
-                    expr_sub!(
+                Div,
+                expr_square!(
+                    expr_binop!(
                         Expression::Number(1.0),
+                        Sub,
                         ct()
-                    ),
-                    Expression::Number(2.0)
+                    )
                 )
             )),
             if b != 1.0 {1.0} else {0.5}, // 1/c
@@ -150,31 +156,35 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
     } else if a == -f64::INFINITY && b == f64::INFINITY {
         // Substitute φ(t) = t/(1-t²), leading to
         // int_{-∞}^∞ f(x) dx = int_{-1}^1 f(t/(1-t²)) * (1+t²)/((1-t²)²) dt
-        let t_square = || expr_pow!(
-            Expression::Identifier(wrt.clone()),
-            Expression::Number(2.0)
+        let t_square = || expr_square!(
+            Expression::Identifier(wrt.clone())
         );
-        let new_arg = expr_div!(
+        let new_arg = expr_binop!(
             Expression::Identifier(wrt.clone()),
-            expr_sub!(
+            Div,
+            expr_binop!(
                 Expression::Number(1.0),
+                Sub,
                 t_square()
             )
         );
         return integrate(
-            &expr_mul!(
+            &expr_binop!(
                 expr.replace_identifiers(wrt, &new_arg),
-                expr_div!(
-                    expr_add!(
+                Mul,
+                expr_binop!(
+                    expr_binop!(
                         Expression::Number(1.0),
+                        Add,
                         t_square()
                     ),
-                    expr_pow!(
-                        expr_sub!(
+                    Div,
+                    expr_square!(
+                        expr_binop!(
                             Expression::Number(1.0),
+                            Sub,
                             t_square()
-                        ),
-                        Expression::Number(2.0)
+                        )
                     )
                 )
             ),

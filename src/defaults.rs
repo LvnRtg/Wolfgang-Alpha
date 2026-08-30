@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::f64::consts;
 use std::sync::LazyLock;
 
-use crate::{expr_if_else, expr_and, expr_compare, expr_add, expr_sub, expr_mul, expr_div, expr_square, expr_neg, expr_1arg_func};
+use crate::{expr_1arg_func, expr_binop, expr_compare, expr_if_else, expr_square, expr_unary_op};
 use crate::lang::eval;
 use crate::math::expressions;
 use crate::math::operations::folded_operations;
@@ -352,29 +352,39 @@ pub fn get_default_derivative(function_name: &str, point: &[Expression], directi
         "ln" => assert_length!(1, ln, point, direction,
             expr_if_else!(
                 expr_compare!(point[0].clone(), Gt, Expression::Number(0.0)),
-                expr_div!(direction[0].clone(), point[0].clone()),
+                expr_binop!(direction[0].clone(), Div, point[0].clone()),
                 Expression::None
             )
         ),
         "log" => assert_length!(2, log, point, direction,
             // D log(x, b)[s, t] = s \partial_x log(x, b) + t \partial_b log(x, b) = s/(x*ln(y)) - (t*ln(x))/(b*ln(b)²)     for x, b > 0expr_if_else!(
             expr_if_else!(
-                expr_and!(expr_compare!(point[0].clone(), Gt, Expression::Number(0.0)), expr_compare!(point[1].clone(), Gt, Expression::Number(0.0))),
-                expr_sub!(
-                    expr_div!(
+                expr_binop!(
+                    expr_compare!(point[0].clone(), Gt, Expression::Number(0.0)),
+                    And,
+                    expr_compare!(point[1].clone(), Gt, Expression::Number(0.0))
+                ),
+                expr_binop!(
+                    expr_binop!(
                         direction[0].clone(),
-                        expr_mul!(
+                        Div,
+                        expr_binop!(
                             point[0].clone(),
+                            Mul,
                             expr_1arg_func!("ln", point[1].clone())
                         )
                     ),
-                    expr_div!(
-                        expr_mul!(
+                    Sub,
+                    expr_binop!(
+                        expr_binop!(
                             direction[1].clone(),
+                            Mul,
                             expr_1arg_func!("ln", point[0].clone())
                         ),
-                        expr_mul!(
+                        Div,
+                        expr_binop!(
                             point[1].clone(),
+                            Mul,
                             expr_square!(expr_1arg_func!("ln", point[1].clone()))
                         )
                     )
@@ -392,22 +402,24 @@ pub fn get_default_derivative(function_name: &str, point: &[Expression], directi
         "sqrt" => assert_length!(1, sqrt, point, direction,
             expr_if_else!(
                 expr_compare!(point[0].clone(), Gt, Expression::Number(0.0)),
-                expr_div!(
+                expr_binop!(
                     direction[0].clone(),
-                    expr_mul!(Expression::Number(2.0), expr_1arg_func!("sqrt", point[0].clone()))
+                    Div,
+                    expr_binop!(Expression::Number(2.0), Mul, expr_1arg_func!("sqrt", point[0].clone()))
                 ),
                 Expression::None
             )
         ),
         "cos" => assert_length!(1, cos, point, direction,
-            expr_neg!(apply_to_first_arg!(sin, point, direction)?)
+            expr_unary_op!(Neg, apply_to_first_arg!(sin, point, direction)?)
         ),
         "sin" => assert_length!(1, sin, point, direction,
             apply_to_first_arg!(cos, point, direction)?
         ),
         "tan" => assert_length!(1, tan, point, direction,
-            expr_div!(
+            expr_binop!(
                 direction[0].clone(),
+                Div,
                 expr_square!(Expression::Function(
                     "cos".to_string(),
                     vec![point[0].clone()]
@@ -415,34 +427,40 @@ pub fn get_default_derivative(function_name: &str, point: &[Expression], directi
             )
         ),
         "acos" => assert_length!(1, acos, point, direction,
-            expr_div!(
-                expr_neg!(direction[0].clone()),
+            expr_binop!(
+                expr_unary_op!(Neg, direction[0].clone()),
+                Div,
                 expr_1arg_func!(
                     "sqrt",
-                    expr_sub!(
+                    expr_binop!(
                         Expression::Number(1.0),
+                        Sub,
                         expr_square!(point[0].clone())
                     )
                 )
             )
         ),
         "asin" => assert_length!(1, asin, point, direction,
-            expr_div!(
+            expr_binop!(
                 direction[0].clone(),
+                Div,
                 expr_1arg_func!(
                     "sqrt",
-                    expr_sub!(
+                    expr_binop!(
                         Expression::Number(1.0),
+                        Sub,
                         expr_square!(point[0].clone())
                     )
                 )
             )
         ),
         "atan" => assert_length!(1, atan, point, direction,
-            expr_div!(
+            expr_binop!(
                 direction[0].clone(),
-                expr_add!(
+                Div,
+                expr_binop!(
                     Expression::Number(1.0),
+                    Add,
                     expr_square!(point[0].clone())
                 )
             )
@@ -450,10 +468,12 @@ pub fn get_default_derivative(function_name: &str, point: &[Expression], directi
         "cosh" => apply_to_first_arg!(sinh, point, direction),
         "sinh" => apply_to_first_arg!(cosh, point, direction),
         "tanh" => assert_length!(1, tanh, point, direction,
-            expr_mul!(
+            expr_binop!(
                 direction[0].clone(),
-                expr_sub!(
+                Mul,
+                expr_binop!(
                     Expression::Number(1.0),
+                    Sub,
                     expr_square!(
                         Expression::Function(
                             "tanh".to_string(),
@@ -464,34 +484,40 @@ pub fn get_default_derivative(function_name: &str, point: &[Expression], directi
             )
         ),
         "acosh" => assert_length!(1, acosh, point, direction,
-            expr_div!(
+            expr_binop!(
                 direction[0].clone(),
+                Div,
                 expr_1arg_func!(
                     "sqrt",
-                    expr_sub!(
+                    expr_binop!(
                         expr_square!(point[0].clone()),
+                        Sub,
                         Expression::Number(1.0)
                     )
                 )
             )
         ),
         "asinh" => assert_length!(1, asinh, point, direction,
-            expr_div!(
+            expr_binop!(
                 direction[0].clone(),
+                Div,
                 expr_1arg_func!(
                     "sqrt",
-                    expr_add!(
+                    expr_binop!(
                         expr_square!(point[0].clone()),
+                        Add,
                         Expression::Number(1.0)
                     )
                 )
             )
         ),
         "atanh" => assert_length!(1, atanh, point, direction,
-            expr_div!(
+            expr_binop!(
                 direction[0].clone(),
-                expr_sub!(
+                Div,
+                expr_binop!(
                     Expression::Number(1.0),
+                    Sub,
                     expr_square!(point[0].clone())
                 )
             )
@@ -501,8 +527,9 @@ pub fn get_default_derivative(function_name: &str, point: &[Expression], directi
         "det" => assert_length!(1, det, point, direction,
             expr_1arg_func!(
                 "tr",
-                expr_mul!(
+                expr_binop!(
                     Expression::Function("adj".to_string(), vec![point[0].clone()]),
+                    Mul,
                     direction[0].clone()
                 )
             )
