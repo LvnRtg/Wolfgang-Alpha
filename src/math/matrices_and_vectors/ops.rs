@@ -107,6 +107,10 @@ impl ops::Div<f64> for &Vector {
         }
     }
 }
+/// There is no canonical inverse to a vector, but defining `x / v := (x/v_1, ..., x/v_n)` makes somewhat sense
+/// because we already interpret `v*w` as the inner product, and with the above definition, we have
+/// `(x/v) * (v/x) = sum_{i=1}^n (x/v_i) * (v_i/x) = n`, which is consistent with the fact that
+/// `(1, ..., 1) * (1, ..., 1) = n`.
 impl<'a> ops::Div<&'a Vector> for f64 {
     type Output = Vector;
     fn div(self, rhs: &'a Vector) -> Self::Output {
