@@ -212,6 +212,18 @@ impl Object {
         }
     }
 
+    /// Returns Ok(x as usize) if `self` is `Object::Real(x)` for `x` close to a non-negative integer, otherwise `Err`.
+    /// 
+    /// Works on `&self` because `usize` is `Copy`.
+    pub fn expect_nonnegative_int(&self) -> Result<usize, String> {
+        let i = self.expect_int::<i64>()?;
+        if i >= 0 {
+            Ok(i as usize)
+        } else {
+            Err(format!("Expected non-negative integer, got {i}."))
+        }
+    }
+
     /// Returns Ok(x) if `self` is `Object::Matrix(x)`, otherwise `Err`.
     pub fn expect_matrix(self) -> Result<Matrix, String> {
         match self {
