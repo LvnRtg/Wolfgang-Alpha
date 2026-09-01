@@ -212,6 +212,14 @@ impl Object {
         }
     }
 
+    /// Returns Ok(x) if `self` is `Object::Matrix(x)`, otherwise `Err`.
+    pub fn expect_matrix(self) -> Result<Matrix, String> {
+        match self {
+            Object::Matrix(x) => Ok(x),
+            other => Err(format!("Expected matrix, got {other}."))
+        }
+    }
+
     pub fn get_type(&self) -> ObjType {
         match self {
             Object::Undefined | Object::Success => ObjType::NonObject,
