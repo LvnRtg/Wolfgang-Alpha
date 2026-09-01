@@ -189,7 +189,7 @@ impl Object {
         }
     }
 
-    /// Returns Ok(x) if `self` is `Object::Real(x)`, otherwise `Err`.
+    /// Returns `Ok(x)` if `self` is `Object::Real(x)`, otherwise `Err`.
     /// 
     /// Works on `&self` because `f64` is `Copy`.
     pub fn expect_float(&self) -> Result<f64, String> {
@@ -199,7 +199,7 @@ impl Object {
         }
     }
 
-    /// Returns Ok(x as T) if `self` is `Object::Real(x)` for `x` close to an integer of type `T`, otherwise `Err`.
+    /// Returns `Ok(x as T)` if `self` is `Object::Real(x)` for `x` close to an integer of type `T`, otherwise `Err`.
     /// 
     /// Works on `&self` because `T` is assumed to be `Copy`.
     pub fn expect_int<T: NumCast + Copy>(&self) -> Result<T, String> {
@@ -212,7 +212,7 @@ impl Object {
         }
     }
 
-    /// Returns Ok(x as usize) if `self` is `Object::Real(x)` for `x` close to a non-negative integer, otherwise `Err`.
+    /// Returns `Ok(x as usize)` if `self` is `Object::Real(x)` for `x` close to a non-negative integer, otherwise `Err`.
     /// 
     /// Works on `&self` because `usize` is `Copy`.
     pub fn expect_nonnegative_int(&self) -> Result<usize, String> {
@@ -224,11 +224,20 @@ impl Object {
         }
     }
 
-    /// Returns Ok(x) if `self` is `Object::Matrix(x)`, otherwise `Err`.
+    /// Returns `Ok(x)` if `self` is `Object::Matrix(x)`, otherwise `Err`.
     pub fn expect_matrix(self) -> Result<Matrix, String> {
         match self {
             Object::Matrix(x) => Ok(x),
             other => Err(format!("Expected matrix, got {other}."))
+        }
+    }
+
+    /// Returns `Ok(x as bool)` if `x` is `Object::Real(x)` for `x in {0, 1}`, otherwise `Err`.
+    pub fn expect_bool(self) -> Result<bool, String> {
+        match self {
+            Object::Real(1.0) => Ok(true),
+            Object::Real(0.0) => Ok(false),
+            other => Err(format!("Expected 0 or 1 when evaluating condition, got {:?}.", other))
         }
     }
 

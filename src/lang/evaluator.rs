@@ -528,11 +528,9 @@ pub fn eval(
         ),
         Expression::IfElse(condition, iftrue, iffalse) => {
             eval(condition, extra_vars, env)?
-            .try_map_flatten(|o| match o {
-                Object::Real(1.0) => eval(iftrue, extra_vars, env),
-                Object::Real(0.0) => eval(iffalse, extra_vars, env),
-                x => Err(format!("Couldn't evaluate condition `{}` to 0 or 1; got {}.", &**condition, x))
-            })
+            .try_map_flatten(|o| o.expect_bool().and_then(
+                |b| if b {eval(iftrue, extra_vars, env)} else {eval(iffalse, extra_vars, env)}
+            ))
         }
     }
 }

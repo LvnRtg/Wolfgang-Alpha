@@ -182,13 +182,10 @@ where
 
         // Check if all conditions are met. If not, skip this `i`.
         for cond in get_conditions.iter_mut().map(|f| f(&varstack, env)) {
-            match cond?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP) {
-                Object::Real(1.0) => {} // Condition met; ignore
-                Object::Real(0.0) => { // Condition not met; skip `i`
-                    i += 1.0;
-                    continue 'outer;
-                }
-                other => return Err(format!("Expected 0 or 1 when evaluating condition, got {:?}.", other))
+            if !cond?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP).expect_bool()? {
+                // Condition not met; skip `i`
+                i += 1.0;
+                continue 'outer;
             }
         }
 
@@ -216,7 +213,7 @@ pub fn compute_product_derivative_helper<'a, FInner, FInnerPrime, FCondition>(
     mut get_f_prime: FInnerPrime,
     extra_vars: &'a VarStack<'a>,
     env: &'a mut Env
-) -> ExtResult 
+) -> ExtResult
 where
     FInner:        FnMut(&VarStack, &mut Env) -> ExtResult,
     FInnerPrime:   FnMut(&VarStack, &mut Env) -> ExtResult,
@@ -242,10 +239,10 @@ where
             )
         ) {
             match cond_res {
-                Ok(cond) => match cond.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP) {
-                    Object::Real(1.0) => {},
-                    Object::Real(0.0) => return None,
-                    other => return Some(Err(format!("Expected 0 or 1 when evaluating condition, got {:?}.", other)))
+                Ok(cond) => match cond.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP).expect_bool() {
+                    Ok(true) => {},
+                    Ok(false) => return None,
+                    Err(e) => return Some(Err(e))
                 }
                 Err(e) => return Some(Err(e))
             }
