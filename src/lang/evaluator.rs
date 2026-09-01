@@ -586,7 +586,7 @@ fn test_function_equality(
     let n = if let Some(p) = precision_expr {
         eval(p, extra_vars, env)
         .and_then(|s| s.try_map(
-            |o| o.expect_int::<i64>().map(|i| i.max(0) as usize)
+            |o| o.expect_nonnegative_int()
         ))
         ?
         .unpack_into(&mut warnings)
