@@ -132,7 +132,7 @@ macro_rules! apply_matrix_fn {
 /// 
 /// Note that the user can't create new direct functions, so this approach works.
 #[allow(clippy::type_complexity)]
-pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, bool)); 24]> = LazyLock::new(|| [
+pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, bool)); 25]> = LazyLock::new(|| [
     expect_n_objs!(sign, 1, |args: &[Object]| {
         match &args[0] {
             Object::Real(x) => Ok(Object::Real(if *x >= 0.0 {1.0} else {-1.0})),
@@ -210,6 +210,64 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, b
         (1, 6, false)
     ),
 
+    // ___helper_matrix_prod
+    // Takes integers `k_a`, `k_{b+1}`, `a`, a float `b`, a string `i` and an expression `f(i)` which is an `Expression::Matrix` of size `m(i)`x`m(i+1)`.
+    // Then, returns `(\prod_{i=a}^b f(i))_{k_a,k_{b+1}} = \sum_{k_{a+1}=1}^{m(a+1)} ... \sum_{k_b=1}^{m(b)} \prod_{s=a}^b f(s)_{k_s, k_{s+1}}`.
+    // This helper is used by `Expression.make_type_top_level()` when encountering matrix products (of potentially different sizes).
+    // The reason this is a helper function is because (currently), there is not efficient way to access the size of a matrix and then do something
+    // with the entries. Since we'll implement a helper anyway, I decided to go with this variant (tailored to the use case) instead of implementing
+    // something like a "multi-inner product".
+    (
+        Box::new(|evaluated_args, unevaluated_args, context| {
+            if evaluated_args.len() != 4 || unevaluated_args.len() != 2 {
+                return Err(format!("Wrong number of arguments provided for function '___helper_matrix_prod' (expected 4 evaluated and 2 unevaluated, got {}, {} respectively).", evaluated_args.len(), unevaluated_args.len()));
+            }
+            let (base_stack, env) = context.ok_or("Function '___helper_matrix_prod' needs `VarStack` and `Env`.".to_string())?;
+            let i = unevaluated_args[0].expect_ident()?;
+            let f_i = &unevaluated_args[1];
+            let (k_a, k_bp1) = (evaluated_args[0].expect_nonnegative_int()?, evaluated_args[1].expect_nonnegative_int()?);
+            let (a, b) = (evaluated_args[2].expect_int::<i64>()?, evaluated_args[3].expect_float()?.floor() as i64);
+            if b < a {
+                // Product ranges over empty set => product is identity matrix.
+                // As discussed in `get_type`, we then can only make a guess on the size of the resulting matrix. However,
+                // since this function is only supposed to return the entry at `(k_a, k_{b+1})`, we can completely disregard
+                // what size the matrix actually has and return 1_{k_a == k_{b+1}}.
+                return Ok(Status::ok(Object::Real(if k_a == k_bp1 {1.0} else {0.0})));
+            }
+            // For simplicity of notation, we compute all full matrices even though for f(a) and f(b), one row/column would suffice. However,
+            // this is negligible for large b-a since the excess computation is only roughly (n-2)/(n(b-a)).
+            let Status{value: matrices, warnings} = Status::from_iter(
+                a..=b,
+                |i_val| eval(
+                    f_i,
+                    &VarStack::Frame { vars: &HashMap::from([(i, &Object::Real(i_val as f64))]), parent: base_stack },
+                    env
+                ).and_then(|s| s.try_map(|o| o.expect_matrix()))
+            )?;
+            if k_a >= matrices[0].m() {
+                return Err(format!("Index out of range: row {k_a} isn't accessible in matrix of size {}x{}.", matrices[0].m(), matrices[0].n()));
+            }
+            if k_bp1 >= matrices.last().unwrap().n() {
+                // unwraps here are safe because the check `if b<a {return}` ensures `matrices` has at least one element.
+                return Err(format!("Index out of range: column {k_bp1} isn't accessible in matrix of size {}x{}.", matrices.last().unwrap().m(), matrices.last().unwrap().n()));
+            }
+            let mut ranges = vec![vec![evaluated_args[0].expect_nonnegative_int()?]]; // k_a only takes the provided value
+            // Every k_s, a<s<=b, ranges from 1 to m(s) (or in index notation, 0 to m(s)-1)
+            ranges.extend(matrices.iter().skip(1).map(|x| (0..x.m()).collect()));
+            ranges.push(vec![evaluated_args[1].expect_nonnegative_int()?]); // k_{b+1} has its fixed value again
+            Ok(Status{
+                value: Object::Real(ranges.into_iter().multi_cartesian_product()
+                .map(|multiindex| (0..=((b-a).max(0) as usize)).fold(
+                    1.0,
+                    |acc, s| acc * matrices[s].get(multiindex[s], multiindex[s+1])
+                ))
+                .sum()),
+                warnings
+            })
+        }),
+        (4, 2, false)
+    ),
+
     // del
     // Arbitrary amount of args (technically including 0), all not evaluated. Only accepts identifiers.
     // Warns if an argument is passed that is not an identifier.
@@ -271,7 +329,8 @@ pub fn default_functions() -> HashMap<String, FunctionRepr> {
         "sin", "sinh", "asin", "asinh",
         "tan", "tanh", "atan", "atanh",
         "eig", "det", "adj", "tr", "transpose",
-        "___helper_prod_rule", "del"
+        "___helper_prod_rule", "___helper_matrix_prod",
+        "del"
     ].into_iter().enumerate().map(
         |(i, n)|
         (n.to_string(), FunctionRepr::Direct(&DEFAULT_DIRECT_FUNCTIONS[i].0, DEFAULT_DIRECT_FUNCTIONS[i].1))
@@ -302,13 +361,14 @@ pub fn get_default_fn_type(name: &str, arg_types: &[ObjType]) -> Result<ObjType,
     }
 }
 
-pub const FUNCTIONS_WITH_PROVIDED_DERIVATIVE: [&str; 20] = [
+pub const FUNCTIONS_WITH_PROVIDED_DERIVATIVE: [&str; 21] = [
     "exp", "ln", "log",
     "sign", "sqrt",
     "cos", "cosh", "acos", "acosh",
     "sin", "sinh", "asin", "asinh",
     "tan", "tanh", "atan", "atanh",
-    "det", "tr", "transpose"
+    "det", "tr", "transpose",
+    "___helper_matrix_prod"
 ];
 
 /// Ensures that both `point` and `direction` have length `n`.
@@ -548,6 +608,39 @@ pub fn get_default_derivative(function_name: &str, point: &[Expression], directi
                 direction[0].clone()
             )
         ),
+        // For `___helper_matrix_prod`, we need to know its parameters even though we only differentiate within the last one, `f(i)`.
+        // Therefore, the entries in `point[0..6]` are the arguments that are supposed to be given to `___helper_matrix_prod`.
+        // The corresponding entries `direction[0..6]` should be zero (a warning is emitted if this is not the case).
+        // One easily sees that d/dx (AB) = (d/dx A) * B + A * (d/dx B) (componentwise). By induction, one then gets
+        // `d/dx ((\prod_{i=a}^b f(i))_{k_a,k_{b+1}})`
+        // `= (\sum_{j=a}^b \prod_{i=a}^{j-1} f(i) * d/dx f(j) * \prod_{i=j+1}^b f(i))_{k_a,k_{b+1}}`
+        // `= \sum_{j=a}^b (\prod_{i=a}^{j-1} f(i) * d/dx f(j) * \prod_{i=j+1}^b f(i))_{k_a,k_{b+1}}`
+        // `= \sum_{j=a}^b ___helper_matrix_prod(k_a, k_{b+1}, a, b, if i == j {d/dx f(j)} else {f(i)})`
+        "___helper_matrix_prod" => assert_length!(6, ___helper_matrix_prod, point, direction, {
+            let outer_sum_index_var = Expression::get_new_free_identifier_in_none_of("j", &point);
+            Expression::FoldedOperation(
+                folded_operations::FoldedOperation::Sum,
+                outer_sum_index_var.clone(), // j
+                Box::new(point[2].clone()), // a
+                Vec::new(), // No conditions
+                Box::new(point[3].clone()), // b
+                Box::new(Expression::Function(
+                    "___helper_matrix_prod".to_string(),
+                    vec![
+                        point[0].clone(), // k_a
+                        point[1].clone(), // k_{b+1}
+                        point[2].clone(), // a
+                        point[3].clone(), // b
+                        point[4].clone(), // i
+                        expr_if_else!(
+                            expr_compare!(point[4].clone(), Eq, Expression::Identifier(outer_sum_index_var.clone())), // i == j
+                            direction[5].clone(), // d/dx f(i)   (no need to replace i by j because here, i == j anyway)
+                            point[5].clone() // f(i)(point)
+                        )
+                    ]
+                ))
+            )
+        }),
         _ => Err(format!("No derivative provided for '{function_name}'."))
     }
 }
