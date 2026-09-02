@@ -410,7 +410,7 @@ pub fn make_default_fn_type_top_level(
     evaluated_args: Vec<(Expression, ObjType)>,
     unevaluated_args: &[Expression],
     _extra_vars: &VarStack, // TODO check if needed when `___helper_prod_rule` is disposed of
-    _env: &mut Env          // same
+    _env: &Env          // same
 ) -> Result<(Expression, ObjType), String> {
     let (evaluated_arg_exprs, evaluated_arg_types): (Vec<_>, Vec<_>) = evaluated_args.into_iter().unzip();
     match (name, &evaluated_arg_types[..]) {
