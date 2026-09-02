@@ -125,4 +125,22 @@ impl Matrix {
         }
         adj
     }
+
+    /// Returns the `(i,j)`-minor of `self`, that is, the determinant of the matrix arising from
+    /// deleting the `i`-th row and `j`-th column of `self`.
+    /// 
+    /// Returns `None` if `self` is not square or `i`, `j` are not within the bounds of the matrix.
+    pub fn minor(&self, i: usize, j: usize) -> Option<f64> {
+        let n = self.n;
+        if self.m != n || i >= n || j >= n {
+            return None;
+        }
+        let mut v = Vec::with_capacity((n-1)*(n-1));
+        for row in 0..n {
+            if row == i {continue;}
+            v.extend(self.values[row*n..row*n+j].iter());
+            v.extend(self.values[row*n+j+1..row*(n+1)].iter());
+        }
+        Matrix::from(n-1, n-1, v).det()
+    }
 }
