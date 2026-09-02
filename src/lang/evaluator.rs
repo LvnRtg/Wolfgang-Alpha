@@ -286,7 +286,6 @@ pub fn eval(
                 UnaryOperation::Not => eval(rhs, extra_vars, env)?.not(),
                 UnaryOperation::Factorial => eval(rhs, extra_vars, env)?.try_map(|o| {
                     match o {
-                        Object::Success => Ok(Object::Success),
                         Object::Real(x) => Ok(Object::Real({
                             let r = x.round();
                             if approx_eq(x, r) && r >= 0.0 { // Avoid calling the gamma function if unnecessary
@@ -306,7 +305,6 @@ pub fn eval(
                 }),
                 UnaryOperation::Abs => eval(rhs, extra_vars, env)?.try_map(|o| {
                     match o {
-                        Object::Success => Ok(Object::Success),
                         Object::Real(x) => Ok(Object::Real(x.abs())),
                         Object::Complex(x) => Ok(Object::Real(x.modulus())),
                         Object::LiteralExpression(e) => Ok(Object::LiteralExpression(Expression::UnaryOperation(UnaryOperation::Abs, Box::new(e)))),
@@ -317,7 +315,6 @@ pub fn eval(
                     let Status{value: obj, mut warnings} = eval(rhs, extra_vars, env)?;
                     Ok(Status {
                         value: match obj {
-                            Object::Success => Object::Success,
                             Object::Real(x) => {
                                 warnings.push(format!("Called `||x||` on real number `x = {}`; prefer `|x|` instead.", x));
                                 Object::Real(x.abs())
