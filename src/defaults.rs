@@ -212,6 +212,7 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, b
 
     // ___helper_matrix_prod
     // Takes integers `k_a`, `k_{b+1}`, `a`, a float `b`, a string `i` and an expression `f(i)` which is an `Expression::Matrix` of size `m(i)`x`m(i+1)`.
+    // Afterwards, there can be an arbitrary additional amount of expressions: these will be considered as conditions.
     // Then, returns `(\prod_{i=a}^b f(i))_{k_a,k_{b+1}} = \sum_{k_{a+1}=1}^{m(a+1)} ... \sum_{k_b=1}^{m(b)} \prod_{s=a}^b f(s)_{k_s, k_{s+1}}`.
     // This helper is used by `Expression.make_type_top_level()` when encountering matrix products (of potentially different sizes).
     // The reason this is a helper function is because (currently), there is not efficient way to access the size of a matrix and then do something
@@ -219,15 +220,30 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, b
     // something like a "multi-inner product".
     (
         Box::new(|evaluated_args, unevaluated_args, context| {
-            if evaluated_args.len() != 4 || unevaluated_args.len() != 2 {
-                return Err(format!("Wrong number of arguments provided for function '___helper_matrix_prod' (expected 4 evaluated and 2 unevaluated, got {}, {} respectively).", evaluated_args.len(), unevaluated_args.len()));
+            if evaluated_args.len() != 4 || unevaluated_args.len() < 2 {
+                return Err(format!("Wrong number of arguments provided for function '___helper_matrix_prod' (expected ==4 evaluated and >=2 unevaluated, got {}, {} respectively).", evaluated_args.len(), unevaluated_args.len()));
             }
             let (base_stack, env) = context.ok_or("Function '___helper_matrix_prod' needs `VarStack` and `Env`.".to_string())?;
             let i = unevaluated_args[0].expect_ident()?;
             let f_i = &unevaluated_args[1];
             let (k_a, k_bp1) = (evaluated_args[0].expect_nonnegative_int()?, evaluated_args[1].expect_nonnegative_int()?);
             let (a, b) = (evaluated_args[2].expect_int::<i64>()?, evaluated_args[3].expect_float()?.floor() as i64);
-            if b < a {
+            let mut warnings = Vec::new();
+            let i_range = (a..=b).filter_map(|i_val| {
+                for cond in unevaluated_args[2..].iter() {
+                    match eval(
+                        cond,
+                        &VarStack::Frame { vars: &HashMap::from([(i, &Object::Real(i_val as f64))]), parent: base_stack },
+                        env
+                    ).and_then(|s| s.unpack_into(&mut warnings).expect_bool()) {
+                        Ok(true) => {},
+                        Ok(false) => return None,
+                        Err(e) => return Some(Err(e))
+                    }
+                }
+                Some(Ok((i_val - a) as usize))
+            }).collect::<Result<Vec<_>, _>>()?;
+            if i_range.is_empty() {
                 // Product ranges over empty set => product is identity matrix.
                 // As discussed in `get_type`, we then can only make a guess on the size of the resulting matrix. However,
                 // since this function is only supposed to return the entry at `(k_a, k_{b+1})`, we can completely disregard
@@ -237,10 +253,10 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, b
             // For simplicity of notation, we compute all full matrices even though for f(a) and f(b), one row/column would suffice. However,
             // this is negligible for large b-a since the excess computation is only roughly (n-2)/(n(b-a)).
             let Status{value: matrices, warnings} = Status::from_iter(
-                a..=b,
+                i_range.iter(),
                 |i_val| eval(
                     f_i,
-                    &VarStack::Frame { vars: &HashMap::from([(i, &Object::Real(i_val as f64))]), parent: base_stack },
+                    &VarStack::Frame { vars: &HashMap::from([(i, &Object::Real(*i_val as f64))]), parent: base_stack },
                     env
                 ).and_then(|s| s.try_map(|o| o.expect_matrix()))
             )?;
@@ -248,7 +264,7 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, b
                 return Err(format!("Index out of range: row {k_a} isn't accessible in matrix of size {}x{}.", matrices[0].m(), matrices[0].n()));
             }
             if k_bp1 >= matrices.last().unwrap().n() {
-                // unwraps here are safe because the check `if b<a {return}` ensures `matrices` has at least one element.
+                // unwraps here are safe because the check `if i_range.is_empty() {return}` ensures `matrices` has at least one element.
                 return Err(format!("Index out of range: column {k_bp1} isn't accessible in matrix of size {}x{}.", matrices.last().unwrap().m(), matrices.last().unwrap().n()));
             }
             let mut ranges = vec![vec![evaluated_args[0].expect_nonnegative_int()?]]; // k_a only takes the provided value
@@ -257,9 +273,9 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, b
             ranges.push(vec![evaluated_args[1].expect_nonnegative_int()?]); // k_{b+1} has its fixed value again
             Ok(Status{
                 value: Object::Real(ranges.into_iter().multi_cartesian_product()
-                .map(|multiindex| (0..=((b-a).max(0) as usize)).fold(
+                .map(|multiindex| i_range.iter().fold(
                     1.0,
-                    |acc, s| acc * matrices[s].get(multiindex[s], multiindex[s+1])
+                    |acc, s| acc * matrices[*s].get(multiindex[*s], multiindex[*s+1])
                 ))
                 .sum()),
                 warnings
