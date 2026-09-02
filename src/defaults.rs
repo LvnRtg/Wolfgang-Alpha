@@ -364,16 +364,140 @@ pub fn default_functions() -> HashMap<String, FunctionRepr> {
 
 /// Given the name of a default function and the types of the given arguments,
 /// returns the corresponding output type.
-pub fn get_default_fn_type(name: &str, arg_types: &[ObjType]) -> Result<ObjType, String> {
-    match (name, arg_types) {
-        ("eig", [ObjType::Matrix(m, n)]) if m == n => Ok(ObjType::Vector(*n)),
+pub fn get_default_fn_type(
+    name: &str,
+    evaluated_arg_types: &[ObjType],
+    unevaluated_args: &[Expression],
+    extra_vars: &VarStack,
+    env: &Env
+) -> Result<ObjType, String> {
+    match (name, evaluated_arg_types) {
+        // Scalar functions
+        ("log", [ObjType::Scalar, ObjType::Scalar]) => Ok(ObjType::Scalar),
+        ("sign" | "exp" | "ln" | "sqrt" | "cos" | "cosh" | "acos" | "acosh" | "sin" | "sinh" | "asin" | "asinh" | "tan" | "tanh" | "atan" | "atanh", [ObjType::Scalar])
+            => Ok(ObjType::Scalar),
+        // Matrix functions
+        ("eig", [ObjType::Matrix(m, n)]) if m == n => Ok(ObjType::Tuple),
         ("det", [ObjType::Matrix(m, n)]) | ("tr", [ObjType::Matrix(m, n)]) if m == n => Ok(ObjType::Scalar),
         ("adj", [ObjType::Matrix(m, n)]) if m == n => Ok(ObjType::Matrix(*n, *n)),
         ("transpose", [ObjType::Matrix(m, n)]) => Ok(ObjType::Matrix(*n, *m)),
-        ("___helper_prod_rule", [ObjType::Vector(m), ObjType::Vector(n)]) if m == n => Ok(ObjType::Scalar),
-        ("log", [ObjType::Scalar, ObjType::Scalar]) => Ok(ObjType::Scalar),
-        (_, [ObjType::Scalar]) => Ok(ObjType::Scalar),
-        _ => Err(format!("No function \"{}\" accepting arguments of type {:?}.", name, arg_types))
+        // Helper functions
+        ("___helper_prod_rule", [x_type]) if unevaluated_args.len() >= 6 => {
+            unevaluated_args[5] // f(i, x)
+            .get_type(
+                &VarStack::Frame { vars: &HashMap::from([
+                    (unevaluated_args[0].expect_ident()?, &x_type.representative()), // x
+                    (unevaluated_args[1].expect_ident()?, &Object::Real(1.0)) // i
+                ]), parent: extra_vars },
+                env
+            )
+        }
+        ("___helper_matrix_prod", [_,_,_,_]) if unevaluated_args.len() >= 2 => Ok(ObjType::Scalar),
+        // Meta functions
+        ("del", _) => Ok(ObjType::NonObject),
+        _ => Err(format!(
+            "No function \"{}\" accepting evaluated arguments of type {:?} and unevaluated arguments {:?}.",
+            name,
+            evaluated_arg_types,
+            unevaluated_args
+        ))
+    }
+}
+
+/// Acts like `Expression::make_type_top_level` but on a default function given its name and provided arguments.
+pub fn make_default_fn_type_top_level(
+    name: &str,
+    evaluated_args: Vec<(Expression, ObjType)>,
+    unevaluated_args: &[Expression],
+    _extra_vars: &VarStack, // TODO check if needed when `___helper_prod_rule` is disposed of
+    _env: &mut Env          // same
+) -> Result<(Expression, ObjType), String> {
+    let (evaluated_arg_exprs, evaluated_arg_types): (Vec<_>, Vec<_>) = evaluated_args.into_iter().unzip();
+    match (name, &evaluated_arg_types[..]) {
+        // Scalar functions
+        ("log", [ObjType::Scalar, ObjType::Scalar]) => Ok((
+            Expression::Function(name.to_string(), evaluated_arg_exprs),
+            ObjType::Scalar
+        )),
+        ("sign" | "exp" | "ln" | "sqrt" | "cos" | "cosh" | "acos" | "acosh" | "sin" | "sinh" | "asin" | "asinh" | "tan" | "tanh" | "atan" | "atanh", [ObjType::Scalar]) => Ok((
+            Expression::Function(name.to_string(), evaluated_arg_exprs),
+            ObjType::Scalar
+        )),
+        // Matrix functions
+        ("eig", [ObjType::Matrix(m, n)]) if m == n => Ok((
+            Expression::Function(name.to_string(), evaluated_arg_exprs),
+            ObjType::Tuple
+        )),
+        ("det", [ObjType::Matrix(m, n)]) | ("tr", [ObjType::Matrix(m, n)]) if m == n => Ok((
+            Expression::Function(name.to_string(), evaluated_arg_exprs),
+            ObjType::Scalar
+        )),
+        ("adj", [ObjType::Matrix(m, n)]) if m == n => Ok((
+            {
+                // Computing the adjugate entry by entry is a more inefficient algorithm than what is implemented in `adj.rs`.
+                // Fortunately, this is nevertheless quite simple to implement:
+                // `adj(A)_{j,i}` is simply the `(i,j)`-cofactor of `A`, that is, `(-1)^{i+j} * ((i,j)-minor of A)`.
+                // The `(i,j)`-minor of `A`, in turn, is just `det(B)` where `B` arises from `A` by deleting its `i`-th row and `j`-th column.
+                let self_values = match evaluated_arg_exprs.into_iter().next().unwrap() {Expression::Matrix(.., v) => v, _ => unreachable!()};
+                Expression::Matrix(
+                    *n, *n,
+                    (0..*n).map(|_| 0..*n).multi_cartesian_product().map(
+                        |__v| {
+                            let (j, i) = (__v[0], __v[1]);
+                            let mut submatrix_values = Vec::with_capacity((*n-1) * (*n-1));
+                            for row in 0..*n {
+                                if row == i {continue;}
+                                submatrix_values.extend(self_values[row * n .. row * n + j].iter().cloned());
+                                submatrix_values.extend(self_values[row * n + j + 1 .. (row + 1) * n].iter().cloned());
+                            }
+                            Expression::Function(
+                                "det".to_string(),
+                                vec![Expression::Matrix(n-1, n-1, submatrix_values)]
+                            )
+                        }
+                    ).collect()
+                )
+            },
+            ObjType::Matrix(*n, *n)
+        )),
+        ("transpose", [ObjType::Matrix(m, n)]) => Ok((
+            {
+                let mut it = match evaluated_arg_exprs.into_iter().next().unwrap() {Expression::Matrix(.., v) => v.into_iter(), _ => unreachable!()};
+                Expression::Matrix(
+                    *n, *m,
+                    {
+                        let mut v = vec![Expression::None; n * m];
+                        for i in 0..*m {
+                            for j in 0..*n {
+                                v[j * m + i] = it.next().unwrap();
+                            }
+                        }
+                        v
+                    }
+                )
+            },
+            ObjType::Matrix(*n, *m)
+        )),
+        // Helper functions
+        ("___helper_prod_rule", [x_type]) if unevaluated_args.len() >= 6 => {
+            unimplemented!() // TODO when `___helper_prod_rule` is disposed of
+        }
+        ("___helper_matrix_prod", [_,_,_,_]) if unevaluated_args.len() >= 2 => {
+            let mut _args = evaluated_arg_exprs;
+            _args.extend(unevaluated_args.iter().cloned());
+            Ok((
+                Expression::Function(name.to_string(), _args),
+                ObjType::Scalar
+            ))
+        }
+        // Meta functions
+        ("del", _) => Ok((Expression::Function("del".to_string(), unevaluated_args.to_vec()), ObjType::NonObject)),
+        _ => Err(format!(
+            "No function \"{}\" accepting evaluated arguments of type {:?} and unevaluated arguments {:?}.",
+            name,
+            evaluated_arg_types,
+            unevaluated_args
+        ))
     }
 }
 
