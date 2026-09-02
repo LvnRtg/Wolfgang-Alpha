@@ -43,6 +43,11 @@ The basic syntax is the natural one with usual operator precedence. A few specia
   even though in this specific application, most matrices are likely small.
 - The operation `not` (`!`) is performed component-wise. Operations `and` and `or` are currently not implemented for matrices/vectors.
 
+### Tuples
+- Tuples can be initialized by typing `(1, 2, 3)`.
+- Tuples are polymorphic but only support very few operations. They are primarily intended to support multiple simultaneous assignments (see [custom definitions](#custom-definitions)); generally, the use of vectors is preferred.
+- The size of tuples isn't taken into account during type checks. This is used to our advantage for functions returning an unknown amount of values, e.g. the function `eig` (that computes the eigenvalues of a matrix).
+
 ### Folded operations
 - `sum_{i=a}^b ...` acts as one would expect. `i` has to be an identifier, `a` must be evaluable to an integer and `b` to a float (`a`, `b` need not to be constants).
   The type of the object inside the sum is inferred. If `a > b` initially, then `0` is returned (in the appropriate type).
@@ -102,8 +107,6 @@ The basic syntax is the natural one with usual operator precedence. A few specia
       If `l=m=n`, infer that these should be the keys of the hashmaps (cf. implementation). Otherwise, return `Err`.
 
 ### Special syntaxes and remarks
-- Tuples can be initialized by typing `(1, 2, 3)`. Tuples are polymorphic but only support very few operations. They are primarily intended to support multiple
-  simultaneous assignments (see below); generally, the use of vectors is preferred.
 - `debug` prints the entire current environment (constants + functions). In the web UI this goes to the browser console (`F12`); in the CLI it prints to stdout.
 - Notice that the token `!` acts as both the `not` operator and the factorial operator. In context, one can always differentiate between the two, with one minor downside:
   the syntax `x * (!y)` cannot be shortened to `x !y` (since these spaces disappear while tokenizing, one would not be able to differentiate this with `(x!) * y`).
