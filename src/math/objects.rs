@@ -38,7 +38,8 @@ pub enum ObjType {
     Scalar,
     Vector(usize),
     Matrix(usize, usize),
-    Tuple(usize),
+    /// Size of tuple doesn't matter since its doesn't support non-trivial operations anyway.
+    Tuple,
     LiteralExpression
 }
 impl ObjType {
@@ -61,7 +62,7 @@ impl ObjType {
             ObjType::Scalar => Object::Real(0.0),
             ObjType::Vector(n) => Object::Vector(Vector::zeros(*n)),
             ObjType::Matrix(m, n) => Object::Matrix(Matrix::zeros(*m, *n)),
-            ObjType::Tuple(n) => Object::Tuple(vec![Object::Undefined; *n]),
+            ObjType::Tuple => Object::Tuple(vec![]),
             ObjType::LiteralExpression => Object::LiteralExpression(Expression::None)
         }
     }
@@ -75,7 +76,7 @@ impl ObjType {
             ObjType::Matrix(m, _) => { // In order to get out an mxn matrix after multiplying this with an mxn matrix, this must be an mxm matrix
                 Object::Matrix(Matrix::identity(*m))
             }
-            ObjType::Tuple(n) => Object::Tuple(vec![Object::Undefined; *n]),
+            ObjType::Tuple => Object::Tuple(vec![]),
             ObjType::LiteralExpression => Object::LiteralExpression(Expression::None)
         }
     }
@@ -87,7 +88,7 @@ impl fmt::Display for ObjType {
             ObjType::Scalar => write!(f, "Scalar"),
             ObjType::Vector(n) => write!(f, "Vector<{}>", n),
             ObjType::Matrix(m, n) => write!(f, "Matrix<{}x{}>", m, n),
-            ObjType::Tuple(n) => write!(f, "Tuple<{}>", n),
+            ObjType::Tuple => write!(f, "Tuple"),
             ObjType::LiteralExpression => write!(f, "Expression")
         }
     }
@@ -247,7 +248,7 @@ impl Object {
             Object::Real(_) | Object::Complex(_) => ObjType::Scalar,
             Object::Vector(v) => ObjType::Vector(v.len()),
             Object::Matrix(x) => ObjType::Matrix(x.m(), x.n()),
-            Object::Tuple(t) => ObjType::Tuple(t.len()),
+            Object::Tuple(_) => ObjType::Tuple,
             Object::LiteralExpression(_) => ObjType::LiteralExpression
         }
     }
