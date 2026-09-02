@@ -138,8 +138,8 @@ impl Matrix {
         let mut v = Vec::with_capacity((n-1)*(n-1));
         for row in 0..n {
             if row == i {continue;}
-            v.extend(self.values[row*n..row*n+j].iter());
-            v.extend(self.values[row*n+j+1..row*(n+1)].iter());
+            v.extend(self.values[row * n .. row * n + j].iter());
+            v.extend(self.values[row * n + j + 1 .. (row + 1) * n].iter());
         }
         Matrix::from(n-1, n-1, v).det()
     }
