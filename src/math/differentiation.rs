@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::iter::zip;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{defaults, expr_1arg_func, expr_binop, expr_compare, expr_if_else, expr_unary_op};
 use crate::lang::eval;
@@ -9,7 +9,7 @@ use crate::math::expressions::*;
 use crate::math::matrices_and_vectors::{VectorNorm, MatrixNorm};
 use crate::math::objects::{try_operation};
 use crate::math::operations::{BinaryOperation, FoldedOperation, UnaryOperation};
-use crate::math::operations::folded_operations::compute_folded_operation;
+use crate::math::operations::folded_operations::{compute_folded_operation, compute_product_derivative_helper};
 use crate::math::utils::{approx_eq, min};
 use crate::status::{ExtResult, Status};
 
@@ -587,9 +587,28 @@ pub fn analytic_directional_derivative(
             )
         }
         Expression::FoldedOperation(FoldedOperation::Product, varname, from, conditions, to, inner) => {
-            // As before. The directional derivative follows the standard product rule too.
-            // TODO now!
-            unimplemented!()
+            // As for the analytic partial derivative since the directional derivative follows the standard product rule too.
+            let top_frame = vars.iter().zip(point).collect();
+            compute_product_derivative_helper(
+                varname,
+                eval(from, &VarStack::Frame { vars: &top_frame, parent: extra_vars }, env)?,
+                eval(to, &VarStack::Frame { vars: &top_frame, parent: extra_vars }, env)?,
+                conditions.iter().map(|condition: &Expression| {
+                    |_varstack: &VarStack<'_>, _env: &mut Env| eval(
+                        condition,
+                        &VarStack::Frame { vars: &top_frame, parent: _varstack },
+                        _env
+                    )
+                }).collect(),
+                |_varstack, _env| eval(
+                    inner,
+                    &VarStack::Frame { vars: &top_frame, parent: _varstack },
+                    _env
+                ),
+                |_varstack, _env| analytic_directional_derivative(vars, inner, point, direction, _varstack, _env),
+                extra_vars,
+                env
+            )
         }
         Expression::Function(function_name, arg_expressions) => {
             // For simplicity, I'll subsequently write `f` instead of `function_name`.
