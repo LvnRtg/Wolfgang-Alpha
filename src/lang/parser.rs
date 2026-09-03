@@ -298,9 +298,12 @@ impl Parser {
                             }
                         } else {
                             let cloned_ident = ident.clone();
-                            let mut chars = cloned_ident.chars(); chars.next();
                             self.next()?;
-                            Expression::Identifier(chars.collect::<String>())
+                            if let Ok(x) = cloned_ident[1..].parse::<f64>() {
+                                Expression::Number(x)
+                            } else {
+                                Expression::Identifier(cloned_ident.chars().skip(1).collect::<String>())
+                            }
                         };
                         Expression::UnaryOperation(UnaryOperation::Norm(Some(Box::new(norm_type))), Box::new(inner))
                     }
