@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fmt;
 
 use crate::lang::eval;
@@ -104,7 +104,7 @@ where
             index_var,
             |_varstack, _env| eval(from, _varstack, _env),
             conditions.iter().map(|condition: &Expression| {
-                |_varstack: &VarStack<'_>, _env: &mut Env| eval(condition, _varstack, _env)
+                |_varstack: &VarStack<'_, '_>, _env: &mut Env| eval(condition, _varstack, _env)
             }).collect(),
             |_varstack, _env| eval(to, _varstack, _env).map(|s| s.map(Cow::Owned)),
             get_inner,
@@ -119,7 +119,7 @@ where
             index_var,
             |_varstack, _env| eval(from, _varstack, _env),
             conditions.iter().map(|condition: &Expression| {
-                |_varstack: &VarStack<'_>, _env: &mut Env| eval(condition, _varstack, _env)
+                |_varstack: &VarStack<'_, '_>, _env: &mut Env| eval(condition, _varstack, _env)
             }).collect(),
             |_, _| Ok(to_eval.clone()).map(|s| s.map(Cow::Owned)),
             get_inner,
@@ -139,7 +139,7 @@ pub fn compute_folded_operation<'a, FFrom, FTo, FInner, FCondition, FDefaultValu
     mut get_to: FTo,
     mut get_inner: FInner,
     get_default_value: FDefaultValue, // We have this as parameter because then, we can use `.get_type()` on an expression which is much faster than `.eval().type()`
-    extra_vars: &'a VarStack<'a>,
+    extra_vars: &'a VarStack<'_, '_>,
     env: &'a mut Env
 ) -> ExtResult 
 where
@@ -152,7 +152,7 @@ where
     let mut warnings = Vec::<String>::new();
     let mut i = (&get_from(extra_vars, env)?.unpack_into(&mut warnings)).expect_int()?;
     let mut current_to_eval = get_to(
-        &VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(i))]), parent: extra_vars },
+        &extra_vars.with(index_var, Cow::Owned(Object::Real(i))),
         env
     )?.unpack_into(&mut warnings).expect_float()?;
     // We initialize `res` with the appropriate identity object (e.g. zero for a sum and one for a product). To do this, we must know the correct type,
@@ -170,9 +170,7 @@ where
     // The below condition `i + 1.0 != i` is required because for too large floats, adding 1.0 becomes a non-op and prevents the loop from ever finishing.
     'outer: while i + 1.0 != i {
         // Build varstack for current i
-        let i_as_obj = Object::Real(i);
-        let varstack_top_frame = HashMap::from([(index_var, &i_as_obj)]);
-        let varstack = VarStack::Frame { vars: &varstack_top_frame, parent: extra_vars };
+        let varstack = extra_vars.with(index_var, Cow::Owned(Object::Real(i)));
 
         // Note: the caller is responsible for modifying `get_to` if `to` doesn't need to be recomputed in every iteration (cf. `eval_folded_operation`).
         current_to_eval = get_to(&varstack, env)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP).expect_float()?;
@@ -211,7 +209,7 @@ pub fn compute_product_derivative_helper<'a, FInner, FInnerPrime, FCondition>(
     mut get_conditions: Vec<FCondition>,
     mut get_f: FInner,
     mut get_f_prime: FInnerPrime,
-    extra_vars: &'a VarStack<'a>,
+    extra_vars: &'a VarStack<'_, '_>,
     env: &'a mut Env
 ) -> ExtResult
 where
@@ -231,10 +229,7 @@ where
     .filter_map(|i| {
         for cond_res in get_conditions.iter_mut().map(
             |f| f(
-                &VarStack::Frame {
-                    vars: &HashMap::from([(index_var, &Object::Real(i as f64))]),
-                    parent: extra_vars
-                },
+                &extra_vars.with(index_var, Cow::Owned(Object::Real(i as f64))),
                 env
             )
         ) {
@@ -253,12 +248,12 @@ where
 
     let summands = i_range.iter().enumerate().map(|(i_index, i)| {
         let first_factors = i_range[..i_index].iter().map(|j| {
-            get_f(&VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(*j as f64))]), parent: extra_vars }, env)
+            get_f(&extra_vars.with(index_var, Cow::Owned(Object::Real(*j as f64))), env)
             .map(|s| s.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP))
         });
         let mut res = if let Some(r) = utils::fold_res_obj_iter(first_factors, &BinaryOperation::Mul) {
             // If `first_factors` is non-empty, compute `(prod_{x in first_factors} x) * f'(i)`
-            r.and_then(|lhs| get_f_prime(&VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(*i as f64))]), parent: extra_vars }, env)
+            r.and_then(|lhs| get_f_prime(&extra_vars.with(index_var, Cow::Owned(Object::Real(*i as f64))), env)
             .and_then(|rhs| try_operation(
                 &lhs,
                 &rhs.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP),
@@ -266,14 +261,14 @@ where
             )))
         } else {
             // Otherwise, this is the same as `f'(i)`
-            get_f_prime(&VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(*i as f64))]), parent: extra_vars }, env)
+            get_f_prime(&extra_vars.with(index_var, Cow::Owned(Object::Real(*i as f64))), env)
             .map(|s| s.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP))
         };
         // Multiply with all remaining factors
         for j in i_range[i_index+1..].iter() {
             res = res.and_then(
                 |lhs|
-                get_f(&VarStack::Frame { vars: &HashMap::from([(index_var, &Object::Real(*j as f64))]), parent: extra_vars }, env)
+                get_f(&extra_vars.with(index_var, Cow::Owned(Object::Real(*j as f64))), env)
                 .and_then(
                     |f_j| try_operation(&lhs, &f_j.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP), &BinaryOperation::Mul)
                 )

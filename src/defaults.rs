@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::f64::consts;
 use std::sync::LazyLock;
@@ -193,13 +194,13 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, b
             let [a_x, b_x, f, f_prime] = &unevaluated_args[2..6] else {unreachable!()};
             let conditions = &unevaluated_args[6..];
 
-            let varstack = VarStack::Frame { vars: &HashMap::from([(x, &evaluated_args[0])]), parent: base_stack };
+            let varstack = base_stack.with(x, Cow::Borrowed(&evaluated_args[0]));
             folded_operations::compute_product_derivative_helper(
                 index_var,
                 eval(a_x, &varstack, env)?,
                 eval(b_x, &varstack, env)?,
                 conditions.iter().map(|condition: &Expression| {
-                    |_varstack: &VarStack<'_>, _env: &mut Env| eval(condition, _varstack, _env)
+                    |_varstack: &VarStack<'_, '_>, _env: &mut Env| eval(condition, _varstack, _env)
                 }).collect(),
                 |_varstack, _env| eval(f, _varstack, _env),
                 |_varstack, _env| eval(f_prime, _varstack, _env),
@@ -233,7 +234,7 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, b
                 for cond in unevaluated_args[2..].iter() {
                     match eval(
                         cond,
-                        &VarStack::Frame { vars: &HashMap::from([(i, &Object::Real(i_val as f64))]), parent: base_stack },
+                        &base_stack.with(i, Cow::Owned(Object::Real(i_val as f64))),
                         env
                     ).and_then(|s| s.unpack_into(&mut warnings).expect_bool()) {
                         Ok(true) => {},
@@ -256,7 +257,7 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, b
                 i_range.iter(),
                 |i_val| eval(
                     f_i,
-                    &VarStack::Frame { vars: &HashMap::from([(i, &Object::Real(*i_val as f64))]), parent: base_stack },
+                    &base_stack.with(i, Cow::Owned(Object::Real(*i_val as f64))),
                     env
                 ).and_then(|s| s.try_map(|o| o.expect_matrix()))
             )?;
@@ -385,10 +386,13 @@ pub fn get_default_fn_type(
         ("___helper_prod_rule", [x_type]) if unevaluated_args.len() >= 6 => {
             unevaluated_args[5] // f(i, x)
             .get_type(
-                &VarStack::Frame { vars: &HashMap::from([
-                    (unevaluated_args[0].expect_ident()?, &x_type.representative()), // x
-                    (unevaluated_args[1].expect_ident()?, &Object::Real(1.0)) // i
-                ]), parent: extra_vars },
+                &VarStack::Frame {
+                    vars: Cow::Owned(HashMap::from([
+                        (unevaluated_args[0].expect_ident()?, Cow::Owned(x_type.representative())), // x
+                        (unevaluated_args[1].expect_ident()?, Cow::Owned(Object::Real(1.0))) // i
+                    ])),
+                    parent: extra_vars
+                },
                 env
             )
         }

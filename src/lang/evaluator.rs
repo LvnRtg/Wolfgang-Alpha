@@ -1,12 +1,12 @@
 //! Responsible for evaluating an `Expression` to an `Object`.
 
-use std::collections::HashMap;
+use std::borrow::Cow;
 use std::collections::HashSet;
 use statrs::function::gamma;
 use itertools::Itertools;
 
 use crate::math;
-use crate::math::{Env, Expression, FunctionRepr, Object, VarStack};
+use crate::math::{Env, Expression, FunctionRepr, Object, VarStack, VarStackLookup};
 use crate::math::objects::try_operation;
 use crate::math::operations::{BinaryOperation, UnaryOperation};
 use crate::math::utils::{approx_eq, linspace_as_objects};
@@ -379,7 +379,7 @@ pub fn eval(
                 |_varstack, _env| eval(inner, _varstack, _env),
                 |_some_index_var_value, _varstack, _env| {
                     inner.get_type(
-                        &VarStack::Frame { vars: &HashMap::from([(index_var, _some_index_var_value)]), parent: _varstack },
+                        &_varstack.with(index_var, Cow::Borrowed(_some_index_var_value)),
                         _env
                     )
                 },
@@ -435,10 +435,7 @@ pub fn eval(
                                 } else if let Some((_varstack, _env)) = context {
                                     eval(
                                         f_expr,
-                                        &VarStack::Frame {
-                                            vars: &f_varnames.iter().zip(parsed_args.iter()).collect(),
-                                            parent: _varstack
-                                        },
+                                        &_varstack.with_multiple(f_varnames.iter(), parsed_args.iter()),
                                         _env
                                     )
                                 } else {
@@ -466,22 +463,24 @@ pub fn eval(
             // make expressions like `exp(exp(0))` impossible.
             else if let Some((argnames, defining_expr)) = match env.functions.get(function_name) {
                Some(FunctionRepr::ByExpression(argnames, defining_expr)) => Some((argnames.clone(), defining_expr.clone())),
-               _ => None 
+               _ => None
             } {
                 let Status{value: evaluated_args, warnings} = eval_mul_exprs(given_arg_exprs.iter(), extra_vars, env)?;
                 if evaluated_args.len() != argnames.len() {
                     return Err(format!("Wrong number of arguments provided for function '{}' (expected {}, got {}).", function_name, argnames.len(), evaluated_args.len()));
                 }
-                let tmp_vars: HashMap<&String, &Object> = evaluated_args.iter().enumerate().map(|(i, x)| (&argnames[i], x)).collect();
-                let new_stack = VarStack::Frame { vars: &tmp_vars, parent: extra_vars };
-                eval(&defining_expr, &new_stack, env).map(|s| s.with_extra_warnings(warnings))
+                eval(
+                    &defining_expr,
+                    &extra_vars.with_multiple(argnames.iter(), evaluated_args.iter()),
+                    env
+                ).map(|s| s.with_extra_warnings(warnings))
             }
 
             // Check if `function_name` corresponds to a known `FunctionRepr::Direct` in `env.functions`.
             // Then, proceed similarly as for `FunctionRepr::ByExpression` but take into consideration the function mask.
             else if let Some((f, m, n, b)) = match env.functions.get(function_name) {
                Some(FunctionRepr::Direct(f, (m, n, b))) => Some((&**f, *m, *n, *b)),
-               _ => None 
+               _ => None
             } {
                 if given_arg_exprs.len() < m + n {
                     return Err(format!("Wrong number of arguments provided for function '{}' (expected at least {}).", function_name, m + n));
@@ -614,16 +613,15 @@ fn test_function_equality(
     .collect();
 
     for test_values in (0..lhs_free_variables.len()).map(|_| linspaces.iter()).multi_cartesian_product() {
-        let tmp_vars: HashMap<&String, &Object> = lhs_free_variables.iter().enumerate().map(|(i, ident)| (ident, test_values[i])).collect();
-        let new_stack = VarStack::Frame { vars: &tmp_vars, parent: extra_vars };
+        let new_stack = extra_vars.with_multiple(lhs_free_variables.iter(), test_values.iter().map(|x| *x));
         // In order to avoid massive storage usage, we only allow for a fixed number of warnings emitted.
         let lhs_eval = eval(&lhs, &new_stack, env)
-            .map_err(|e| format!("Couldn't evaluate `{}` with environment {:?}. Traceback: {}", lhs, tmp_vars, e)) // Add information to the error message
+            .map_err(|e| format!("Couldn't evaluate `{}` with environment {:?}. Traceback: {}", lhs, new_stack.get_top_level().unwrap().as_ref(), e))
             ?
             .unpack_into_with_cap(&mut warnings, 8);
         if !rhs_only_needs_single_eval {
             rhs_eval = eval(&rhs, &new_stack, env)
-                .map_err(|e| format!("Couldn't evaluate `{}` with environment {:?}. Traceback: {}", rhs, tmp_vars, e))
+                .map_err(|e| format!("Couldn't evaluate `{}` with environment {:?}. Traceback: {}", rhs, new_stack.get_top_level().unwrap().as_ref(), e))
                 ?
                 .unpack_into_with_cap(&mut warnings, 8);
         }

@@ -1,6 +1,4 @@
 use std::borrow::Cow;
-use std::iter::zip;
-use std::collections::{HashMap, HashSet};
 
 use crate::{defaults, expr_1arg_func, expr_binop, expr_compare, expr_if_else, expr_unary_op};
 use crate::lang::eval;
@@ -82,7 +80,7 @@ pub fn analytic_partial_derivative(
         )),
         Expression::UnaryOperation(UnaryOperation::Norm(opt), rhs) => {
             let (rhs_toplevel, rhs_type) = rhs.make_type_top_level(
-                &VarStack::Frame { vars: &HashMap::from([(wrt, &Object::Real(1.0))]), parent: extra_vars },
+                &extra_vars.with(wrt, Cow::Owned(Object::Real(1.0))),
                 env
             )?;
             match rhs_toplevel {
@@ -473,7 +471,7 @@ pub fn analytic_directional_derivative(
         }
         Expression::UnaryOperation(UnaryOperation::Abs, rhs) => Status::combine(
             analytic_directional_derivative(vars, rhs, point, direction, extra_vars, env)?, // Evaluate this with old vars
-            eval(rhs, &VarStack::Frame { vars: &(0..vars.len()).map(|i| (&vars[i], &point[i])).collect(), parent: extra_vars }, env)?, // But this with `vars := point`
+            eval(rhs, &extra_vars.with_multiple(vars.iter(), point.iter()), env)?, // But this with `vars := point`
             |diff_r, rhs_eval| match rhs_eval {
                 Object::Real(x) => if x > 0.0 {
                     Ok(diff_r)
@@ -496,8 +494,7 @@ pub fn analytic_directional_derivative(
                 BinaryOperation::Add | BinaryOperation::Sub => try_operation(&diff_l, &diff_r, op),
                 BinaryOperation::Quo | BinaryOperation::Rem | BinaryOperation::And | BinaryOperation::Or => Err(format!("Cannot differentiate the operation `{op}`.")),
                 BinaryOperation::Mul => {
-                    let new_frame = (0..vars.len()).map(|i| (&vars[i], &point[i])).collect();
-                    let varstack = VarStack::Frame { vars: &new_frame, parent: extra_vars };
+                    let varstack = extra_vars.with_multiple(vars.iter(), point.iter());
                     try_operation(
                         &try_operation(&diff_l, &eval(rhs, &varstack, env)?.unpack_into(&mut warnings), &BinaryOperation::Mul)?, // f'(x) * g(x)
                         &try_operation(&eval(lhs, &varstack, env)?.unpack_into(&mut warnings), &diff_r, &BinaryOperation::Mul)?,  // f(x) * g'(x)
@@ -505,8 +502,7 @@ pub fn analytic_directional_derivative(
                     )
                 },
                 BinaryOperation::Div => {
-                    let new_frame = (0..vars.len()).map(|i| (&vars[i], &point[i])).collect();
-                    let varstack = VarStack::Frame { vars: &new_frame, parent: extra_vars };
+                    let varstack = extra_vars.with_multiple(vars.iter(), point.iter());
                     let eval_lhs = eval(lhs, &varstack, env)?.unpack_into(&mut warnings);
                     let eval_rhs = eval(rhs, &varstack, env)?.unpack_into(&mut warnings);
                     try_operation( // d/dx (f(x) / g(x)) = (f'(x)g(x) - f(x)g'(x)) / g(x)²
@@ -520,8 +516,7 @@ pub fn analytic_directional_derivative(
                     )
                 }
                 BinaryOperation::Pow(_) => {
-                    let new_frame = (0..vars.len()).map(|i| (&vars[i], &point[i])).collect();
-                    let varstack = VarStack::Frame { vars: &new_frame, parent: extra_vars };
+                    let varstack = extra_vars.with_multiple(vars.iter(), point.iter());
                     let eval_lhs = eval(lhs, &varstack, env)?.unpack_into(&mut warnings);
                     let eval_rhs = eval(rhs, &varstack, env)?.unpack_into(&mut warnings);
                     try_operation( // d/dx (f(x) ^ g(x)) = f(x)^(g(x)-1) * (f'(x)g(x) + f(x)g'(x)ln(f(x)))
@@ -551,7 +546,7 @@ pub fn analytic_directional_derivative(
         Expression::FoldedOperation(FoldedOperation::Sum, index_var, from, conditions, to, inner) => {
             // As in `analytic_partial_derivative`,
             // `D sum_{i=a}^b ...(p)[d]` is interpreted as `sum_{i=a(p)}^{b(p)} D ... (p)[d]`.
-            let varstack = VarStack::Frame { vars: &zip(vars, point).collect(), parent: extra_vars };
+            let varstack = extra_vars.with_multiple(vars.iter(), point.iter());
             let Status{value: from_eval, mut warnings} = eval(from, &varstack, env)?;
             let to_eval = eval(to, &varstack, env)?.unpack_into(&mut warnings);
             match (from.contains_identifier(index_var), to.contains_identifier(index_var)) {
@@ -565,7 +560,7 @@ pub fn analytic_directional_derivative(
                 index_var,
                 |_, _| Ok(Status::ok(from_eval)),
                 conditions.iter().map(|condition: &Expression| {
-                    |_varstack: &VarStack<'_>, _env: &mut Env| eval(condition, _varstack, _env)
+                    |_varstack: &VarStack<'_, '_>, _env: &mut Env| eval(condition, _varstack, _env)
                 }).collect(),
                 |_, _| Ok(Status::ok(Cow::Borrowed(&to_eval))),
                 |_varstack, _env| analytic_directional_derivative(
@@ -578,7 +573,8 @@ pub fn analytic_directional_derivative(
                 ),
                 // The type of Df(p)[d] is the same as the type of f(p)
                 |_some_index_var_value, _varstack, _env| inner.get_type(
-                    &VarStack::Frame { vars: &HashMap::from([(index_var, _some_index_var_value)]), parent: &varstack }, _env
+                    &_varstack.with(index_var, Cow::Borrowed(_some_index_var_value)),
+                    _env
                 )
                 .map(|t| FoldedOperation::Sum.if_empty(&t))
                 .map(|o| Status::ok(o)),
@@ -588,21 +584,21 @@ pub fn analytic_directional_derivative(
         }
         Expression::FoldedOperation(FoldedOperation::Product, varname, from, conditions, to, inner) => {
             // As for the analytic partial derivative since the directional derivative follows the standard product rule too.
-            let top_frame = vars.iter().zip(point).collect();
+            let varstack = extra_vars.with_multiple(vars.iter(), point.iter());
             compute_product_derivative_helper(
                 varname,
-                eval(from, &VarStack::Frame { vars: &top_frame, parent: extra_vars }, env)?,
-                eval(to, &VarStack::Frame { vars: &top_frame, parent: extra_vars }, env)?,
+                eval(from, &varstack, env)?,
+                eval(to, &varstack, env)?,
                 conditions.iter().map(|condition: &Expression| {
-                    |_varstack: &VarStack<'_>, _env: &mut Env| eval(
+                    |_varstack: &VarStack<'_, '_>, _env: &mut Env| eval(
                         condition,
-                        &VarStack::Frame { vars: &top_frame, parent: _varstack },
+                        &_varstack.with_multiple(vars.iter(), point.iter()),
                         _env
                     )
                 }).collect(),
                 |_varstack, _env| eval(
                     inner,
-                    &VarStack::Frame { vars: &top_frame, parent: _varstack },
+                    &_varstack.with_multiple(vars.iter(), point.iter()),
                     _env
                 ),
                 |_varstack, _env| analytic_directional_derivative(vars, inner, point, direction, _varstack, _env),
@@ -620,8 +616,7 @@ pub fn analytic_directional_derivative(
                 |g_i| analytic_directional_derivative(vars, g_i, point, direction, extra_vars, env)
             )?;
             // Then, compute g(p).
-            let new_frame = (0..vars.len()).map(|i| (&vars[i], &point[i])).collect();
-            let varstack = VarStack::Frame { vars: &new_frame, parent: extra_vars };
+            let varstack = extra_vars.with_multiple(vars.iter(), point.iter());
             let g_of_point = Status::from_iter(
                 arg_expressions.iter(),
                 |g_i| eval(g_i, &varstack, env)
@@ -657,25 +652,25 @@ pub fn analytic_directional_derivative(
             if !vars.iter().any(|var| inner.contains_identifier(var)) {
                 let Status{value: dva, mut warnings} = analytic_directional_derivative(vars, a_expr, point, direction, extra_vars, env)?;
                 let dvb = analytic_directional_derivative(vars, b_expr, point, direction, extra_vars, env)?.unpack_into(&mut warnings);
-                let new_frame = (0..vars.len()).map(|i| (&vars[i], &point[i])).collect();
+                let varstack = extra_vars.with_multiple(vars.iter(), point.iter());
                 let bx = eval(
                     b_expr,
-                    &VarStack::Frame { vars: &new_frame, parent: extra_vars },
+                    &varstack,
                     env
                 )?.unpack_into(&mut warnings);
                 let ax = eval(
                     a_expr,
-                    &VarStack::Frame { vars: &new_frame, parent: extra_vars },
+                    &varstack,
                     env
                 )?.unpack_into(&mut warnings);
                 let hbx = eval(
                     inner,
-                    &VarStack::Frame { vars: &HashMap::from([(int_var, &bx)]), parent: extra_vars },
+                    &extra_vars.with(int_var, Cow::Owned(bx)),
                     env
                 )?.unpack_into(&mut warnings);
                 let hax = eval(
                     inner,
-                    &VarStack::Frame { vars: &HashMap::from([(int_var, &ax)]), parent: extra_vars },
+                    &extra_vars.with(int_var, Cow::Owned(ax)),
                     env
                 )?.unpack_into(&mut warnings);
                 try_operation(
@@ -688,7 +683,7 @@ pub fn analytic_directional_derivative(
                     let (_varstack, _env) = context.ok_or("[Unreachable] Function needs varstack and environment.".to_string())?;
                     eval(
                         expr,
-                        &VarStack::Frame { vars: &vars.iter().zip(parsed_args.iter()).collect(), parent: _varstack },
+                        &_varstack.with_multiple(vars.iter(), parsed_args.iter()),
                         _env
                     )}
                 ), point.to_vec(), direction.to_vec(), extra_vars, env)
@@ -696,8 +691,7 @@ pub fn analytic_directional_derivative(
         }
         Expression::IfElse(condition, iftrue, iffalse) => {
             // D (if c(x) {a(x)} else {b(x)})(x)[d] = if c(x) {Da(x)[d]} else {Db(x)[d]}
-            let new_frame = (0..vars.len()).map(|i| (&vars[i], &point[i])).collect();
-            let varstack = VarStack::Frame { vars: &new_frame, parent: extra_vars };
+            let varstack = extra_vars.with_multiple(vars.iter(), point.iter());
             let Status{value: condition_met, mut warnings} = eval(condition, &varstack, env)?.try_map(|o| o.expect_bool())?;
             Ok(Status {
                 value: if condition_met {

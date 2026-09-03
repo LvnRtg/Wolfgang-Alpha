@@ -1,10 +1,10 @@
-use std::fmt;
-use std::collections::{HashMap, HashSet};
-
 use itertools::Itertools;
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
+use std::fmt;
 
 use crate::{expr_binop, expr_binop_from_enum};
-use crate::math::{Env, Object, objects::ObjType, VarStack};
+use crate::math::{Env, Object, objects::ObjType, VarStack, VarStackLookup};
 use crate::math::operations::*;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -215,10 +215,7 @@ impl Expression {
             },
             FoldedOperation(_, varname, from, conditions, to, inner) => {
                 // Important: `varname` is no longer unknown within `conditions`, `inner` and `to`; however, it is still unknown within `from`.
-                let varstack = VarStack::Frame { // Varstack where `varname` is declared as known
-                    vars: &HashMap::from([(varname, &Object::Success)]),
-                    parent: extra_vars
-                };
+                let varstack = extra_vars.with(varname, Cow::Owned(Object::Success)); // Varstack where `varname` is declared as known
                 from.list_unknown_identifiers(extra_vars, env, modified_identifiers); // Here, use old `extra_vars`
                 conditions.iter().for_each(|v| v.list_unknown_identifiers(&varstack, env, modified_identifiers));
                 to.list_unknown_identifiers(&varstack, env, modified_identifiers); // Here too
@@ -227,10 +224,7 @@ impl Expression {
             PartialDerivative(wrt, expr) => {
                 // Same as above
                 expr.list_unknown_identifiers(
-                    &VarStack::Frame {
-                        vars: &HashMap::from([(wrt, &Object::Success)]),
-                        parent: extra_vars
-                    },
+                    &extra_vars.with(wrt, Cow::Owned(Object::Success)),
                     env,
                     modified_identifiers
                 )
@@ -238,10 +232,7 @@ impl Expression {
             DirectionalDerivative(vars, expr, point, direction) => {
                 // Same again
                 expr.list_unknown_identifiers(
-                    &VarStack::Frame {
-                        vars: &vars.iter().map(|v| (v, &Object::Success)).collect(),
-                        parent: extra_vars
-                    },
+                    &extra_vars.with_multiple(vars.iter(), std::iter::repeat_n(&Object::Success, vars.len())),
                     env,
                     modified_identifiers
                 );
@@ -250,10 +241,7 @@ impl Expression {
             },
             Integral(func, a, b, wrt) => {
                 func.list_unknown_identifiers(
-                    &VarStack::Frame {
-                        vars: &HashMap::from([(wrt, &Object::Success)]),
-                        parent: extra_vars
-                    },
+                    &extra_vars.with(wrt, Cow::Owned(Object::Success)),
                     env,
                     modified_identifiers
                 );
@@ -692,18 +680,18 @@ impl Expression {
                 type depends on the range ran over, so if the outer operation has an empty range, we couldn't always determine
                 the true returned type anyway (only that it is a matrix, but not its dimension).
                 */
-                let index_type_repr = from.get_type(extra_vars, env)?.representative();
-                inner.get_type(&VarStack::Frame { vars: &HashMap::from([(index_var_name, &index_type_repr)]), parent: extra_vars }, env)
+                inner.get_type(&extra_vars.with(index_var_name, Cow::Owned(from.get_type(extra_vars, env)?.representative())), env)
             }
             Expression::Function(name, args) => {
                 match env.functions.get(name) {
                     Some(super::FunctionRepr::ByExpression(varnames, expr)) => {
-                        let h = varnames.iter().zip(args)
-                            .map(|(v, a)| a.get_type(extra_vars, env).map(|t| (v, t.representative())))
-                            .collect::<Result<HashMap<_, _>, _>>()?;
                         expr.get_type(
                             &VarStack::Frame {
-                                vars: &h.iter().map(|(v, r)| (*v, r)).collect(),
+                                vars: Cow::Owned(
+                                    varnames.iter().zip(args)
+                                    .map(|(v, a)| a.get_type(extra_vars, env).map(|t| (v, Cow::Owned(t.representative()))))
+                                    .collect::<Result<HashMap<_, _>, _>>()?
+                                ),
                                 parent: extra_vars
                             },
                             env
@@ -732,12 +720,13 @@ impl Expression {
             Expression::Assignment(_, rhs) => rhs.get_type(extra_vars, env),
             Expression::PartialDerivative(..) => Ok(ObjType::LiteralExpression),
             Expression::DirectionalDerivative(vars, expr, point, _) => {
-                let h = vars.iter().zip(point)
-                    .map(|(v, a)| a.get_type(extra_vars, env).map(|t| (v, t.representative())))
-                    .collect::<Result<HashMap<_, _>, _>>()?;
                 expr.get_type(
                     &VarStack::Frame {
-                        vars: &h.iter().map(|(v, r)| (*v, r)).collect(),
+                        vars: Cow::Owned(
+                            vars.iter().zip(point)
+                            .map(|(v, a)| a.get_type(extra_vars, env).map(|t| (v, Cow::Owned(t.representative()))))
+                            .collect::<Result<HashMap<_, _>, _>>()?
+                        ),
                         parent: extra_vars
                     },
                     env
@@ -747,7 +736,7 @@ impl Expression {
                 // This time, we can assume truly w.l.o.g. that `func` always returns the same type,
                 // otherwise the integral wouldn't be defined.
                 // The integration variable has to be real.
-                func.get_type(&VarStack::Frame { vars: &HashMap::from([(wrt, &Object::Real(1.0))]), parent: extra_vars }, env)
+                func.get_type(&extra_vars.with(wrt, Cow::Owned(Object::Real(1.0))), env)
             }
             // Below, we can have a problem if `iftrue` and `iffalse` are different. Logically, this shouldn't be the case,
             // but the user _can_ do this. However, there is no way to solve this since without knowing the free variables,
@@ -1030,7 +1019,7 @@ impl Expression {
             }
             Expression::FoldedOperation(FoldedOperation::Sum, index_var_name, from, conditions, to, inner) => {
                 let (iexpr, itype) = inner.make_type_top_level(
-                    &VarStack::Frame { vars: &HashMap::from([(index_var_name, &Object::Real(1.0))]), parent: extra_vars },
+                    &extra_vars.with(index_var_name, Cow::Owned(Object::Real(1.0))),
                     env
                 )?;
                 if matches!(itype, ObjType::NonObject | ObjType::Tuple) {
@@ -1059,7 +1048,7 @@ impl Expression {
             }
             Expression::FoldedOperation(FoldedOperation::Product, index_var_name, from, conditions, to, inner) => {
                 let (iexpr, itype) = inner.make_type_top_level(
-                    &VarStack::Frame { vars: &HashMap::from([(index_var_name, &Object::Real(1.0))]), parent: extra_vars },
+                    &extra_vars.with(index_var_name, Cow::Owned(Object::Real(1.0))),
                     env
                 )?;
                 if matches!(itype, ObjType::NonObject | ObjType::Tuple | ObjType::Vector(_)) {
@@ -1110,12 +1099,13 @@ impl Expression {
                         // If this is a `FunctionRepr::ByExpression`:
                         // Idea: make the type of `defining_expr` top-level and then simply replace `f(x)` by `defining_expr`.
                         // Evidently, this requires us to replace `varnames` within `defining_expr` by the corresponding given argument in `args`.
-                        let h = varnames.iter().zip(args)
-                            .map(|(v, a)| a.get_type(extra_vars, env).map(|t| (v, t.representative())))
-                            .collect::<Result<HashMap<_, _>, _>>()?;
                         let (mut iexpr, itype) = defining_expr.make_type_top_level(
                             &VarStack::Frame {
-                                vars: &h.iter().map(|(v, r)| (*v, r)).collect(),
+                                vars: Cow::Owned(
+                                    varnames.iter().zip(args)
+                                    .map(|(v, a)| a.get_type(extra_vars, env).map(|t| (v, Cow::Owned(t.representative()))))
+                                    .collect::<Result<HashMap<_, _>, _>>()?
+                                ),
                                 parent: extra_vars
                             },
                             env
@@ -1154,7 +1144,7 @@ impl Expression {
             }
             Expression::PartialDerivative(wrt, inner) => {
                 let (iexpr, itype) = inner.make_type_top_level(
-                    &VarStack::Frame { vars: &HashMap::from([(wrt, &Object::Real(1.0))]), parent: extra_vars },
+                    &extra_vars.with(wrt, Cow::Owned(Object::Real(1.0))),
                     env
                 )?;
                 if matches!(itype, ObjType::NonObject | ObjType::Tuple) {
@@ -1175,11 +1165,12 @@ impl Expression {
                 }
             }
             Expression::DirectionalDerivative(vars, inner, point, direction) => {
-                let h = vars.iter().zip(point)
-                    .map(|(v, a)| a.get_type(extra_vars, env).map(|t| (v, t.representative())))
-                    .collect::<Result<HashMap<_, _>, _>>()?;
                 let varstack = VarStack::Frame {
-                    vars: &h.iter().map(|(v, r)| (*v, r)).collect(),
+                    vars: Cow::Owned(
+                        vars.iter().zip(point)
+                        .map(|(v, a)| a.get_type(extra_vars, env).map(|t| (v, Cow::Owned(t.representative()))))
+                        .collect::<Result<HashMap<_, _>, _>>()?
+                    ),
                     parent: extra_vars
                 };
                 let (iexpr, itype) = inner.make_type_top_level(&varstack, env)?;
@@ -1202,7 +1193,7 @@ impl Expression {
             }
             Expression::Integral(inner, a, b, wrt) => {
                 let (iexpr, itype) = inner.make_type_top_level(
-                    &VarStack::Frame { vars: &HashMap::from([(wrt, &Object::Real(1.0))]), parent: extra_vars },
+                    &extra_vars.with(wrt, Cow::Owned(Object::Real(1.0))),
                     env
                 )?;
                 if matches!(itype, ObjType::NonObject | ObjType::Tuple) {

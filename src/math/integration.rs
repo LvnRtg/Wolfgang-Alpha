@@ -1,10 +1,11 @@
 use num_traits::float::Float;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ops::{Add, AddAssign, Div, Mul, Neg};
 
 use crate::{expr_binop, expr_square, expr_unary_op};
 use crate::lang::eval;
-use crate::math::{Env, Expression, Object, VarStack};
+use crate::math::{Env, Expression, Object, VarStack, VarStackLookup};
 use crate::math::objects::try_operation;
 use crate::math::operations::{BinaryOperation, FoldedOperation, UnaryOperation};
 use crate::status::{ExtResult, Status};
@@ -268,10 +269,13 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
                 ),
                 |_some_index_var_value, _varstack, _env| {
                     inner.get_type(
-                        &VarStack::Frame { vars: &HashMap::from([
-                            (index_var, _some_index_var_value),
-                            (wrt, &Object::Real(1.0)) // Placeholder to detect type, only thing that matters is that it is real
-                        ]), parent: _varstack },
+                        &VarStack::Frame {
+                            vars: Cow::Owned(HashMap::from([
+                                (index_var, Cow::Borrowed(_some_index_var_value)),
+                                (wrt, Cow::Owned(Object::Real(1.0)))
+                            ])),
+                            parent: _varstack
+                        },
                         _env
                     )
                 },
@@ -293,12 +297,12 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
         }
         // \int_a^b d/dx f(x) dx = f(b) - f(a)
         Expression::PartialDerivative(diff_wrt, e) if diff_wrt == wrt => Status::combine(
-            eval(e, &VarStack::Frame { vars: &HashMap::from([(wrt, &Object::Real(b))]), parent: extra_vars }, env)?,
-            eval(e, &VarStack::Frame { vars: &HashMap::from([(wrt, &Object::Real(a))]), parent: extra_vars }, env)?,
+            eval(e, &extra_vars.with(wrt, Cow::Owned(Object::Real(b))), env)?,
+            eval(e, &extra_vars.with(wrt, Cow::Owned(Object::Real(a))), env)?,
             |lhs, rhs| try_operation(&lhs, &rhs, &BinaryOperation::Sub)
         ),
         other => simpson_rule_result_variant(
-            |x| eval(other, &VarStack::Frame { vars: &HashMap::from([(wrt, &Object::Real(x))]), parent: extra_vars }, env),
+            |x| eval(other, &extra_vars.with(wrt, Cow::Owned(Object::Real(x))), env),
             a, b,
             100
         )
