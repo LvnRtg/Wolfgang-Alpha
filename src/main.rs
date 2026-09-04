@@ -89,11 +89,11 @@ fn copy_to_clipboard(text: String) {
 });
 }
 
-/// Given the user input as parameter, returns the new lines to be added to the console.
+/// Given the user input as parameter, returns the new lines to be added to the console and a bool `contains_error`.
 /// 
 /// If `reset` is set to `true`, resets the environment to defaults and ignores `input`.
 /// This has to be done is this way in order to keep `ENV` as a `thread_local`.
-fn validate_input(input: &str, reset: bool) -> Vec<String> {
+fn validate_input(input: &str, reset: bool) -> (Vec<String>, bool) {
     thread_local! {
         static ENV: RefCell<math::Env> = RefCell::new(math::Env {
             constants: defaults::default_constants(),
@@ -105,7 +105,7 @@ fn validate_input(input: &str, reset: bool) -> Vec<String> {
             constants: defaults::default_constants(),
             functions: defaults::default_functions()
         });
-        vec![]
+        (vec![], false)
     } else {
         ENV.with(|cell| {
             let mut env = cell.borrow_mut();
@@ -127,8 +127,7 @@ fn submit_calculation(
         return;
     }
 
-    let output = validate_input(&query, false);
-    let is_error = output.iter().any(|line| line.starts_with("[ERROR]"));
+    let (output, is_error) = validate_input(&query, false);
 
     calculations.write().push(Calculation {
         query: query.clone(),
@@ -370,9 +369,10 @@ fn App() -> Element {
                                                             span {
                                                                 if calculation.is_error {
                                                                     "Error"
+                                                                } else {
+                                                                    "Result"
                                                                 }
                                                             }
-                                                            "Result"
                                                         }
                                                         pre { "{output}" }
                                                     }

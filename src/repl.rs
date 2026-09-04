@@ -2,14 +2,16 @@ use crate::lang;
 use crate::math;
 
 /// Shared evaluation engine: tokenizes, parses, and evaluates `input` against `env`.
-/// Returns the display lines to show to the user.
-pub fn eval_line(input: &str, env: &mut math::Env) -> Vec<String> {
+/// 
+/// Returns the display lines to show to the user as well as a bool that is `true` iff an error occurred.
+pub fn eval_line(input: &str, env: &mut math::Env) -> (Vec<String>, bool) {
     let tokens = match lang::tokenize(input) {
         Ok(x) => x,
-        Err(e) => return vec![e],
+        Err(e) => return (vec![e], false),
     };
     let mut parser = lang::Parser::from(tokens);
     let mut output = Vec::<String>::new();
+    let mut is_error = false;
     while let Some(res) = parser.parse_next(env) {
         match res {
             Ok(expr) => {
@@ -22,15 +24,17 @@ pub fn eval_line(input: &str, env: &mut math::Env) -> Vec<String> {
                             output.append(&mut status.into_multline());
                         }
                         Err(e) => {
-                            output.push(format!("[ERROR] {}", e));
+                            is_error = true;
+                            output.push(e);
                         }
                     }
                 }
             }
             Err(e) => {
-                output.push(format!("[ERROR] {}", e));
+                is_error = true;
+                output.push(e);
             }
         }
     }
-    output
+    (output, is_error)
 }
