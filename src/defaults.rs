@@ -133,7 +133,7 @@ macro_rules! apply_matrix_fn {
 /// 
 /// Note that the user can't create new direct functions, so this approach works.
 #[allow(clippy::type_complexity)]
-pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, bool)); 25]> = LazyLock::new(|| [
+pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, bool)); 26]> = LazyLock::new(|| [
     expect_n_objs!(sign, 1, |args: &[Object]| {
         match &args[0] {
             Object::Real(x) => Ok(Object::Real(if *x >= 0.0 {1.0} else {-1.0})),
@@ -334,6 +334,18 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, b
             }
         }),
         (0, 0, false)
+    ),
+
+    // show_components
+    (
+        Box::new(|evaluated_args, unevaluated_args, context| {
+            if evaluated_args.len() != 0 || unevaluated_args.len() != 1 {
+                return Err(format!("Wrong number of arguments provided for function 'show_components' (expected 0 evaluated and 1 unevaluated, got {}, {} respectively).", evaluated_args.len(), unevaluated_args.len()))
+            }
+            let (extra_vars, env) = context.ok_or("Function 'show_components' needs `VarStack` and `Env`.".to_string())?;
+            unevaluated_args[0].make_type_top_level(true, extra_vars, env).map(|(e, _)| Status::ok(Object::LiteralExpression(e)))
+        }),
+        (0, 1, false)
     )
 ]);
 
@@ -347,7 +359,7 @@ pub fn default_functions() -> HashMap<String, FunctionRepr> {
         "tan", "tanh", "atan", "atanh",
         "eig", "det", "adj", "tr", "transpose",
         "___helper_prod_rule", "___helper_matrix_prod",
-        "del"
+        "del", "show_components"
     ].into_iter().enumerate().map(
         |(i, n)|
         (n.to_string(), FunctionRepr::Direct(&DEFAULT_DIRECT_FUNCTIONS[i].0, DEFAULT_DIRECT_FUNCTIONS[i].1))

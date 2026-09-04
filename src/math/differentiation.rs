@@ -80,6 +80,7 @@ pub fn analytic_partial_derivative(
         )),
         Expression::UnaryOperation(UnaryOperation::Norm(opt), rhs) => {
             let (rhs_toplevel, rhs_type) = rhs.make_type_top_level(
+                false,
                 &extra_vars.with(wrt, Cow::Owned(Object::Real(1.0))),
                 env
             )?;

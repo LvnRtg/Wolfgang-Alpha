@@ -187,6 +187,8 @@ impl Expression {
     /// 
     /// Returns this expression along with the corresponding `ObjType`.
     /// 
+    /// Replaces `constants` in the environment by their actual values iff `substitute_constants` is set to true.
+    /// 
     /// Notes:
     /// - This function is used e.g. to analytically differentiate expressions like `d/dx ||f(x)||`, because
     ///   we then need to know the individual components of `f`.
@@ -194,12 +196,27 @@ impl Expression {
     ///   operations into folded operations (e.g. `A * v`) in order to make the distinct components apparent.
     ///   This causes the loss of strategies like parallelization and tiling.
     /// - This function does _not_ necessarily expand expressions like `x * (y + z)`.
-    pub fn make_type_top_level(&self, extra_vars: &VarStack, env: &Env) -> Result<(Expression, ObjType), String> {
+    pub fn make_type_top_level(&self, substitute_constants: bool, extra_vars: &VarStack, env: &Env) -> Result<(Expression, ObjType), String> {
         // This implementation is more or less an extended version of `get_type()`.
         match self {
             // In quite a few cases, we can simply leave the expression as is if we know that it will be a real number anyway (e.g. `||f(x)||`).
-            Expression::None | Expression::Identifier(_) | Expression::Number(_) | Expression::Tuple(_) | Expression::Vector(_) | Expression::Matrix(..)
+            Expression::None | Expression::Number(_) | Expression::Tuple(_) | Expression::Vector(_) | Expression::Matrix(..)
                 => self.get_type(extra_vars, env).map(|t| (self.clone(), t)),
+            Expression::Identifier(x) => {
+                if let Some(obj) = extra_vars.lookup(x).or_else(|| env.constants.get(x)) {
+                    Ok((
+                        if substitute_constants {
+                            obj.to_expression()
+                        } else {
+                            Expression::Identifier(x.clone())
+                        },
+                        obj.get_type()
+                    ))
+                } else {
+                    Err(format!("Unknown identifier: {:?}", x))
+                }
+                
+            }
             Expression::UnaryOperation(UnaryOperation::Abs, inner) | Expression::UnaryOperation(UnaryOperation::Factorial, inner) => {
                 // No need to call `make_type_top_level`, since if `inner` is a scalar, `Abs` will return a scalar anyway.
                 if matches!(inner.get_type(extra_vars, env)?, ObjType::Scalar | ObjType::LiteralExpression) {
@@ -217,7 +234,7 @@ impl Expression {
             }
             // Unary operations that are evaluated componentswise
             Expression::UnaryOperation(op, rhs) => {
-                rhs.make_type_top_level(extra_vars, env)
+                rhs.make_type_top_level(substitute_constants, extra_vars, env)
                 .map(|(e, t)| (match e {
                     Expression::Tuple(v) => Expression::Tuple(
                         v.into_iter().map(|x| Expression::UnaryOperation(op.clone(), Box::new(x))).collect()
@@ -232,8 +249,8 @@ impl Expression {
                 }, t))
             }
             Expression::BinaryOperation(l, op, r) => {
-                let (lexpr, ltype) = l.make_type_top_level(extra_vars, env)?;
-                let (rexpr, rtype) = r.make_type_top_level(extra_vars, env)?;
+                let (lexpr, ltype) = l.make_type_top_level(substitute_constants, extra_vars, env)?;
+                let (rexpr, rtype) = r.make_type_top_level(substitute_constants, extra_vars, env)?;
                 let err = || Err(format!("Operation '{}' invalid for operands {:?} and {:?}.", op, l, r));
                 if matches!(ltype, ObjType::NonObject | ObjType::Tuple) || matches!(rtype, ObjType::NonObject | ObjType::Tuple) {
                     return err();
@@ -343,7 +360,7 @@ impl Expression {
                                                     expr_binop!(
                                                         Expression::Vector((0..n).map(|k| v[__v[0] * n + k].clone()).collect()), // v_{i,.}
                                                         Mul,
-                                                        Expression::Vector((0..n).map(|k| w[k * n + __v[1]].clone()).collect())  // w_{.,j}
+                                                        Expression::Vector((0..n).map(|k| w[k * _n + __v[1]].clone()).collect())  // w_{.,j}
                                                     )
                                                 }
                                             ).collect()
@@ -441,6 +458,7 @@ impl Expression {
             }
             Expression::FoldedOperation(FoldedOperation::Sum, index_var_name, from, conditions, to, inner) => {
                 let (iexpr, itype) = inner.make_type_top_level(
+                    substitute_constants,
                     &extra_vars.with(index_var_name, Cow::Owned(Object::Real(1.0))),
                     env
                 )?;
@@ -470,6 +488,7 @@ impl Expression {
             }
             Expression::FoldedOperation(FoldedOperation::Product, index_var_name, from, conditions, to, inner) => {
                 let (iexpr, itype) = inner.make_type_top_level(
+                    substitute_constants,
                     &extra_vars.with(index_var_name, Cow::Owned(Object::Real(1.0))),
                     env
                 )?;
@@ -522,6 +541,7 @@ impl Expression {
                         // Idea: make the type of `defining_expr` top-level and then simply replace `f(x)` by `defining_expr`.
                         // Evidently, this requires us to replace `varnames` within `defining_expr` by the corresponding given argument in `args`.
                         let (mut iexpr, itype) = defining_expr.make_type_top_level(
+                            substitute_constants,
                             &VarStack::Frame {
                                 vars: Cow::Owned(
                                     varnames.iter().zip(args)
@@ -542,9 +562,9 @@ impl Expression {
                         if args.len() < m + n {
                             return Err(format!("Wrong number of arguments provided for function '{}' (expected at least {}).", name, m + n));
                         }
-                        let mut evaluated_args = args.iter().take(*m).map(|a| a.make_type_top_level(extra_vars, env)).collect::<Result<Vec<_>, _>>()?;
+                        let mut evaluated_args = args.iter().take(*m).map(|a| a.make_type_top_level(substitute_constants, extra_vars, env)).collect::<Result<Vec<_>, _>>()?;
                         if *b {
-                            evaluated_args.extend(args.iter().skip(m+n).map(|a| a.make_type_top_level(extra_vars, env)).collect::<Result<Vec<_>, _>>()?)
+                            evaluated_args.extend(args.iter().skip(m+n).map(|a| a.make_type_top_level(substitute_constants, extra_vars, env)).collect::<Result<Vec<_>, _>>()?)
                         }
                         make_default_fn_type_top_level(
                             name,
@@ -558,7 +578,7 @@ impl Expression {
                 }
             }
             Expression::Assignment(lhs, rhs) => {
-                rhs.make_type_top_level(extra_vars, env)
+                rhs.make_type_top_level(substitute_constants, extra_vars, env)
                 .map(|(rexpr, rtype)| (
                     Expression::Assignment(lhs.clone(), Box::new(rexpr)),
                     rtype
@@ -566,6 +586,7 @@ impl Expression {
             }
             Expression::PartialDerivative(wrt, inner) => {
                 let (iexpr, itype) = inner.make_type_top_level(
+                    substitute_constants,
                     &extra_vars.with(wrt, Cow::Owned(Object::Real(1.0))),
                     env
                 )?;
@@ -595,7 +616,7 @@ impl Expression {
                     ),
                     parent: extra_vars
                 };
-                let (iexpr, itype) = inner.make_type_top_level(&varstack, env)?;
+                let (iexpr, itype) = inner.make_type_top_level(substitute_constants, &varstack, env)?;
                 if matches!(itype, ObjType::NonObject | ObjType::Tuple) {
                     Err(format!("Operation 'DirectionalDerivative' invalid for operand {:?}.", iexpr))
                 } else {
@@ -615,6 +636,7 @@ impl Expression {
             }
             Expression::Integral(inner, a, b, wrt) => {
                 let (iexpr, itype) = inner.make_type_top_level(
+                    substitute_constants,
                     &extra_vars.with(wrt, Cow::Owned(Object::Real(1.0))),
                     env
                 )?;
@@ -636,8 +658,8 @@ impl Expression {
                 }
             }
             Expression::IfElse(condition, iftrue, iffalse) => {
-                let (texpr, ttype) = iftrue.make_type_top_level(extra_vars, env)?;
-                let (fexpr, ftype) = iffalse.make_type_top_level(extra_vars, env)?;
+                let (texpr, ttype) = iftrue.make_type_top_level(substitute_constants, extra_vars, env)?;
+                let (fexpr, ftype) = iffalse.make_type_top_level(substitute_constants, extra_vars, env)?;
                 if ttype == ftype {
                     Ok((match (texpr, fexpr) {
                         (Expression::Vector(v), Expression::Vector(w)) => Expression::Vector(
