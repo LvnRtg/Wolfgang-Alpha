@@ -2,8 +2,8 @@ use std::borrow::Cow;
 
 use crate::{defaults, expr_1arg_func, expr_binop, expr_compare, expr_if_else, expr_unary_op};
 use crate::lang::eval;
-use crate::math::{Env, FunctionRepr, integration, Object, ObjType, Matrix, VarStack, Vector};
-use crate::math::expressions::*;
+use crate::math::{Env, Expression, FunctionRepr, integration, Object, ObjType, Matrix, VarStack, Vector};
+use crate::math::expressions::simplification::*;
 use crate::math::matrices_and_vectors::{VectorNorm, MatrixNorm};
 use crate::math::objects::{try_operation};
 use crate::math::operations::{BinaryOperation, FoldedOperation, UnaryOperation};
