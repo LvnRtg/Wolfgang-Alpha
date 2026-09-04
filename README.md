@@ -73,15 +73,26 @@ The basic syntax is the natural one with usual operator precedence. A few specia
 - Delete a constant/function with `del(x)`. You can delete as many constants/functions as you want at once, e.g. `del(x, y, f)`.
 
 ### Built-in constants and functions
-- The built-in constants currently are `pi` and `e`.
-- The built-in functions are:
-  - `1` (indicator function)
-  - `exp`, `ln` and `log(x, base)`
-  - `sign` (with the convention `sign(0) = 1`)
-  - `sqrt`
-  - `cos`, `sin`, `tan` as well as hyperbolic versions (e.g. `cosh`) and all inverses (e.g. `acos`, `acosh`)
-  - Matrix functions `eig`, `adj`, `det`, `tr`
-- There are some helper functions prefixed with `___helper_` to increase efficiency. These don't have built-in derivatives.
+#### Constants
+- `π` (alias `pi`)
+- `e` (Euler's number)
+- `i` (imaginary unit)
+- `∞` (alias `inf`)
+#### Functions operating on objects
+- `1` (indicator function)
+- `exp`, `ln` and `log(x, base)`
+- `sign` (with the convention `sign(0) = 1`)
+- `sqrt`
+- `cos`, `sin`, `tan` as well as hyperbolic versions (e.g. `cosh`) and all inverses (e.g. `acos`, `acosh`)
+- Matrix functions `eig`, `adj`, `det`, `tr`, `transpose`
+#### Functions operating on expressions
+- `del` to delete custom constants/functions, see [custom definitions](#custom-definitions).
+- `show_components(expr)`: if `expr` can be evaluated to a vector, gives back a representation of `expr` in which the components of the result are clearly visible (i.e. a representation as `Expression::Vector`). For example, `show_components([x; 1] + [1; y])` outputs `[x + 1; 1 + y]`. Behaves analogously if `expr` can be evaluated to a matrix.
+
+#### Helper functions
+These functions are prefixed with `___helper_` and made increase efficiency.
+- `___helper_prod_rule(x_val, x, i, a(x), b(x), f(i,x), f'(i,x))`, where only the first argument is an object (all other arguments are expressions), computes `sum_{i=a(x_val)}^{b(x_val)} f'(i, x_val) * prod_{j=a(x_val), j!=i}^{b(x_val)} f(j, x_val)`. You can add an arbitrary number of conditions as expressions after these arguments.
+- `___helper_matrix_prod(j, k, a, b, i, f(i))`, where the first 4 arguments are objects and the last 2 are expressions, computes the `(j, k)`-entry of the matrix `prod_{i=a}^b f(i)` You can add an arbitrary number of conditions as expressions after these arguments.
 
 ### Comparisons
 - Test if two values are equal: `expr = other_expr` where both expressions must be evaluable to an `Object`. Very small errors are tolerated.
