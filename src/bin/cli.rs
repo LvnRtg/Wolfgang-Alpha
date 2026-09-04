@@ -25,7 +25,7 @@ fn main() {
                 if input == "exit" || input == "quit" {
                     break;
                 }
-                let output = repl::eval_line(&input, &mut env);
+                let (output, _) = repl::eval_line(&input, &mut env);
                 for line in output {
                     println!("{}", line);
                 }
