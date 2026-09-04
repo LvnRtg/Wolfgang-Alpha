@@ -294,7 +294,7 @@ fn tokenize_recursive(chars: &mut Peekable<Chars>, return_early: Vec<char>) -> R
                     else {break;}
                 }
                 let mut ident = String::new();
-                while let Some(&nc) = chars.peek() && (nc.is_ascii_alphabetic() || nc.is_ascii_digit() || nc == '_' || SPECIAL_SYMBOLS.iter().any(|(x, _)| *x == c)) {
+                while let Some(&nc) = chars.peek() && (nc.is_ascii_alphabetic() || nc.is_ascii_digit() || nc == '_' || SPECIAL_SYMBOLS.iter().any(|(x, _)| *x == nc)) {
                     ident.push(nc);
                     chars.next();
                 };
