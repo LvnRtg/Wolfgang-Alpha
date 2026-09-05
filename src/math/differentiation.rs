@@ -6,7 +6,7 @@ use crate::math::{Env, Expression, FunctionRepr, integration, Object, ObjType, M
 use crate::math::expressions::simplification::*;
 use crate::math::matrices_and_vectors::{VectorNorm, MatrixNorm};
 use crate::math::objects::{try_operation};
-use crate::math::operations::{BinaryOperation, FoldedOperation, UnaryOperation};
+use crate::math::operations::{BinaryOperation, Comparison, FoldedOperation, UnaryOperation};
 use crate::math::operations::folded_operations::{compute_folded_operation, compute_product_derivative_helper};
 use crate::math::utils::{approx_eq, min};
 use crate::status::{ExtResult, Status};
@@ -179,18 +179,58 @@ pub fn analytic_partial_derivative(
                 (false, true) => warnings.push(format!("Assuming that `{}` is continuous in {} to differentiate product.", to, wrt)),
                 (false, false) => {}
             };
-            let mut args = vec![
-                Expression::Identifier(wrt.clone()), // x, once to be evaluated
-                Expression::Identifier(wrt.clone()), // x, once as literal expression
-                Expression::Identifier(index_var.clone()), // i
-                *from.clone(), // a(x)
-                *to.clone(), // b(x)
-                *inner.clone(), // f(i, x)
-                inner_diff // f'(i, x)
-            ];
-            args.append(&mut conditions.clone()); // Add conditions at the end
-            Ok(Status{
-                value: Expression::Function("___helper_prod_rule".to_string(), args),
+            // Note: in the following strucutre, we have to change the inner index of the inner folded operation
+            // from `index_var` to something else; otherwise, the condition `i != j` will not be valid.
+            let new_index_var = Expression::get_new_free_identifier_in_none_of(
+                {
+                    let index_var_prefix = index_var.chars().take_while(|c| !c.is_ascii_digit()).collect::<String>(); // Always non-empty
+                    if index_var_prefix.len() == 1 {
+                        let c = index_var_prefix.chars().next().unwrap() as u32;
+                        if c >= 65 && c < 90 || c >= 97 && c < 122 { // Exclude 'Z', 'z'
+                            char::from_u32(c+1).unwrap().to_string()
+                        } else {
+                            index_var_prefix.clone()
+                        }
+                    } else {
+                        index_var_prefix.clone()
+                    }
+                },
+                std::iter::chain(
+                    std::iter::chain(
+                        std::iter::once(&**to),
+                        std::iter::once(&**inner)
+                    ),
+                    conditions.iter()
+                )
+            );
+            Ok(Status {
+                value: Expression::FoldedOperation(
+                    FoldedOperation::Sum,
+                    index_var.clone(),
+                    from.clone(),
+                    conditions.clone(),
+                    to.clone(),
+                    Box::new(expr_binop!(
+                        inner_diff,
+                        Mul,
+                        Expression::FoldedOperation(
+                            FoldedOperation::Product,
+                            new_index_var.clone(),
+                            from.clone(),
+                            {
+                                let mut cond = conditions.iter().map(|c| c.replace_identifiers(index_var, &Expression::Identifier(new_index_var.clone()))).collect::<Vec<_>>();
+                                cond.push(expr_binop!(
+                                    Expression::Identifier(index_var.clone()),
+                                    Comp(Comparison::Neq, None),
+                                    Expression::Identifier(new_index_var.clone())
+                                ));
+                                cond
+                            },
+                            Box::new(to.replace_identifiers(index_var, &Expression::Identifier(new_index_var.clone()))),
+                            Box::new(inner.replace_identifiers(index_var, &Expression::Identifier(new_index_var)))
+                        )
+                    ))
+                ),
                 warnings
             })
         }

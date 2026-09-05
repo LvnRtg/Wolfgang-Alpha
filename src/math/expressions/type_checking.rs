@@ -131,9 +131,7 @@ impl Expression {
                         get_default_fn_type(
                             name,
                             &evaluated_arg_types,
-                            if *b {&args[*m .. (m+n)]} else {&args[*m..]},
-                            extra_vars,
-                            env
+                            if *b {&args[*m .. (m+n)]} else {&args[*m..]}
                         )
                     },
                     None => Err(format!("No such function: \"{name}\"."))
@@ -569,9 +567,7 @@ impl Expression {
                         make_default_fn_type_top_level(
                             name,
                             evaluated_args,
-                            if *b {&args[*m .. (m+n)]} else {&args[*m..]},
-                            extra_vars,
-                            env
+                            if *b {&args[*m .. (m+n)]} else {&args[*m..]}
                         )
                     }
                     None => Err(format!("No such function: \"{name}\"."))
@@ -689,9 +685,7 @@ impl Expression {
 pub fn get_default_fn_type(
     name: &str,
     evaluated_arg_types: &[ObjType],
-    unevaluated_args: &[Expression],
-    extra_vars: &VarStack,
-    env: &Env
+    unevaluated_args: &[Expression]
 ) -> Result<ObjType, String> {
     match (name, evaluated_arg_types) {
         // Scalar functions
@@ -704,19 +698,6 @@ pub fn get_default_fn_type(
         ("adj", [ObjType::Matrix(m, n)]) if m == n => Ok(ObjType::Matrix(*n, *n)),
         ("transpose", [ObjType::Matrix(m, n)]) => Ok(ObjType::Matrix(*n, *m)),
         // Helper functions
-        ("___helper_prod_rule", [x_type]) if unevaluated_args.len() >= 6 => {
-            unevaluated_args[5] // f(i, x)
-            .get_type(
-                &VarStack::Frame {
-                    vars: Cow::Owned(HashMap::from([
-                        (unevaluated_args[0].expect_ident()?, Cow::Owned(x_type.representative())), // x
-                        (unevaluated_args[1].expect_ident()?, Cow::Owned(Object::Real(1.0))) // i
-                    ])),
-                    parent: extra_vars
-                },
-                env
-            )
-        }
         ("___helper_matrix_prod", [_,_,_,_]) if unevaluated_args.len() >= 2 => Ok(ObjType::Scalar),
         // Meta functions
         ("del", _) => Ok(ObjType::NonObject),
@@ -733,9 +714,7 @@ pub fn get_default_fn_type(
 pub fn make_default_fn_type_top_level(
     name: &str,
     evaluated_args: Vec<(Expression, ObjType)>,
-    unevaluated_args: &[Expression],
-    _extra_vars: &VarStack, // TODO check if needed when `___helper_prod_rule` is disposed of
-    _env: &Env          // same
+    unevaluated_args: &[Expression]
 ) -> Result<(Expression, ObjType), String> {
     let (evaluated_arg_exprs, evaluated_arg_types): (Vec<_>, Vec<_>) = evaluated_args.into_iter().unzip();
     match (name, &evaluated_arg_types[..]) {
@@ -804,9 +783,6 @@ pub fn make_default_fn_type_top_level(
             ObjType::Matrix(*n, *m)
         )),
         // Helper functions
-        ("___helper_prod_rule", [x_type]) if unevaluated_args.len() >= 6 => {
-            unimplemented!() // TODO when `___helper_prod_rule` is disposed of
-        }
         ("___helper_matrix_prod", [_,_,_,_]) if unevaluated_args.len() >= 2 => {
             let mut _args = evaluated_arg_exprs;
             _args.extend(unevaluated_args.iter().cloned());

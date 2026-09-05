@@ -91,7 +91,6 @@ The basic syntax is the natural one with usual operator precedence. A few specia
 
 #### Helper functions
 These functions are prefixed with `___helper_` and made increase efficiency.
-- `___helper_prod_rule(x_val, x, i, a(x), b(x), f(i,x), f'(i,x))`, where only the first argument is an object (all other arguments are expressions), computes `sum_{i=a(x_val)}^{b(x_val)} f'(i, x_val) * prod_{j=a(x_val), j!=i}^{b(x_val)} f(j, x_val)`. You can add an arbitrary number of conditions as expressions after these arguments.
 - `___helper_matrix_prod(j, k, a, b, i, f(i))`, where the first 4 arguments are objects and the last 2 are expressions, computes the `(j, k)`-entry of the matrix `prod_{i=a}^b f(i)` You can add an arbitrary number of conditions as expressions after these arguments.
 
 ### Comparisons

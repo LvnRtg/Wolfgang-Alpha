@@ -8,7 +8,7 @@ use crate::{expr_1arg_func, expr_binop, expr_compare, expr_if_else, expr_square,
 use crate::lang::eval;
 use crate::math::expressions;
 use crate::math::operations::folded_operations;
-use crate::math::{Complex, DirectFunction, Env, Expression, FunctionRepr, Matrix, Object, VarStack};
+use crate::math::{Complex, DirectFunction, Expression, FunctionRepr, Matrix, Object};
 use crate::status::Status;
 
 /// Wrapped in a function because const hashmaps aren't available yet.
@@ -133,7 +133,7 @@ macro_rules! apply_matrix_fn {
 /// 
 /// Note that the user can't create new direct functions, so this approach works.
 #[allow(clippy::type_complexity)]
-pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, bool)); 26]> = LazyLock::new(|| [
+pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, bool)); 25]> = LazyLock::new(|| [
     expect_n_objs!(sign, 1, |args: &[Object]| {
         match &args[0] {
             Object::Real(x) => Ok(Object::Real(if *x >= 0.0 {1.0} else {-1.0})),
@@ -179,37 +179,6 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, b
     }),
     apply_matrix_fn!(tr, |r: Result<f64, String>, _| {r.map(Object::Real)}),
     apply_matrix_fn!(transpose, |r: Matrix, _| {Ok(Object::Matrix(r))}),
-
-    // ___helper_prod_rule
-    // Takes an object `x_val`, expressions `x`, `i`, `a(x)`, `b(x)`, `f(i,x)` and `f'(i,x)`, a `&mut Env env` and a `&VarStack`.
-    // Afterwards, there can be an arbitrary additional amount of expressions: these will be considered as conditions.
-    // Then, returns `\sum_{i=a(x), all_conditions(i)}^{b(x)} f'(i,x) * \prod_{j=a(x), j!=i, all_conditions(j)}^{b(x)} f(j,x)`.
-    (
-        Box::new(|evaluated_args, unevaluated_args, context| {
-            if evaluated_args.len() != 1 || unevaluated_args.len() < 6 {
-                return Err(format!("Wrong number of arguments provided for function '___helper_prod_rule' (expected ==1 evaluated and >=6 unevaluated, got {}, {} respectively).", evaluated_args.len(), unevaluated_args.len()));
-            }
-            let (base_stack, env) = context.ok_or("Function '___helper_prod_rule' needs `VarStack` and `Env`.".to_string())?;
-            let (x, index_var) = (unevaluated_args[0].expect_ident()?, unevaluated_args[1].expect_ident()?);
-            let [a_x, b_x, f, f_prime] = &unevaluated_args[2..6] else {unreachable!()};
-            let conditions = &unevaluated_args[6..];
-
-            let varstack = base_stack.with(x, Cow::Borrowed(&evaluated_args[0]));
-            folded_operations::compute_product_derivative_helper(
-                index_var,
-                eval(a_x, &varstack, env)?,
-                eval(b_x, &varstack, env)?,
-                conditions.iter().map(|condition: &Expression| {
-                    |_varstack: &VarStack<'_, '_>, _env: &mut Env| eval(condition, _varstack, _env)
-                }).collect(),
-                |_varstack, _env| eval(f, _varstack, _env),
-                |_varstack, _env| eval(f_prime, _varstack, _env),
-                &varstack,
-                env
-            )
-        }),
-        (1, 6, false)
-    ),
 
     // ___helper_matrix_prod
     // Takes integers `k_a`, `k_{b+1}`, `a`, a float `b`, a string `i` and an expression `f(i)` which is an `Expression::Matrix` of size `m(i)`x`m(i+1)`.
@@ -358,7 +327,7 @@ pub fn default_functions() -> HashMap<String, FunctionRepr> {
         "sin", "sinh", "asin", "asinh",
         "tan", "tanh", "atan", "atanh",
         "eig", "det", "adj", "tr", "transpose",
-        "___helper_prod_rule", "___helper_matrix_prod",
+        "___helper_matrix_prod",
         "del", "show_components"
     ].into_iter().enumerate().map(
         |(i, n)|

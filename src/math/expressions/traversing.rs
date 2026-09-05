@@ -370,18 +370,30 @@ impl Expression {
     /// This can be used to create an `Expression::Integral` for which
     /// the integration variable doesn't clash with any variable inside the integrand.
     pub fn get_new_free_identifier(&self, prefix: &str) -> String {
-        format!("{}{}", prefix, self.get_new_free_identifier_recursive(prefix, 0))
+        let i = self.get_new_free_identifier_recursive(prefix, 0);
+        if i == 0 {
+            prefix.to_string()
+        } else {
+            format!("{}{}", prefix, i)
+        }
     }
     /// Returns the first identifier of the form `prefixNumber` (e.g. `x2` if `prefix` is `x`) which
     /// is contained in none of the given expressions.
     /// 
     /// This can be used to create an `Expression::Integral` for which
     /// the integration variable doesn't clash with any variable inside the integrand.
-    pub fn get_new_free_identifier_in_none_of(prefix: &str, exprs: &[Expression]) -> String {
-        format!("{}{}", prefix, exprs.iter().map(|e| e.get_new_free_identifier_recursive(prefix, 0)).max().unwrap_or(0))
+    pub fn get_new_free_identifier_in_none_of<'a>(prefix: String, exprs: impl Iterator<Item = &'a Expression>) -> String {
+        let i = exprs.map(|e| e.get_new_free_identifier_recursive(&prefix, 0)).max().unwrap_or(0);
+        if i == 0 {
+            prefix
+        } else {
+            format!("{}{}", prefix, i)
+        }
     }
     /// Returns an integer `j` (not necessarily the smallest one) such that `{prefix}{j}` is not contained in `self`.
     /// Returning the smallest one is not very useful for `get_new_free_identifier` but would increase computation time.
+    /// 
+    /// Returns `0` iff `prefix` itself is not contained in `self`.
     /// 
     /// If `{prefix}{i}` is not contained in `self` (for the given parameter `i`), then `i` is returned as is.
     fn get_new_free_identifier_recursive(&self, prefix: &str, i: usize) -> usize {
@@ -389,8 +401,14 @@ impl Expression {
         // If `id` is of the form `{prefix}{j}` for some `j >= i`, return `j+1`, otherwise `i`.
         // This ensures that whenever we reach the end of the expression `self`, the integer this function returns is contained nowhere.
         let check_id = |id: &String| {
-            if let Some(suffix) = id.strip_prefix(prefix) && let Ok(j) = suffix.parse::<usize>() && j >= i {
-                j+1
+            if let Some(suffix) = id.strip_prefix(prefix) {
+                if suffix.is_empty() { // `id == prefix`
+                    1
+                } else if let Ok(j) = suffix.parse::<usize>() && j >= i { // `id == {prefix}{j}`
+                    j+1
+                } else {
+                    i
+                }
             } else {
                 i
             }
