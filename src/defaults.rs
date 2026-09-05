@@ -631,7 +631,7 @@ pub fn get_default_derivative(function_name: &str, point: &[Expression], directi
         // `= \sum_{j=a}^b (\prod_{i=a}^{j-1} f(i) * d/dx f(j) * \prod_{i=j+1}^b f(i))_{k_a,k_{b+1}}`
         // `= \sum_{j=a}^b ___helper_matrix_prod(k_a, k_{b+1}, a, b, if i == j {d/dx f(j)} else {f(i)})`
         "___helper_matrix_prod" => assert_length!(6, ___helper_matrix_prod, point, direction, {
-            let outer_sum_index_var = Expression::get_new_free_identifier_in_none_of("j", &point);
+            let outer_sum_index_var = Expression::get_new_free_identifier_in_none_of('j'.to_string(), point.iter());
             Expression::FoldedOperation(
                 folded_operations::FoldedOperation::Sum,
                 outer_sum_index_var.clone(), // j
