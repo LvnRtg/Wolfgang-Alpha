@@ -364,7 +364,7 @@ impl Expression {
 }
 
 impl Expression {
-    /// Returns the first identifier of the form `prefixNumber` (e.g. `x2` if `prefix` is `x`) which
+    /// Returns the first identifier of the form `prefix_number` (e.g. `x_2` if `prefix` is `x`) which
     /// is contained nowhere inside `self`.
     /// 
     /// This can be used to create an `Expression::Integral` for which
@@ -374,10 +374,10 @@ impl Expression {
         if i == 0 {
             prefix.to_string()
         } else {
-            format!("{}{}", prefix, i)
+            format!("{}_{}", prefix, i)
         }
     }
-    /// Returns the first identifier of the form `prefixNumber` (e.g. `x2` if `prefix` is `x`) which
+    /// Returns the first identifier of the form `prefix_number` (e.g. `x_2` if `prefix` is `x`) which
     /// is contained in none of the given expressions.
     /// 
     /// This can be used to create an `Expression::Integral` for which
@@ -387,15 +387,15 @@ impl Expression {
         if i == 0 {
             prefix
         } else {
-            format!("{}{}", prefix, i)
+            format!("{}_{}", prefix, i)
         }
     }
-    /// Returns an integer `j` (not necessarily the smallest one) such that `{prefix}{j}` is not contained in `self`.
+    /// Returns an integer `j` (not necessarily the smallest one) such that `{prefix}_{j}` is not contained in `self`.
     /// Returning the smallest one is not very useful for `get_new_free_identifier` but would increase computation time.
     /// 
     /// Returns `0` iff `prefix` itself is not contained in `self`.
     /// 
-    /// If `{prefix}{i}` is not contained in `self` (for the given parameter `i`), then `i` is returned as is.
+    /// If `{prefix}_{i}` is not contained in `self` (for the given parameter `i`), then `i` is returned as is.
     fn get_new_free_identifier_recursive(&self, prefix: &str, i: usize) -> usize {
         // The below function `check_id` does the following.
         // If `id` is of the form `{prefix}{j}` for some `j >= i`, return `j+1`, otherwise `i`.
@@ -404,7 +404,7 @@ impl Expression {
             if let Some(suffix) = id.strip_prefix(prefix) {
                 if suffix.is_empty() { // `id == prefix`
                     1
-                } else if let Ok(j) = suffix.parse::<usize>() && j >= i { // `id == {prefix}{j}`
+                } else if suffix.chars().skip(1).next().unwrap() == '_' && let Ok(j) = suffix[1..].parse::<usize>() && j >= i { // `id == {prefix}_{j}`
                     j+1
                 } else {
                     i

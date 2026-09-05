@@ -220,9 +220,9 @@ pub fn analytic_partial_derivative(
                             {
                                 let mut cond = conditions.iter().map(|c| c.replace_identifiers(index_var, &Expression::Identifier(new_index_var.clone()))).collect::<Vec<_>>();
                                 cond.push(expr_binop!(
-                                    Expression::Identifier(index_var.clone()),
+                                    Expression::Identifier(new_index_var.clone()),
                                     Comp(Comparison::Neq, None),
-                                    Expression::Identifier(new_index_var.clone())
+                                    Expression::Identifier(index_var.clone())
                                 ));
                                 cond
                             },
