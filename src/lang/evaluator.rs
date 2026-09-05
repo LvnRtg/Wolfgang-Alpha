@@ -55,9 +55,9 @@ pub fn parse_function_definition(
         Expression::Identifier(x) => Ok(Status::ok(
             if argument_names.contains(x) {
                 Expression::Identifier(format!("___tmp_{}", x))
-            } else if let Some(y) = env.constants.get(x) {
-                y.to_expression()
             } else if let Some(y) = extra_vars.lookup(x) {
+                y.to_expression()
+            } else if let Some(y) = env.constants.get(x) {
                 y.to_expression()
             } else {
                 Expression::Identifier(x.clone())
