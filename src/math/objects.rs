@@ -345,9 +345,9 @@ pub enum FunctionRepr {
     /// Contains a reference to a default function as well as the corresponding argtype mask.
     /// 
     /// A _mask_ is a tuple `(m, n, k)` signifying the first `m` arguments should be evaluated, the next `n` arguments
-    /// should not be evaluated and thereafter, every `k`-th argument should _not_ be evaluated;
-    /// the rest should be evaluated. If `k == 1`, this means that every argument thereafter should _not_ be evaluated.
-    /// If `k == 0`, this means that every argument thereafter _should_ be evaluated.
+    /// should not be evaluated. Let `x` be the number of arguments thereafter.
+    /// The component `k` in the mask means that `n/k` of the remaining `n` arguments should be left unevaluated and 
+    /// the rest _should_ be evaluated.
     Direct(&'static DirectFunction, (usize, usize, usize))
 }
 
