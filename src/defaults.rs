@@ -6,9 +6,10 @@ use std::sync::LazyLock;
 
 use crate::{expr_1arg_func, expr_binop, expr_compare, expr_if_else, expr_square, expr_unary_op};
 use crate::lang::eval;
+use crate::math::differentiation;
 use crate::math::expressions;
 use crate::math::operations::folded_operations;
-use crate::math::{Complex, DirectFunction, Expression, FunctionRepr, Matrix, Object};
+use crate::math::{Complex, DirectFunction, Env, Expression, FunctionRepr, Matrix, Object, VarStack};
 use crate::status::Status;
 
 /// Wrapped in a function because const hashmaps aren't available yet.
@@ -57,7 +58,7 @@ macro_rules! float_1_function {
                     }
                 }
             }),
-            (1, 0, false)
+            (1, 0, 1)
         )
     };
 }
@@ -91,7 +92,7 @@ macro_rules! expect_n_objs {
                     $e(evaluated_args).map(|value| Status{value, warnings})
                 }
             }),
-            ($n, 0, false)
+            ($n, 0, 1)
         )
     };
 }
@@ -122,7 +123,7 @@ macro_rules! apply_matrix_fn {
                     else { Err(format!("Wrong type for argument of function '{}' (expected Matrix).", stringify!($name))) }
                 }
             }),
-            (1, 0, false)
+            (1, 0, 1)
         )
     };
 }
@@ -133,7 +134,7 @@ macro_rules! apply_matrix_fn {
 /// 
 /// Note that the user can't create new direct functions, so this approach works.
 #[allow(clippy::type_complexity)]
-pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, bool)); 25]> = LazyLock::new(|| [
+pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, usize)); 26]> = LazyLock::new(|| [
     expect_n_objs!(sign, 1, |args: &[Object]| {
         match &args[0] {
             Object::Real(x) => Ok(Object::Real(if *x >= 0.0 {1.0} else {-1.0})),
@@ -251,7 +252,40 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, b
                 warnings
             })
         }),
-        (4, 2, false)
+        (4, 2, 1)
+    ),
+
+    // ___diff_num
+    // Takes an expression `expr` followed by `v_1, ..., v_n`, `p_1, ..., p_n`, `d_1, ..., d_n` for an arbitrary `n >= 1`
+    // where `v_i` are identifiers and `p_i`, `d_i` are evaluated objects.
+    // Then, numerically approximates the directional derivative of `expr` w.r.t. the variables `v_1, ..., v_n` at point
+    // `(p_1, ..., p_n)` in direction `(d_1, ..., d_n)`.
+    (
+        Box::new(|evaluated_args, unevaluated_args, context| {
+            if evaluated_args.len() < 2 || unevaluated_args.len() < 2 || evaluated_args.len() != 2 * (unevaluated_args.len() - 1) {
+                return Err(format!("Wrong number of arguments provided for function '___diff_num' (expected 2n evaluated and n+1 unevaluated for some n >= 1, got {}, {} respectively).", evaluated_args.len(), unevaluated_args.len()));
+            }
+            let (base_stack, env) = context.ok_or("Function '___helper_matrix_prod' needs `VarStack` and `Env`.".to_string())?;
+            let expr = &unevaluated_args[0];
+            let vars = unevaluated_args[1..].iter().map(|e| e.expect_ident()).collect::<Result<Vec<_>, _>>()?;
+            let point = &evaluated_args[..evaluated_args.len() / 2];
+            let direction = &evaluated_args[evaluated_args.len() / 2..];
+            differentiation::numerical_directional_derivative(
+                &mut |point_values: &[Object], _: &[Expression], _context: Option<(&VarStack, &mut Env)>| {
+                    let (_varstack, _env) = _context.ok_or("Closure of numerical directional derivative requires `VarStack` and `Env`.")?;
+                    eval(
+                        expr,
+                        &_varstack.with_multiple(vars.iter().map(|&s| s), point_values.iter()),
+                        _env
+                    )
+                },
+                point.to_vec(),
+                direction.to_vec(),
+                base_stack,
+                env
+            )
+        }),
+        (0, 1, 3)
     ),
 
     // del
@@ -302,7 +336,7 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, b
                 Err(err_str)
             }
         }),
-        (0, 0, false)
+        (0, 0, 1)
     ),
 
     // show_components
@@ -314,7 +348,7 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, b
             let (extra_vars, env) = context.ok_or("Function 'show_components' needs `VarStack` and `Env`.".to_string())?;
             unevaluated_args[0].make_type_top_level(true, extra_vars, env).map(|(e, _)| Status::ok(Object::LiteralExpression(e)))
         }),
-        (0, 1, false)
+        (0, 1, 1)
     )
 ]);
 
@@ -327,7 +361,7 @@ pub fn default_functions() -> HashMap<String, FunctionRepr> {
         "sin", "sinh", "asin", "asinh",
         "tan", "tanh", "atan", "atanh",
         "eig", "det", "adj", "tr", "transpose",
-        "___helper_matrix_prod",
+        "___helper_matrix_prod", "___diff_num",
         "del", "show_components"
     ].into_iter().enumerate().map(
         |(i, n)|
@@ -344,9 +378,13 @@ pub fn default_functions() -> HashMap<String, FunctionRepr> {
     res
 }
 
+/// Functions for which `get_default_derivative` won't categorically return `Err`.
+/// 
+/// For default functions not contained in this list, the evaluator will compute its derivative
+/// by numerical approximation.
 pub const FUNCTIONS_WITH_PROVIDED_DERIVATIVE: [&str; 21] = [
-    "exp", "ln", "log",
-    "sign", "sqrt",
+    "sign", "exp",
+    "ln", "log", "sqrt",
     "cos", "cosh", "acos", "acosh",
     "sin", "sinh", "asin", "asinh",
     "tan", "tanh", "atan", "atanh",
@@ -383,12 +421,13 @@ macro_rules! apply_to_first_arg {
     };
 }
 
-/// If `function_name` is among the default functions, returns its derivative at point `point` in direction `direction` (provided it exists; if it simply doesn't exist, returns `Expression::None`).
+/// If `function_name` is among `FUNCTIONS_WITH_PROVIDED_DERIVATIVE`, returns its derivative at point `point` in direction `direction`
+/// (provided the derivative exists; if it simply doesn't exist, returns `Expression::None`).
 /// If there is a greater error, e.g. no such default function or wrong number of arguments given, returns the corresponding `Err`.
 /// 
 /// Acts like a HashMap, but initializing a hashmap for this would be overkill since we do not need to modify it.
 /// 
-/// N.b.: we return an expression and not e.g. a `FunctionRepr` for the sake of simplicity in the application.
+/// Note: we return an expression and not e.g. a `FunctionRepr` for the sake of simplicity in the application.
 pub fn get_default_derivative(function_name: &str, point: &[Expression], direction: &[Expression]) -> Result<Expression, String> {
     match function_name {
         "exp" => apply_to_first_arg!(exp, point, direction),
