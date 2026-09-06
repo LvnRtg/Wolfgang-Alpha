@@ -342,10 +342,13 @@ pub enum FunctionRepr {
     ///    the user is not allowed to define a variable whose name starts with three underscores.
     /// 2. E.g. `"5 * ___tmp_x + 2"` where `arguments` is `["___tmp_x"]`. The variable names here will already be prefixed.
     ByExpression(Vec<String>, Expression),
-    /// Contains a reference to a default function as well as the corresponding argtype mask, that is, a tuple `(m, n, b)`
-    /// signifying the first `m` arguments should be parsed, the next `n` arguments should not be parsed and
-    /// all arguments thereafter should be parsed iff `b` is true.
-    Direct(&'static DirectFunction, (usize, usize, bool))
+    /// Contains a reference to a default function as well as the corresponding argtype mask.
+    /// 
+    /// A _mask_ is a tuple `(m, n, k)` signifying the first `m` arguments should be evaluated, the next `n` arguments
+    /// should not be evaluated and thereafter, every `k`-th argument should _not_ be evaluated;
+    /// the rest should be evaluated. If `k == 1`, this means that every argument thereafter should _not_ be evaluated.
+    /// If `k == 0`, this means that every argument thereafter _should_ be evaluated.
+    Direct(&'static DirectFunction, (usize, usize, usize))
 }
 
 impl fmt::Debug for FunctionRepr {
