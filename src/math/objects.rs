@@ -346,8 +346,8 @@ pub enum FunctionRepr {
     /// 
     /// A _mask_ is a tuple `(m, n, k)` signifying the first `m` arguments should be evaluated, the next `n` arguments
     /// should not be evaluated. Let `x` be the number of arguments thereafter.
-    /// The component `k` in the mask means that `n/k` of the remaining `n` arguments should be left unevaluated and 
-    /// the rest _should_ be evaluated.
+    /// The component `k` in the mask means that the first `n/k` of the remaining `n` arguments should be left unevaluated
+    /// and the rest _should_ be evaluated.
     Direct(&'static DirectFunction, (usize, usize, usize))
 }
 
