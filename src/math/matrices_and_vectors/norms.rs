@@ -15,7 +15,7 @@ impl VectorNorm {
     /// Otherwise, evaluate `opt` and use the corresponding p-norm.
     pub fn from_expr(opt: &Option<Box<Expression>>, extra_vars: &VarStack, env: &mut Env) -> Result<Status<VectorNorm>, String> {
         if let Some(inner) = opt {match &**inner {
-            Expression::Identifier(ident) if ident == "inf" || ident == "infty"
+            Expression::Identifier(ident) if ident == "inf" || ident == "infty" || ident == "∞"
                 => Ok(Status::ok(VectorNorm::P(f64::INFINITY))),
             other => {
                 if let Status{value: Object::Real(z), warnings} = eval(other, extra_vars, env)? {
@@ -39,10 +39,12 @@ impl MatrixNorm {
     /// Otherwise, evaluate `opt` and use the corresponding p-norm.
     pub fn from_expr(opt: &Option<Box<Expression>>, extra_vars: &VarStack, env: &mut Env) -> Result<Status<MatrixNorm>, String> {
         if let Some(inner) = opt {match &**inner {
-            Expression::Identifier(ident) if ident == "inf" || ident == "infty"
+            Expression::Identifier(ident) if ident == "inf" || ident == "infty" || ident == "∞"
                 => Ok(Status::ok(MatrixNorm::P(f64::INFINITY))),
-            Expression::Identifier(ident) if ident.starts_with('f')
+            Expression::Identifier(ident) if ident == "f" || ident == "F"
                 => Ok(Status::ok(MatrixNorm::Frobenius)),
+            Expression::Identifier(ident) if ident == "spec"
+                => Ok(Status::ok(MatrixNorm::P(2.0))),
             other => {
                 if let Status{value: Object::Real(z), warnings} = eval(other, extra_vars, env)? {
                     Ok(Status{value: MatrixNorm::P(z), warnings})
