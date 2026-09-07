@@ -68,10 +68,10 @@ The basic syntax is the natural one with usual operator precedence.
 The basic matrix/vector operations are all implemented. Below, we only list a remarkable facts about the elementary operations. More complex operations are discussed in the next subsection.
 - The product of two vectors of the same dimension is valid and returns their inner product.
 - The operations `/`, `%`, `//` are valid whenever one operand (on either side) is a scalar and the other one a matrix/vector. The operation is then simply performed component-wise. For instance, `2 % [x; y]` is equivalent to `[2 % x; 2 % y]`.<br>
-Note: defining $1/v$ as $(1/v_1, \ldots, 1/v_n)$ is consistent with the interpretation of vector multiplication as inner product: indeed, for $v \in \R^n$, we then have $v \cdot (1/v) = n = \overrightarrow{1} \cdot \overrightarrow{1}$.
+Note: defining $1/v$ as $(1/v_1, \ldots, 1/v_n)$ is consistent with the interpretation of vector multiplication as inner product: indeed, for $v \in \mathbb{R}^n$, we then have $v \cdot (1/v) = n = \overrightarrow{1} \cdot \overrightarrow{1}$.
 - The operation `not` (`!`) is performed component-wise. Operations `and` and `or` are currently not implemented for matrices/vectors.
 - The inverse of a matrix can be computed by simply raising the matrix to the power `-1`, e.g. `A^(-1)`. If the matrix is not invertible, this throws an error.
-- A square matrix can be raised to a power $n \in \N_0$ by simply typing `A^n`. The power $n=0$ returns the identity matrix. If the matrix is invertible, negative integer powers are valid too.
+- A square matrix can be raised to a power $n \in \mathbb{N}_0$ by simply typing `A^n`. The power $n=0$ returns the identity matrix. If the matrix is invertible, negative integer powers are valid too.
 - Many matrix functions (e.g. matrix multiplication, transposition) are implemented with view to efficiency for large matrices (using optimization strategies like tiling for better cache locality and parallelization using the `raylib` crate), even though in this specific application, most matrices are likely small.
 
 #### Norms
