@@ -363,7 +363,7 @@ impl fmt::Debug for FunctionRepr {
 
 /// Simplifies notation in 'try_operation'. LHS and RHS should be a float on one side and a vector/matrix on the other side.
 fn _op_mv_float<T, U, V>(lhs: T, rhs: U, op: &BinaryOperation) -> Result<V, String>
-where T: std::ops::Mul<U, Output=V> + std::ops::Div<U, Output=V> + std::ops::Rem<U, Output=V> + Quo<U, Output=V> + fmt::Debug, U: fmt::Debug {
+where T: std::ops::Mul<U, Output=V> + std::ops::Div<U, Output=V> + std::ops::Rem<U, Output=V> + Quo<U, Output=V> + fmt::Display, U: fmt::Display {
     match op {
         BinaryOperation::Mul => Ok(lhs * rhs),
         BinaryOperation::Div => Ok(lhs / rhs),
@@ -371,7 +371,7 @@ where T: std::ops::Mul<U, Output=V> + std::ops::Div<U, Output=V> + std::ops::Rem
         BinaryOperation::Quo => Ok(Quo::quo(lhs, rhs)),
         // All other operations are not possible (again, I write them out explicitely to be forced to review this snippet if I add new operations)
         BinaryOperation::Add | BinaryOperation::Sub | BinaryOperation::Pow(_) | BinaryOperation::And | BinaryOperation::Or | BinaryOperation::Comp(..)
-            => Err(format!("Operation '{}' invalid for operands {:?} and {:?}.", op, lhs, rhs))
+            => Err(format!("Operation '{}' invalid for operands {} and {}.", op, lhs, rhs))
     }
 }
 
@@ -402,7 +402,7 @@ fn compare_complex(x: &Complex, y: &Complex, comp: &Comparison) -> Object {
 /// and we must take care of possible dimension mismatches too.
 /// I'd go as far as saying this is fine since there are (currently) only 4 different types.
 pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation) -> Result<Object, String> {
-    let err_msg = || format!("Operation '{}' invalid for operands {:?} and {:?}.", op, lhs, rhs); // Simplifies typing in the following match block
+    let err_msg = || format!("Operation '{}' invalid for operands {} and {}.", op, lhs, rhs); // Simplifies typing in the following match block
     let err = || Err(err_msg());
     match lhs {
         Object::Success | Object::Undefined | Object::Tuple(_) => err(), // You can't do any operation with 'Success'

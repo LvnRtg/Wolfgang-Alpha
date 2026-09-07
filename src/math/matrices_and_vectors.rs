@@ -32,6 +32,23 @@ pub struct Matrix {
     values: Vec<f64>
 }
 
+impl fmt::Display for Vector {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", &self.values)
+    }
+}
+impl fmt::Display for Matrix {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "[{}]",
+            (0..self.m).map(
+                |i| self.values[i * self.n .. (i+1) * self.n].iter().map(
+                    |x| x.to_string()
+                ).collect::<Vec<_>>().join(", ")
+            ).collect::<Vec<_>>().join("; "))
+    }
+}
 impl fmt::Debug for Vector {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if f.alternate() {

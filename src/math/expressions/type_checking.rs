@@ -52,7 +52,7 @@ impl Expression {
             Expression::BinaryOperation(l, op, r) => {
                 let ltype = l.get_type(extra_vars, env)?;
                 let rtype = r.get_type(extra_vars, env)?;
-                let err = || Err(format!("Operation '{}' invalid for operands {:?} and {:?}.", op, l, r));
+                let err = || Err(format!("Operation '{}' invalid for operands {} and {}.", op, l, r));
                 if matches!(ltype, ObjType::NonObject | ObjType::Tuple) || matches!(rtype, ObjType::NonObject | ObjType::Tuple) {
                     return err();
                 }
@@ -251,7 +251,7 @@ impl Expression {
             Expression::BinaryOperation(l, op, r) => {
                 let (lexpr, ltype) = l.make_type_top_level(substitute_constants, extra_vars, env)?;
                 let (rexpr, rtype) = r.make_type_top_level(substitute_constants, extra_vars, env)?;
-                let err = || Err(format!("Operation '{}' invalid for operands {:?} and {:?}.", op, l, r));
+                let err = || Err(format!("Operation '{}' invalid for operands {} and {}.", op, l, r));
                 if matches!(ltype, ObjType::NonObject | ObjType::Tuple) || matches!(rtype, ObjType::NonObject | ObjType::Tuple) {
                     return err();
                 }
