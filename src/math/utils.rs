@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 
+use crate::math::Matrix;
 use crate::math::objects::{Object, try_operation};
 use crate::math::operations::BinaryOperation;
 
@@ -90,6 +91,13 @@ pub fn permutation_parity(permutation: &[usize]) -> bool {
         }
     }
     is_even
+}
+
+/// Converts the given permutation to a matrix `P` such that `P*A` permutes the rows of `A` according to the permutation
+/// and `A*P` permutes the columns of `A` according to the permutation.
+#[inline]
+pub fn permutation_to_matrix(permutation: &[usize]) -> Matrix {
+    Matrix::identity(permutation.len()).permute_rows(permutation).unwrap()
 }
 
 /// Returns the inverse permutation of `permutation`.

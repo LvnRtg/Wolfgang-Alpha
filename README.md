@@ -88,6 +88,9 @@ A range of standard functions for matrices and vectors are pre-defined:
 - `tranpose` transposes the given matrix.
 - `eig` returns all eigenvalues (both real and complex) of a square matrix as tuple. Uses a QR-algorithm.
 - `adj` returns the adjugate of a square matrix in $\mathcal{O}(n^3)$.
+- `LU` returns the LU decomposition of a square matrix as tuple `(L, U)`, provided it exists.
+- `PLU` returns the PLU decomposition of an invertible matrix as tuple `(P, L, U)`, that is, a permutation matrix `P`, a lower triangular matrix `L` and an upper triangular matrix `U` such that `A = P*L*U`.
+- `FPLU` returns the full-pivot LU decomposition of a square matrix as tuple `(P, Q, L, U)`, that is, permutation matrices `P`, `Q`, a lower triangular matrix `L` and an upper triangular matrix `U` such that `A = P*L*U*Q`.
 
 ### Tuples
 - Tuples can be initialized by typing `(1, 2, 3)`.
@@ -157,7 +160,7 @@ This warning occurs when taking a higher derivative of the form $$\frac{d^n}{dx_
 This warning occurs in the above setting when either $n$ or $\sum_{j=1}^k i_j$ can't be computed. Then again, the value $n$ is ignored.
 - "_Assuming that both `a(x)` and `b(x)` are continuous in `x` to differentiate sum_" (or a slight variant of it)<br>
 This warnings occurs when attempting to compute a partial derivative of the form $$\frac{d}{dx}\ \sum_{i=a(x)}^{b(x)} f(i, x) \biggm\vert_{x=x_0}.$$ Because the sum only consider integer values for $i$, if $a(x)$ and $b(x)$ are sufficiently well-behaved (more precisely, it suffices for them to be continuous or càdlàg/càglàd with jump sizes strictly smaller than one), then we have $$\frac{d}{dx}\ \sum_{i=a(x)}^{b(x)} f(i, x) \biggm\vert_{x=x_0} = \sum_{i=a(x_0)}^{b(x_0)} \biggl(\frac{d}{dx}\, f(i, x) \biggm\vert_{x=x_0}\biggr).$$ This makes the computation of the LHS much easier. Since I never encountered a sum of this form for this badly behaved $a(x)$ or $b(x)$, I decided the program may assume sufficient smoothness of $a(x)$ and $b(x)$.<br>
-In case the user _does_ want to differentiate such a sum for this badly behaved $a(x)$ or $b(x)$, he can still use `___diff_num` and hopefully find some inner peace.
+In case the user _does_ want to differentiate such a sum for this badly behaved $a(x)$ or $b(x)$, he can still use `___diff_num` and hopefully get the help he needs.
 
 ### Special syntaxes and remarks
 - `debug` prints the entire current environment (constants + functions).

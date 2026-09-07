@@ -9,6 +9,7 @@ use crate::lang::eval;
 use crate::math::differentiation;
 use crate::math::expressions;
 use crate::math::operations::folded_operations;
+use crate::math::utils::permutation_to_matrix;
 use crate::math::{Complex, DirectFunction, Env, Expression, FunctionRepr, Matrix, Object, VarStack};
 use crate::status::Status;
 
@@ -119,8 +120,9 @@ macro_rules! apply_matrix_fn {
                 } else {
                     if let Object::Matrix(mat) = &evaluated_args[0] {
                         $e(mat.$name(), &mat).map(|value| Status{value, warnings})
+                    } else {
+                        Err(format!("Wrong type for argument of function '{}' (expected Matrix).", stringify!($name)))
                     }
-                    else { Err(format!("Wrong type for argument of function '{}' (expected Matrix).", stringify!($name))) }
                 }
             }),
             (1, 0, 1)
@@ -134,7 +136,7 @@ macro_rules! apply_matrix_fn {
 /// 
 /// Note that the user can't create new direct functions, so this approach works.
 #[allow(clippy::type_complexity)]
-pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, usize)); 26]> = LazyLock::new(|| [
+pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, usize)); 29]> = LazyLock::new(|| [
     expect_n_objs!(sign, 1, |args: &[Object]| {
         match &args[0] {
             Object::Real(x) => Ok(Object::Real(if *x >= 0.0 {1.0} else {-1.0})),
@@ -180,6 +182,108 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, u
     }),
     apply_matrix_fn!(tr, |r: Result<f64, String>, _| {r.map(Object::Real)}),
     apply_matrix_fn!(transpose, |r: Matrix, _| {Ok(Object::Matrix(r))}),
+    // LU
+    (
+        Box::new(|evaluated_args, unevaluated_args, _| {
+            let warnings = if unevaluated_args.is_empty() {
+                vec![]
+            } else {
+                vec![format!(
+                    "Provided {} unevaluated arguments although none are expected.",
+                    unevaluated_args.len()
+                )]
+            };
+            if evaluated_args.len() != 1 {
+                Err(format!(
+                    "Wrong number of evaluated arguments provided for function 'LU' (expected 1, got {}).",
+                    evaluated_args.len()
+                ))
+            } else {
+                if let Object::Matrix(mat) = &evaluated_args[0] {
+                    mat.lu_decomposition()
+                    .ok_or("No LU decomposition exists for this matrix.".to_string())
+                    .map(|(l, u)| Status{
+                        value: Object::Tuple(vec![Object::Matrix(l), Object::Matrix(u)]),
+                        warnings
+                    })
+                } else {
+                    Err("Wrong type for argument of function 'LU' (expected Matrix).".to_string())
+                }
+            }
+        }),
+        (1, 0, 1)
+    ),
+    // PLU
+    (
+        Box::new(|evaluated_args, unevaluated_args, _| {
+            let warnings = if unevaluated_args.is_empty() {
+                vec![]
+            } else {
+                vec![format!(
+                    "Provided {} unevaluated arguments although none are expected.",
+                    unevaluated_args.len()
+                )]
+            };
+            if evaluated_args.len() != 1 {
+                Err(format!(
+                    "Wrong number of evaluated arguments provided for function 'PLU' (expected 1, got {}).",
+                    evaluated_args.len()
+                ))
+            } else {
+                if let Object::Matrix(mat) = &evaluated_args[0] {
+                    mat.plu_decomposition()
+                    .ok_or("No partial LU decomposition exists for this matrix, i.e. the matrix isn't invertible.".to_string())
+                    .map(|(p, l, u)| Status{
+                        value: Object::Tuple(vec![
+                            Object::Matrix(permutation_to_matrix(&p)),
+                            Object::Matrix(l),
+                            Object::Matrix(u)
+                        ]),
+                        warnings
+                    })
+                } else {
+                    Err("Wrong type for argument of function 'PLU' (expected Matrix).".to_string())
+                }
+            }
+        }),
+        (1, 0, 1)
+    ),
+    // FPLU
+    (
+        Box::new(|evaluated_args, unevaluated_args, _| {
+            let warnings = if unevaluated_args.is_empty() {
+                vec![]
+            } else {
+                vec![format!(
+                    "Provided {} unevaluated arguments although none are expected.",
+                    unevaluated_args.len()
+                )]
+            };
+            if evaluated_args.len() != 1 {
+                Err(format!(
+                    "Wrong number of evaluated arguments provided for function 'FPLU' (expected 1, got {}).",
+                    evaluated_args.len()
+                ))
+            } else {
+                if let Object::Matrix(mat) = &evaluated_args[0] {
+                    mat.lu_decomposition_full_pivot()
+                    .ok_or("The given matrix isn't square.".to_string())
+                    .map(|(l, u, p, q)| Status{
+                        value: Object::Tuple(vec![
+                            Object::Matrix(permutation_to_matrix(&p)),
+                            Object::Matrix(permutation_to_matrix(&q)),
+                            Object::Matrix(l),
+                            Object::Matrix(u)
+                        ]),
+                        warnings
+                    })
+                } else {
+                    Err("Wrong type for argument of function 'FPLU' (expected Matrix).".to_string())
+                }
+            }
+        }),
+        (1, 0, 1)
+    ),
 
     // ___helper_matrix_prod
     // Takes integers `k_a`, `k_{b+1}`, `a`, a float `b`, a string `i` and an expression `f(i)` which is an `Expression::Matrix` of size `m(i)`x`m(i+1)`.
@@ -360,7 +464,7 @@ pub fn default_functions() -> HashMap<String, FunctionRepr> {
         "cos", "cosh", "acos", "acosh",
         "sin", "sinh", "asin", "asinh",
         "tan", "tanh", "atan", "atanh",
-        "eig", "det", "adj", "tr", "transpose",
+        "eig", "det", "adj", "tr", "transpose", "LU", "PLU", "FPLU",
         "___helper_matrix_prod", "___diff_num",
         "del", "show_components"
     ].into_iter().enumerate().map(

@@ -704,6 +704,9 @@ pub fn get_default_fn_type(
         ("det", [ObjType::Matrix(m, n)]) | ("tr", [ObjType::Matrix(m, n)]) if m == n => Ok(ObjType::Scalar),
         ("adj", [ObjType::Matrix(m, n)]) if m == n => Ok(ObjType::Matrix(*n, *n)),
         ("transpose", [ObjType::Matrix(m, n)]) => Ok(ObjType::Matrix(*n, *m)),
+        ("LU", [ObjType::Matrix(m, n)]) if m == n => Ok(ObjType::Tuple),
+        ("PLU", [ObjType::Matrix(m, n)]) if m == n => Ok(ObjType::Tuple),
+        ("FPLU", [ObjType::Matrix(m, n)]) if m == n => Ok(ObjType::Tuple),
         // Helper functions
         ("___helper_matrix_prod", [_,_,_,_]) if unevaluated_args.len() >= 2 => Ok(ObjType::Scalar),
         // Meta functions
@@ -788,6 +791,11 @@ pub fn make_default_fn_type_top_level(
                 )
             },
             ObjType::Matrix(*n, *m)
+        )),
+        // LU, PLU and FPLU return tuples, so they can be left as they are
+        (name, [ObjType::Matrix(m, n)]) if m == n && (name == "LU" || name == "PLU" || name == "FPLU") => Ok((
+            Expression::Function(name.to_string(), evaluated_arg_exprs),
+            ObjType::Tuple
         )),
         // Helper functions
         ("___helper_matrix_prod", [_,_,_,_]) if unevaluated_args.len() >= 2 => {
