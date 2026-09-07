@@ -149,6 +149,16 @@ For the directional derivative, multiple syntaxes are available. All of them ret
 - `D f(p)[d]`: If `f` is a function, then the shortened syntax `D f(p)[d]` computes the exact same result as `D_{x_1, ..., x_n} f(x_1, ..., x_n) (p)[d]` where `n` is the number of arguments that `f` expects.
 - `D expr (p_1, ..., p_n)[d_1, ..., d_m]`: collects all unknown identifiers within `expr` into a vector in ascending alphabetic order `x_1, ..., x_l`. If `l=m=n`, this syntax then returns the same result as `D_{x_1, ..., x_n} expr (p_1, ..., p_n)[d_1, ..., d_n]`. Otherwise, throws an error.
 
+### Warnings
+Here is a list of warnings for which an explanation may be helpful. Not all warnings are listed here.
+- "_Exponents in numerator and denominator of partial derivative operator do not match. Ignoring numerator._"<br>
+This warning occurs when taking a higher derivative of the form $$\frac{d^n}{dx_1^{i_1} \ldots, dx_k^{i_k}}\ f(x_1, \ldots, x_n) \quad \text{where} \quad \sum_{j=1}^k i_j \neq n.$$ Then, the value $n$ in the numerator is effectively ignored, i.e. functionally replaced by $\sum_{j=1}^k i_j$.
+- "_Error while comparing exponents in numerator and denominator of partial derivative operator._"<br>
+This warning occurs in the above setting when either $n$ or $\sum_{j=1}^k i_j$ can't be computed. Then again, the value $n$ is ignored.
+- "_Assuming that both `a(x)` and `b(x)` are continuous in `x` to differentiate sum_" (or a slight variant of it)<br>
+This warnings occurs when attempting to compute a partial derivative of the form $$\frac{d}{dx}\ \sum_{i=a(x)}^{b(x)} f(i, x) \biggm\vert_{x=x_0}.$$ Because the sum only consider integer values for $i$, if $a(x)$ and $b(x)$ are sufficiently well-behaved (more precisely, it suffices for them to be continuous or càdlàg/càglàd with jump sizes strictly smaller than one), then we have $$\frac{d}{dx}\ \sum_{i=a(x)}^{b(x)} f(i, x) \biggm\vert_{x=x_0} = \sum_{i=a(x_0)}^{b(x_0)} \biggl(\frac{d}{dx}\, f(i, x) \biggm\vert_{x=x_0}\biggr).$$ This makes the computation of the LHS much easier. Since I never encountered a sum of this form for this badly behaved $a(x)$ or $b(x)$, I decided the program may assume sufficient smoothness of $a(x)$ and $b(x)$.<br>
+In case the user _does_ want to differentiate such a sum for this badly behaved $a(x)$ or $b(x)$, he can still use `___diff_num` and hopefully find some inner peace.
+
 ### Special syntaxes and remarks
 - `debug` prints the entire current environment (constants + functions).
 - Notice that the token `!` acts as both the `not` operator and the factorial operator. In context, one can always differentiate between the two, with one minor downside:
