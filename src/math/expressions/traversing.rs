@@ -2,10 +2,27 @@
 //! These functions are generally quite simple, only the recursive structure can make them somewhat long.
 
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 
-use crate::math::{Env, Object, VarStack, VarStackLookup};
+use crate::math::{Env, Object, utils, VarStack, VarStackLookup};
 use super::Expression;
+
+enum Stack<'a, T> where T: Hash {
+    Empty,
+    Frame {
+        value: &'a HashSet<T>,
+        parent: &'a Stack<'a, T>
+    }
+}
+impl<'a, T> Stack<'a, T> where T: Hash + Eq {
+    fn contains(&self, t: &T) -> bool {
+        match self {
+            Stack::Empty => false,
+            Stack::Frame { value, parent } => value.contains(t) || parent.contains(t)
+        }
+    }
+}
 
 /// Constructs a match statement that calls the given function recursively on all patterns for which no behavior is specified.
 /// 
@@ -83,7 +100,7 @@ impl Expression {
                 from.replace_identifiers_in_place(ident, by);
                 to.replace_identifiers_in_place(ident, by);
             },
-            PartialDerivative(wrt, inner) if wrt == ident => {},
+            PartialDerivative(wrt, inner) if wrt.iter().any(|(s, _)| s == ident) => {},
             DirectionalDerivative(vars, inner, point, direction) if vars.contains(ident) => {
                 point.iter_mut().for_each(|u| u.replace_identifiers_in_place(ident, by));
                 direction.iter_mut().for_each(|u| u.replace_identifiers_in_place(ident, by));
@@ -120,7 +137,7 @@ impl Expression {
             PartialDerivative(wrt, expr) => {
                 // Same as above
                 expr.list_unknown_identifiers(
-                    &extra_vars.with(wrt, Cow::Owned(Object::Success)),
+                    &extra_vars.with_multiple(wrt.iter().map(|&(ref s, _)| s), std::iter::repeat_n(&Object::Success, wrt.len())),
                     env,
                     modified_identifiers
                 )
@@ -174,9 +191,13 @@ impl Expression {
                 if !was_contained {contained_identifiers.remove(wrt);}
             },
             PartialDerivative(wrt, inner) => {
-                let was_contained = contained_identifiers.contains(wrt);
+                let not_previously_contained = wrt.iter().filter_map(
+                    |(var, _)| if !identifiers.contains(var) {Some(var)} else {None}
+                ).collect::<Vec<&String>>();
                 inner.add_contained_identifiers(identifiers, contained_identifiers);
-                if !was_contained {contained_identifiers.remove(wrt);}
+                for var in not_previously_contained {
+                    contained_identifiers.remove(var);
+                }
             },
             DirectionalDerivative(vars, inner, point, direction) => {
                 point.iter().for_each(|v| v.add_contained_identifiers(identifiers, contained_identifiers));
@@ -258,7 +279,7 @@ impl Expression {
             Integral(_, from, to, wrt) if wrt == ident => {
                 from.contains_identifier(ident) || to.contains_identifier(ident)
             },
-            PartialDerivative(wrt, _) if wrt == ident => false,
+            PartialDerivative(wrt, _) if wrt.iter().any(|(s, _)| s == ident) => false,
             DirectionalDerivative(vars, _, point, direction) if vars.contains(ident) => {
                 point.iter().any(|x| x.contains_identifier(ident))
                 || direction.iter().any(|x| x.contains_identifier(ident))
@@ -295,9 +316,11 @@ impl Expression {
                 || to.contains_any_of(identifiers)
                 || inner.contains_any_of(&new_hashset)
             },
-            PartialDerivative(wrt, inner) if identifiers.contains(wrt) => {
+            PartialDerivative(wrt, inner) if wrt.iter().any(|(s, _)| identifiers.contains(s)) => {
                 let mut new_hashset = identifiers.clone();
-                new_hashset.remove(wrt);
+                for (var, _) in wrt {
+                    new_hashset.remove(var);
+                }
                 inner.contains_any_of(&new_hashset)
             },
             DirectionalDerivative(vars, inner, point, direction) if vars.iter().any(|var| identifiers.contains(var)) => {
@@ -319,45 +342,70 @@ impl Expression {
         set
     }
 
-    /// Clones `self` while replacing every encountered `ident` by `by`. Ignores the LHS of assignment operators.
-    pub fn replace_identifiers(&self, ident: &String, by: &Expression) -> Expression {
+    /// Clones `self` while replacing every encountered key in `replacements` by its corresponding value.
+    /// 
+    /// Ignores the LHS of assignment operators and occurrences of a key `ident` in `replacements` that would
+    /// be shadowed in an evaluation (e.g. within integrals where the integration variable is exactly `ident`).
+    pub fn replace_identifiers(&self, replacements: &HashMap<&String, &Expression>) -> Expression {
+        self.replace_identifiers_recursive(replacements, &Stack::Empty)
+    }
+    fn replace_identifiers_recursive(&self, replacements: &HashMap<&String, &Expression>, ignore: &Stack<'_, &String>) -> Expression {
         match self {
             Expression::None => Expression::None,
-            Expression::Identifier(x) => if x == ident {by.clone()} else {Expression::Identifier(x.clone())},
+            Expression::Identifier(x) => if let Some(new) = replacements.get(x) && !ignore.contains(&x) {
+                (*new).clone()
+            } else {
+                Expression::Identifier(x.clone())
+            },
             Expression::Number(x) => Expression::Number(*x),
-            Expression::Tuple(v) => Expression::Tuple(v.iter().map(|x| x.replace_identifiers(ident, by)).collect()),
-            Expression::Vector(v) => Expression::Vector(v.iter().map(|x| x.replace_identifiers(ident, by)).collect()),
-            Expression::Matrix(m, n, v) => Expression::Matrix(*m, *n, v.iter().map(|x| x.replace_identifiers(ident, by)).collect()),
-            Expression::Function(name, v) => Expression::Function(name.clone(), v.iter().map(|x| x.replace_identifiers(ident, by)).collect()),
-            Expression::UnaryOperation(op, x) => Expression::UnaryOperation(op.clone(), Box::new(x.replace_identifiers(ident, by))),
+            Expression::Tuple(v) => Expression::Tuple(v.iter().map(|x| x.replace_identifiers_recursive(replacements, ignore)).collect()),
+            Expression::Vector(v) => Expression::Vector(v.iter().map(|x| x.replace_identifiers_recursive(replacements, ignore)).collect()),
+            Expression::Matrix(m, n, v) => Expression::Matrix(*m, *n, v.iter().map(|x| x.replace_identifiers_recursive(replacements, ignore)).collect()),
+            Expression::Function(name, v) => Expression::Function(name.clone(), v.iter().map(|x| x.replace_identifiers_recursive(replacements, ignore)).collect()),
+            Expression::UnaryOperation(op, x) => Expression::UnaryOperation(op.clone(), Box::new(x.replace_identifiers_recursive(replacements, ignore))),
             Expression::BinaryOperation(lhs, op, rhs)
-                => Expression::BinaryOperation(Box::new(lhs.replace_identifiers(ident, by)), op.clone(), Box::new(rhs.replace_identifiers(ident, by))),
-            Expression::FoldedOperation(op, varname, from, conditions, to, inner) => Expression::FoldedOperation(
-                op.clone(),
-                varname.clone(),
-                Box::new(from.replace_identifiers(ident, by)),
-                conditions.iter().map(|x| x.replace_identifiers(ident, by)).collect(),
-                Box::new(to.replace_identifiers(ident, by)),
-                Box::new(inner.replace_identifiers(ident, by))
+                => Expression::BinaryOperation(Box::new(lhs.replace_identifiers_recursive(replacements, ignore)), op.clone(), Box::new(rhs.replace_identifiers_recursive(replacements, ignore))),
+            Expression::FoldedOperation(op, varname, from, conditions, to, inner) => {
+                let new_stack = Stack::Frame { value: &HashSet::from([varname]), parent: ignore };
+                Expression::FoldedOperation(
+                    op.clone(),
+                    varname.clone(),
+                    Box::new(from.replace_identifiers_recursive(replacements, ignore)),
+                    conditions.iter().map(|x| x.replace_identifiers_recursive(replacements, &new_stack)).collect(),
+                    Box::new(to.replace_identifiers_recursive(replacements, &new_stack)),
+                    Box::new(inner.replace_identifiers_recursive(replacements, &new_stack))
+                )
+            }
+            Expression::PartialDerivative(wrt, x) => Expression::PartialDerivative(
+                wrt.clone(),
+                Box::new(x.replace_identifiers_recursive(
+                    replacements,
+                    &Stack::Frame { value: &wrt.iter().map(|&(ref s, _)| s).collect(), parent: ignore }
+                ))
             ),
-            Expression::PartialDerivative(wrt, x) => Expression::PartialDerivative(wrt.clone(), Box::new(x.replace_identifiers(ident, by))),
-            Expression::Assignment(lhs, rhs) => Expression::Assignment(lhs.clone(), Box::new(rhs.replace_identifiers(ident, by))),
-            Expression::DirectionalDerivative(vars, expr, point, direction) => Expression::DirectionalDerivative(
+            Expression::Assignment(lhs, rhs) => Expression::Assignment(lhs.clone(), Box::new(rhs.replace_identifiers_recursive(replacements, ignore))),
+            Expression::DirectionalDerivative(vars, inner, point, direction) => Expression::DirectionalDerivative(
                 vars.clone(),
-                Box::new(expr.replace_identifiers(ident, by)),
-                point.iter().map(|x| x.replace_identifiers(ident, by)).collect(),
-                direction.iter().map(|x| x.replace_identifiers(ident, by)).collect()
+                Box::new(inner.replace_identifiers_recursive(
+                    replacements,
+                    &Stack::Frame { value: &vars.iter().collect(), parent: ignore }
+                )),
+                point.iter().map(|x| x.replace_identifiers_recursive(replacements, ignore)).collect(),
+                direction.iter().map(|x| x.replace_identifiers_recursive(replacements, ignore)).collect()
             ),
             Expression::IfElse(x, y, z) => Expression::IfElse(
-                Box::new(x.replace_identifiers(ident, by)),
-                Box::new(y.replace_identifiers(ident, by)),
-                Box::new(z.replace_identifiers(ident, by))
+                Box::new(x.replace_identifiers_recursive(replacements, ignore)),
+                Box::new(y.replace_identifiers_recursive(replacements, ignore)),
+                Box::new(z.replace_identifiers_recursive(replacements, ignore))
             ),
-            Expression::Integral(func, a, b, x) => Expression::Integral(
-                Box::new(func.replace_identifiers(ident, by)),
-                Box::new(a.replace_identifiers(ident, by)),
-                Box::new(b.replace_identifiers(ident, by)),
-                x.clone()
+            Expression::Integral(func, a, b, wrt) => Expression::Integral(
+                Box::new(func.replace_identifiers_recursive(
+                    replacements,
+                    &Stack::Frame { value: &HashSet::from([wrt]), parent: ignore }
+                )),
+                Box::new(a.replace_identifiers_recursive(replacements, ignore)),
+                Box::new(b.replace_identifiers_recursive(replacements, ignore)),
+                wrt.clone()
             )
         }
     }
@@ -396,7 +444,7 @@ impl Expression {
     /// Returns `0` iff `prefix` itself is not contained in `self`.
     /// 
     /// If `{prefix}_{i}` is not contained in `self` (for the given parameter `i`), then `i` is returned as is.
-    fn get_new_free_identifier_recursive(&self, prefix: &str, i: usize) -> usize {
+    pub fn get_new_free_identifier_recursive(&self, prefix: &str, i: usize) -> usize {
         // The below function `check_id` does the following.
         // If `id` is of the form `{prefix}{j}` for some `j >= i`, return `j+1`, otherwise `i`.
         // This ensures that whenever we reach the end of the expression `self`, the integer this function returns is contained nowhere.
@@ -421,7 +469,7 @@ impl Expression {
                 .map(|e: &Expression| e.get_new_free_identifier_recursive(prefix, i))
                 .max()
                 .unwrap_or(i),
-            Expression::UnaryOperation(_, expr) | Expression::Assignment(_, expr) | Expression::PartialDerivative(_, expr) =>
+            Expression::UnaryOperation(_, expr) | Expression::Assignment(_, expr) =>
                 expr.get_new_free_identifier_recursive(prefix, i),
             Expression::BinaryOperation(lhs, _, rhs) =>
                 lhs.get_new_free_identifier_recursive(prefix, i)
@@ -435,6 +483,9 @@ impl Expression {
             Expression::Function(name, args) =>
                 args.iter().map(|arg| arg.get_new_free_identifier_recursive(prefix, i)).max().unwrap_or(i)
                 .max(check_id(name)),
+            Expression::PartialDerivative(wrt, expr) =>
+                expr.get_new_free_identifier_recursive(prefix, i)
+                .max(utils::max(wrt.iter().map(|(id, _)| check_id(id))).unwrap_or(0)),
             Expression::DirectionalDerivative(vars, expr, point, direction) =>
                 expr.get_new_free_identifier_recursive(prefix, i)
                 .max(point.iter().map(|v| v.get_new_free_identifier_recursive(prefix, i)).max().unwrap_or(i))

@@ -119,19 +119,21 @@ impl Expression {
                             env
                         )
                     }
-                    Some(FunctionRepr::Direct(_, (m, n, b))) => {
+                    Some(FunctionRepr::Direct(_, (m, n, k))) => {
                         // Accordingly with the mask, obtain the type of some arguments and leave others unchanged.
                         if args.len() < m + n {
                             return Err(format!("Wrong number of arguments provided for function '{}' (expected at least {}).", name, m + n));
                         }
-                        let mut evaluated_arg_types = args.iter().take(*m).map(|a| a.get_type(extra_vars, env)).collect::<Result<Vec<_>, _>>()?;
-                        if *b {
-                            evaluated_arg_types.extend(args.iter().skip(m+n).map(|a| a.get_type(extra_vars, env)).collect::<Result<Vec<_>, _>>()?)
-                        }
+                        let mut evaluated_arg_types = args[..*m].iter().map(|a| a.get_type(extra_vars, env)).collect::<Result<Vec<_>, _>>()?;
+                        evaluated_arg_types.extend(
+                            args[
+                                m + n + if *k == 0 {0} else {(args.len() - m - n) / k}..
+                            ].iter().map(|a| a.get_type(extra_vars, env)).collect::<Result<Vec<_>, _>>()?
+                        );
                         get_default_fn_type(
                             name,
                             &evaluated_arg_types,
-                            if *b {&args[*m .. (m+n)]} else {&args[*m..]}
+                            &args[*m .. m + n + if *k == 0 {0} else {(args.len() - m - n) / k}]
                         )
                     },
                     None => Err(format!("No such function: \"{name}\"."))
@@ -555,19 +557,21 @@ impl Expression {
                         }
                         Ok((iexpr, itype))
                     }
-                    Some(FunctionRepr::Direct(_, (m, n, b))) => {
+                    Some(FunctionRepr::Direct(_, (m, n, k))) => {
                         // Accordingly with the mask, obtain the type of some arguments and leave others unchanged.
                         if args.len() < m + n {
                             return Err(format!("Wrong number of arguments provided for function '{}' (expected at least {}).", name, m + n));
                         }
-                        let mut evaluated_args = args.iter().take(*m).map(|a| a.make_type_top_level(substitute_constants, extra_vars, env)).collect::<Result<Vec<_>, _>>()?;
-                        if *b {
-                            evaluated_args.extend(args.iter().skip(m+n).map(|a| a.make_type_top_level(substitute_constants, extra_vars, env)).collect::<Result<Vec<_>, _>>()?)
-                        }
+                        let mut evaluated_arg_types = args[..*m].iter().map(|a| a.make_type_top_level(substitute_constants, extra_vars, env)).collect::<Result<Vec<_>, _>>()?;
+                        evaluated_arg_types.extend(
+                            args[
+                                m + n + if *k == 0 {0} else {(args.len() - m - n) / k}..
+                            ].iter().map(|a| a.make_type_top_level(substitute_constants, extra_vars, env)).collect::<Result<Vec<_>, _>>()?
+                        );
                         make_default_fn_type_top_level(
                             name,
-                            evaluated_args,
-                            if *b {&args[*m .. (m+n)]} else {&args[*m..]}
+                            evaluated_arg_types,
+                            &args[*m .. m + n + if *k == 0 {0} else {(args.len() - m - n) / k}]
                         )
                     }
                     None => Err(format!("No such function: \"{name}\"."))
@@ -583,7 +587,10 @@ impl Expression {
             Expression::PartialDerivative(wrt, inner) => {
                 let (iexpr, itype) = inner.make_type_top_level(
                     substitute_constants,
-                    &extra_vars.with(wrt, Cow::Owned(Object::Real(1.0))),
+                    &extra_vars.with_multiple(
+                        wrt.iter().map(|&(ref s, _)| s),
+                        std::iter::repeat_n(&Object::Real(1.0), wrt.len())
+                    ),
                     env
                 )?;
                 if matches!(itype, ObjType::NonObject | ObjType::Tuple) {

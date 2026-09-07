@@ -30,7 +30,7 @@ macro_rules! expr_binop {
 #[macro_export]
 macro_rules! expr_binop_from_iter {
     ($binop:ident, $folded_op:ident, $iter:expr) => {{
-        let mut __iter = ::std::iter::IntoIterator::into_iter($iter);
+        let mut __iter = $iter;
         let __first = __iter.next().unwrap_or($crate::math::operations::FoldedOperation::$folded_op.if_empty(&crate::math::ObjType::Scalar).to_expression());
         __iter.fold(__first, |lhs, rhs| {
             $crate::math::Expression::BinaryOperation(

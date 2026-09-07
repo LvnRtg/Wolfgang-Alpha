@@ -1,5 +1,6 @@
 use crate::lang;
 use crate::math;
+use crate::status::Status;
 
 /// Shared evaluation engine: tokenizes, parses, and evaluates `input` against `env`.
 /// 
@@ -14,14 +15,15 @@ pub fn eval_line(input: &str, env: &mut math::Env) -> (Vec<String>, bool) {
     let mut is_error = false;
     while let Some(res) = parser.parse_next(env) {
         match res {
-            Ok(expr) => {
+            Ok(Status{value: expr, mut warnings}) => {
                 if expr == math::Expression::Identifier("debug".to_string()) {
                     output.push(format!("Constants: {:?}", env.constants));
                     output.push(format!("Functions: {:?}", env.functions));
                 } else {
                     match lang::eval(&expr, &math::VarStack::Empty, env) {
                         Ok(status) => {
-                            output.append(&mut status.into_multline());
+                            let new_status = Status{value: status.unpack_into(&mut warnings), warnings};
+                            output.append(&mut new_status.into_multline());
                         }
                         Err(e) => {
                             is_error = true;

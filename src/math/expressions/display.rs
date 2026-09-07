@@ -1,9 +1,10 @@
 //! Implements functions to display expressions, either in a single line or over potentially multiple lines.
 
+use itertools::Itertools;
 use std::fmt;
 
 use crate::math::operations::{BinaryOperation, UnaryOperation};
-use super::Expression;
+use super::{Expression, Repeat};
 
 
 // Contains more parentheses than would be mathematically necessary because this is used for debugging.
@@ -33,7 +34,49 @@ impl fmt::Display for Expression {
             Expression::Function(name, args)
                 => write!(f, "{}({})", name, args.iter().map(|x| format!("{}", x)).collect::<Vec<String>>().join(", ")),
             Expression::Assignment(lhs, rhs) => write!(f, "{} := {}", lhs, rhs),
-            Expression::PartialDerivative(wrt, expr) => write!(f, "d/d{} ({})", wrt, expr),
+            Expression::PartialDerivative(seq, expr) => {
+                let mut denominator_strings_rev = Vec::<String>::with_capacity(seq.len());
+                let mut expr_strs = Vec::<String>::new();
+                let mut number_sum = 0;
+                for (s, r) in seq {
+                    let exponent_str = match r {
+                        Repeat::Default => {number_sum += 1; "1".to_string()}
+                        Repeat::Number(n) => {number_sum += n; n.to_string()}
+                        Repeat::Expression(e) => {
+                            let e_str = e.to_string();
+                            expr_strs.push(format!("({})", e_str));
+                            format!("{{{}}}", e_str)
+                        }
+                    };
+                    denominator_strings_rev.push(format!("d{}^{}", if s.len() == 1 {s.clone()} else {format!("({})", s)}, exponent_str));
+                }
+                let numerator_exponent = if expr_strs.is_empty() {
+                    if number_sum == 1 {
+                        String::new()
+                    } else {
+                        format!("^{}", number_sum)
+                    }
+                } else {
+                    let mut s = "^".to_string();
+                    s.push_str(&expr_strs.join(" + "));
+                    if number_sum > 0 {
+                        s.push_str(" + ");
+                        s.push_str(&number_sum.to_string());
+                    }
+                    s
+                };
+                write!(
+                    f,
+                    "d{}/{} ({})",
+                    numerator_exponent,
+                    if denominator_strings_rev.len() == 1 {
+                        denominator_strings_rev.into_iter().next().unwrap()
+                    } else {
+                        format!("({})", denominator_strings_rev.iter().rev().join(" "))
+                    },
+                    expr
+                )
+            }
             Expression::DirectionalDerivative(vars, expr, point, direction)
                 => write!(f, "D_{{{}}} ({})({:?})[{:?}]", vars.join(", "), expr, point, direction),
             Expression::Integral(func, a, b, x)
@@ -80,6 +123,14 @@ impl Expression {
             Expression::Number(x) => x.to_string(),
             Expression::Identifier(x) => x.clone(),
             other => format!("{{{}}}", other)
+        }
+    }
+    /// Returns `format!("{}", self)` surrounded by parentheses if the expression isn't an identifier or a number.
+    pub fn to_string_with_parenth(&self) -> String {
+        match self {
+            Expression::Number(x) => x.to_string(),
+            Expression::Identifier(x) => x.clone(),
+            other => format!("({})", other)
         }
     }
     
@@ -189,9 +240,47 @@ impl Expression {
                 multlined_left.extend(right_iter);
                 multlined_left
             }
-            Expression::PartialDerivative(wrt, expr) => {
+            Expression::PartialDerivative(seq, expr) => {
+                let mut denominator_strings_rev = Vec::<String>::with_capacity(seq.len());
+                let mut expr_strs = Vec::<String>::new();
+                let mut number_sum = 0;
+                for (s, r) in seq {
+                    let exponent_str = match r {
+                        Repeat::Default => {number_sum += 1; "1".to_string()}
+                        Repeat::Number(n) => {number_sum += n; n.to_string()}
+                        Repeat::Expression(e) => {
+                            expr_strs.push(e.to_string_with_parenth());
+                            e.to_string_with_braces()
+                        }
+                    };
+                    denominator_strings_rev.push(format!("d{}^{}", if s.len() == 1 {s.clone()} else {format!("({})", s)}, exponent_str));
+                }
+                let numerator_exponent = if expr_strs.is_empty() {
+                    if number_sum == 1 {
+                        String::new()
+                    } else {
+                        format!("^{}", number_sum)
+                    }
+                } else {
+                    let mut s = "^".to_string();
+                    s.push_str(&expr_strs.join(" + "));
+                    if number_sum > 0 {
+                        s.push_str(" + ");
+                        s.push_str(&number_sum.to_string());
+                    }
+                    s
+                };
+                let prefix = format!(
+                    "d{}/{}",
+                    numerator_exponent,
+                    if denominator_strings_rev.len() == 1 {
+                        denominator_strings_rev.into_iter().next().unwrap()
+                    } else {
+                        format!("({})", denominator_strings_rev.iter().rev().join(" "))
+                    }
+                );
                 let mut multlined = expr.to_multline();
-                multlined[0].insert_str(0, format!("d/d{} (", wrt).as_str());
+                multlined[0].insert_str(0, &format!("{} (", prefix));
                 multlined.last_mut().unwrap().push(')');
                 multlined
             }

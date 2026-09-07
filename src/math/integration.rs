@@ -6,6 +6,7 @@ use std::ops::{Add, AddAssign, Div, Mul, Neg};
 use crate::{expr_binop, expr_square, expr_unary_op};
 use crate::lang::eval;
 use crate::math::{Env, Expression, Object, VarStack, VarStackLookup};
+use crate::math::differentiation;
 use crate::math::objects::try_operation;
 use crate::math::operations::{BinaryOperation, FoldedOperation, UnaryOperation};
 use crate::status::{ExtResult, Status};
@@ -103,7 +104,7 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
         );
         return integrate(
             &expr_binop!(
-                expr.replace_identifiers(wrt, &new_arg),
+                expr.replace_identifiers(&HashMap::from([(wrt, &new_arg)])),
                 Div,
                 expr_square!(
                     expr_binop!(
@@ -138,7 +139,7 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
         );
         return integrate(
             &expr_unary_op!(Neg, expr_binop!(
-                expr.replace_identifiers(wrt, &new_arg),
+                expr.replace_identifiers(&HashMap::from([(wrt, &new_arg)])),
                 Div,
                 expr_square!(
                     expr_binop!(
@@ -171,7 +172,7 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
         );
         return integrate(
             &expr_binop!(
-                expr.replace_identifiers(wrt, &new_arg),
+                expr.replace_identifiers(&HashMap::from([(wrt, &new_arg)])),
                 Mul,
                 expr_binop!(
                     expr_binop!(
@@ -295,12 +296,36 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
                 )
             )
         }
-        // \int_a^b d/dx f(x) dx = f(b) - f(a)
-        Expression::PartialDerivative(diff_wrt, e) if diff_wrt == wrt => Status::combine(
-            eval(e, &extra_vars.with(wrt, Cow::Owned(Object::Real(b))), env)?,
-            eval(e, &extra_vars.with(wrt, Cow::Owned(Object::Real(a))), env)?,
-            |lhs, rhs| try_operation(&lhs, &rhs, &BinaryOperation::Sub)
-        ),
+        // Check if `expr` is of the form `d^n/d(wrt)^n f(wrt)` for some `n`.
+        Expression::PartialDerivative(diff_wrt, inner)
+        if let Some(Status{value: n, mut warnings}) = differentiation::all_partial_derivatives_wrt_same_var(diff_wrt, wrt, extra_vars, env)? => {
+            if n == 1 {
+                // Use `\int_a^b d/dx f(x) dx = f(b) - f(a)`
+                try_operation(
+                    &eval(inner, &extra_vars.with(wrt, Cow::Owned(Object::Real(b))), env)?.unpack_into(&mut warnings),
+                    &eval(inner, &extra_vars.with(wrt, Cow::Owned(Object::Real(a))), env)?.unpack_into(&mut warnings),
+                    &BinaryOperation::Sub
+                )
+                .map(|value| Status{value, warnings})
+            } else {
+                // Use `\int_a^b d^n/dx^n f(x) dx = (d^{n-1}/dx^{n-1} f(x)|_b) - (d^{n-1}/dx^{n-1} f(x)|_a)`
+                let new_inner = differentiation::apply_n_partial_derivatives(
+                    inner,
+                    wrt,
+                    &crate::math::expressions::Repeat::Number(n-1),
+                    extra_vars,
+                    env
+                )?.unpack_into(&mut warnings);
+                Ok(Status {
+                    value: try_operation(
+                        &eval(&new_inner, &extra_vars.with(wrt, Cow::Owned(Object::Real(b))), env)?.unpack_into(&mut warnings),
+                        &eval(&new_inner, &extra_vars.with(wrt, Cow::Owned(Object::Real(a))), env)?.unpack_into(&mut warnings),
+                        &BinaryOperation::Sub
+                    )?,
+                    warnings
+                })
+            }
+        }
         other => simpson_rule_result_variant(
             |x| eval(other, &extra_vars.with(wrt, Cow::Owned(Object::Real(x))), env),
             a, b,

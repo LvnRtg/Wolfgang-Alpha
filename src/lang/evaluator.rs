@@ -8,7 +8,7 @@ use itertools::Itertools;
 use crate::math;
 use crate::math::{Env, Expression, FunctionRepr, Object, VarStack, VarStackLookup};
 use crate::math::objects::try_operation;
-use crate::math::operations::{BinaryOperation, UnaryOperation};
+use crate::math::operations::{BinaryOperation, Comparison, UnaryOperation};
 use crate::math::utils::{approx_eq, linspace_as_objects};
 use crate::status::{ExtResult, Status};
 
@@ -26,13 +26,14 @@ const KEYWORDS: [&str; 2] = [
 /// 
 /// Parsing the expression recursively, every identifier that is NOT declared as an argument of the function is replaced
 /// by the constant it represents in the current environment. Identifiers can be declared as arguments even if they exist in the environment;
-/// the environmental value will then be ignored. Moreover, every identifier that is declared as an argument is prefixed with three underscores
+/// the environmental value will then be ignored. Also, this will evaluate any encountered partial
+/// derivative. Moreover, every identifier that is declared as an argument is prefixed with three underscores
 /// (this will be needed for evaluation). For example, if 'constants = {"x": 1, "y": 2}', the RHS of the literal expression
 /// "f(y, z) := x + 3*y + z" will become "1 + 3*___tmp_y + ___tmp_z".
 /// 
-/// If an `Expression::Function(f, args)` is encountered where `f` corresponds to a direct function with mask `(m, n, b)`,
+/// If an `Expression::Function(f, args)` is encountered where `f` corresponds to a direct function with mask `(m, n, k)`,
 /// we only recursively process the elements of `args` that would be evaluated by `f` when called. The other elements of `args`
-/// are left untouched. For instance, if `b == false`, we only recursively parse `args[..m]`.
+/// are left untouched.
 /// 
 /// I have decided that if the definition depends on another function (say, "f(x, y) = g(x) + y"), the other function shall
 /// _not_ be replaced by its literal expression. It makes sense to me to capture the current values of free variables because
@@ -124,28 +125,32 @@ pub fn parse_function_definition(
             })
         }
         Expression::Function(function_name, args) => {
-            // Direct function => only parse the elements of `args` that shall be evaluated in a call of `function_name`,
-            // i.e. `args[..m]`, and if `b == true`, then in addition `args[m+n..]`
+            // Direct function => only parse the elements of `args` that shall be evaluated in a call of `function_name`.
             // Below `opt` allows us to use `env` again later. It is just a copy-operation anyway.
-            let opt = if let Some(FunctionRepr::Direct(_, (m, n, b))) = env.functions.get(function_name) {
-                Some((*m, *n, *b))
+            let opt = if let Some(FunctionRepr::Direct(_, (m, n, k))) = env.functions.get(function_name) {
+                Some((*m, *n, *k))
             } else {None};
-            if let Some((m, n, b)) = opt {
+            if let Some((m, n, k)) = opt {
                 if args.len() < m+n {
                     return Err(format!("Wrong number of arguments provided for function '{}' (expected at least {}, got {}).", function_name, m+n, args.len()));
                 }
                 let Status{value: mut processed_args, mut warnings} = Status::from_iter(
-                    args.iter().take(m),
+                    args[0..m].iter(),
                     |x| parse_function_definition(x, argument_names, extra_vars, env)
                 )?;
-                processed_args.extend(args.iter().skip(m).take(n).cloned());
-                if b {
-                    processed_args.reserve(args.len() - (m+n));
-                    for x in args.iter().skip(m+n) {
-                        processed_args.push(parse_function_definition(x, argument_names, extra_vars, env)?.unpack_into(&mut warnings))
-                    }
-                } else {
-                    processed_args.extend(args.iter().skip(m+n).cloned());
+                processed_args.extend(args[m..m+n].to_vec());
+                if k != 0 { // Skip the first n/k arguments, then parse again
+                    let split_at = m + n + (args.len() - m - n) / k;
+                    processed_args.extend(args[m+n..split_at].iter().cloned());
+                    processed_args.extend(Status::from_iter(
+                        args[split_at..].iter(),
+                        |x| parse_function_definition(x, argument_names, extra_vars, env)
+                    )?.unpack_into(&mut warnings));
+                } else { // Parse everything
+                    processed_args.extend(Status::from_iter(
+                        args[m+n..].iter(),
+                        |x| parse_function_definition(x, argument_names, extra_vars, env)
+                    )?.unpack_into(&mut warnings));
                 }
                 Ok(Status {
                     value: Expression::Function(
@@ -169,8 +174,8 @@ pub fn parse_function_definition(
             parse_function_definition(rhs, argument_names, extra_vars, env)?,
             |lhs, rhs| Ok(Expression::Assignment(Box::new(lhs), Box::new(rhs)))
         ),
-        Expression::PartialDerivative(wrt, expr) => {
-            math::differentiation::analytic_partial_derivative(expr, wrt, extra_vars, env)?
+        Expression::PartialDerivative(seq, expr) => {
+            math::differentiation::apply_seq_of_partial_derivatives(expr, seq, extra_vars, env)?
             .try_map_flatten(|expr| parse_function_definition(&expr, argument_names, extra_vars, env))
         }
         Expression::DirectionalDerivative(vars, expr, point, direction) => Status::combine_three(
@@ -344,28 +349,10 @@ pub fn eval(
             }
         }
         Expression::BinaryOperation(lhs, op, rhs) => {
-            // Check if the operation is a comparison and at least one of `lhs`, `rhs` is a function (which we'll call `this`; we'll call the remaining one `other`).
-            // Here, being a function means having unknown identifiers within.
-            if let BinaryOperation::Comp(_, precision_expr) = op {
-                let mut lhs_free_variables = HashSet::<String>::new();
-                lhs.list_unknown_identifiers(extra_vars, env, &mut lhs_free_variables);
-                let mut rhs_free_variables = HashSet::<String>::new();
-                rhs.list_unknown_identifiers(extra_vars, env, &mut rhs_free_variables);
-                if !lhs_free_variables.is_empty() {
-                    return test_function_equality(lhs, rhs, lhs_free_variables, rhs_free_variables, op, false, precision_expr, extra_vars, env);
-                } else if !rhs_free_variables.is_empty() {
-                    return test_function_equality(rhs, lhs, rhs_free_variables, lhs_free_variables, op, true, precision_expr, extra_vars, env);
-                }
-            }
-            // Otherwise, simply evaluate the binary operation.
-            let Status{value: lhs_eval, mut warnings} = eval(lhs, extra_vars, env)?;
-            // If the LHS is evaluated to zero and `op` is `*` or `&&`, we can skip evaluating the RHS.
-            // Furthermore, we actually SHOULD skip it, since this enables us to use indicator functions smartly.
-            if let Object::Real(x) = &lhs_eval && x.is_finite() && approx_eq(*x, 0.0) && (*op == BinaryOperation::Mul || *op == BinaryOperation::And) {
-                Ok(Status{value: rhs.get_type(extra_vars, env).map(|t| t.zero())?, warnings})
+            if let BinaryOperation::Comp(comp, precision_expr) = op {
+                compare_expressions(lhs, rhs, *comp, precision_expr, extra_vars, env)
             } else {
-                try_operation(&lhs_eval, &eval(rhs, extra_vars, env)?.unpack_into(&mut warnings), op)
-                .map(|value| Status{value, warnings})
+                eval_binop(lhs, rhs, op, extra_vars, env)
             }
         }
         Expression::FoldedOperation(op, index_var, from, conditions, to, inner)
@@ -392,67 +379,68 @@ pub fn eval(
             // and the case `Expression::Assignment` in this function does not call itself recursively on the LHS
             // of an assignment operation.
             
-            // If `function_name` is of the form with `___diff_num_f`, this isn't a function contained in `functions` but the request to numerically differentiate `f`.
-            if let Some(real_function_name) = function_name.strip_prefix("___diff_num_") {
-                // Ensure that `given_arg_exprs` is even. There is a special case where an uneven number is tolerated: if only a single argument
-                // is provided, simply set the direction as 1.0 (default for 1d derivative).
-                let mut tmp: Vec<Expression>;
-                let arg_exprs = if given_arg_exprs.len() % 2 != 0 {
-                    if given_arg_exprs.len() == 1 {
-                        tmp = given_arg_exprs.clone();
-                        tmp.push(Expression::Number(1.0));
-                        &tmp
-                    }
-                    else {
-                        return Err("___diff_num_{{...}} takes an even number of arguments.".to_string()); // See splitting of arguments below
-                    }
-                } else { given_arg_exprs };
-                let rm = env.functions.remove(real_function_name);
-                let res = match rm {
-                    Some(FunctionRepr::Direct(f_ref, _)) => {
-                        let Status{value: (point, direction), warnings} = Status::combine(
-                            eval_mul_exprs(arg_exprs[0..arg_exprs.len()/2].iter(), extra_vars, env)?,
-                            eval_mul_exprs(arg_exprs[arg_exprs.len()/2..arg_exprs.len()].iter(), extra_vars, env)?,
-                            |lhs, rhs| Ok((lhs, rhs))
-                        )?;
-                        let mut mutable_version = |x: &[Object], y: &[Expression], z: Option<(&VarStack, &mut Env)>| f_ref(x, y, z);
-                        math::differentiation::numerical_directional_derivative(&mut mutable_version, point, direction, extra_vars, env)
-                        .map(|s| s.with_extra_warnings(warnings))
-                    }
-                    Some(FunctionRepr::ByExpression(ref f_varnames, ref f_expr)) => {
-                        // This is rare, but if e.g. an integral should be differentiated, then we need this case
-                        // (cf. `math::differentiation::analytic_partial_derivative`, case `Expression::Integral`).
-                        let Status{value: (point, direction), warnings} = Status::combine(
-                            eval_mul_exprs(arg_exprs[0..arg_exprs.len()/2].iter(), extra_vars, env)?,
-                            eval_mul_exprs(arg_exprs[arg_exprs.len()/2..arg_exprs.len()].iter(), extra_vars, env)?,
-                            |lhs, rhs| Ok((lhs, rhs))
-                        )?;
-                        #[allow(clippy::type_complexity)] 
-                        let mut f_as_direct: Box<dyn for<'a, 'b, 'c, 'd> FnMut(&'a [Object], &'b [Expression], Option<(&'c VarStack, &'d mut Env)>) -> ExtResult> = Box::new(
-                            |parsed_args, _, context| {
-                                if parsed_args.len() != f_varnames.len() {
-                                    Err(format!("Wrong number of arguments provided for function '{}' (expected {}, got {}).", real_function_name, f_varnames.len(), parsed_args.len()))
-                                } else if let Some((_varstack, _env)) = context {
-                                    eval(
-                                        f_expr,
-                                        &_varstack.with_multiple(f_varnames.iter(), parsed_args.iter()),
-                                        _env
-                                    )
-                                } else {
-                                    Err("[Unreachable] Function requires varstack and environment.".to_string())
-                                }
-                            }
-                        );
-                        math::differentiation::numerical_directional_derivative(&mut f_as_direct, point, direction, extra_vars, env)
-                        .map(|s| s.with_extra_warnings(warnings))
-                    }
-                    None => Err(format!("No such function: {:?}", function_name))
-                };
-                if let Some(x) = rm {
-                    env.functions.insert(real_function_name.to_string(), x);
-                }
-                res
-            }
+            // // TODO rm
+            // // If `function_name` is of the form with `___diff_num_f`, this isn't a function contained in `functions` but the request to numerically differentiate `f`.
+            // if let Some(real_function_name) = function_name.strip_prefix("___diff_num_") {
+            //     // Ensure that `given_arg_exprs` is even. There is a special case where an uneven number is tolerated: if only a single argument
+            //     // is provided, simply set the direction as 1.0 (default for 1d derivative).
+            //     let mut tmp: Vec<Expression>;
+            //     let arg_exprs = if given_arg_exprs.len() % 2 != 0 {
+            //         if given_arg_exprs.len() == 1 {
+            //             tmp = given_arg_exprs.clone();
+            //             tmp.push(Expression::Number(1.0));
+            //             &tmp
+            //         }
+            //         else {
+            //             return Err("___diff_num_{{...}} takes an even number of arguments.".to_string()); // See splitting of arguments below
+            //         }
+            //     } else { given_arg_exprs };
+            //     let rm = env.functions.remove(real_function_name);
+            //     let res = match rm {
+            //         Some(FunctionRepr::Direct(f_ref, _)) => {
+            //             let Status{value: (point, direction), warnings} = Status::combine(
+            //                 eval_mul_exprs(arg_exprs[0..arg_exprs.len()/2].iter(), extra_vars, env)?,
+            //                 eval_mul_exprs(arg_exprs[arg_exprs.len()/2..arg_exprs.len()].iter(), extra_vars, env)?,
+            //                 |lhs, rhs| Ok((lhs, rhs))
+            //             )?;
+            //             let mut mutable_version = |x: &[Object], y: &[Expression], z: Option<(&VarStack, &mut Env)>| f_ref(x, y, z);
+            //             math::differentiation::numerical_directional_derivative(&mut mutable_version, point, direction, extra_vars, env)
+            //             .map(|s| s.with_extra_warnings(warnings))
+            //         }
+            //         Some(FunctionRepr::ByExpression(ref f_varnames, ref f_expr)) => {
+            //             // This is rare, but if e.g. an integral should be differentiated, then we need this case
+            //             // (cf. `math::differentiation::analytic_partial_derivative`, case `Expression::Integral`).
+            //             let Status{value: (point, direction), warnings} = Status::combine(
+            //                 eval_mul_exprs(arg_exprs[0..arg_exprs.len()/2].iter(), extra_vars, env)?,
+            //                 eval_mul_exprs(arg_exprs[arg_exprs.len()/2..arg_exprs.len()].iter(), extra_vars, env)?,
+            //                 |lhs, rhs| Ok((lhs, rhs))
+            //             )?;
+            //             #[allow(clippy::type_complexity)] 
+            //             let mut f_as_direct: Box<dyn for<'a, 'b, 'c, 'd> FnMut(&'a [Object], &'b [Expression], Option<(&'c VarStack, &'d mut Env)>) -> ExtResult> = Box::new(
+            //                 |parsed_args, _, context| {
+            //                     if parsed_args.len() != f_varnames.len() {
+            //                         Err(format!("Wrong number of arguments provided for function '{}' (expected {}, got {}).", real_function_name, f_varnames.len(), parsed_args.len()))
+            //                     } else if let Some((_varstack, _env)) = context {
+            //                         eval(
+            //                             f_expr,
+            //                             &_varstack.with_multiple(f_varnames.iter(), parsed_args.iter()),
+            //                             _env
+            //                         )
+            //                     } else {
+            //                         Err("[Unreachable] Function requires varstack and environment.".to_string())
+            //                     }
+            //                 }
+            //             );
+            //             math::differentiation::numerical_directional_derivative(&mut f_as_direct, point, direction, extra_vars, env)
+            //             .map(|s| s.with_extra_warnings(warnings))
+            //         }
+            //         None => Err(format!("No such function: {:?}", function_name))
+            //     };
+            //     if let Some(x) = rm {
+            //         env.functions.insert(real_function_name.to_string(), x);
+            //     }
+            //     res
+            // }
 
             // Check if `function_name` corresponds to a known `FunctionRepr::ByExpression(argnames, defining_expr)` in `env.functions`.
             // If so, we need to clone `argnames` and `defining_expr`:
@@ -461,7 +449,8 @@ pub fn eval(
             // would render this `eval` call impossible since we would need to reborrow `env` as mutable again.
             // Note: we can't just temporarily remove `function_name` from `env.functions` and later reinsert it since this would
             // make expressions like `exp(exp(0))` impossible.
-            else if let Some((argnames, defining_expr)) = match env.functions.get(function_name) {
+            // else // TODO <- rm this line
+            if let Some((argnames, defining_expr)) = match env.functions.get(function_name) {
                Some(FunctionRepr::ByExpression(argnames, defining_expr)) => Some((argnames.clone(), defining_expr.clone())),
                _ => None
             } {
@@ -478,21 +467,28 @@ pub fn eval(
 
             // Check if `function_name` corresponds to a known `FunctionRepr::Direct` in `env.functions`.
             // Then, proceed similarly as for `FunctionRepr::ByExpression` but take into consideration the function mask.
-            else if let Some((f, m, n, b)) = match env.functions.get(function_name) {
-               Some(FunctionRepr::Direct(f, (m, n, b))) => Some((&**f, *m, *n, *b)),
+            else if let Some((f, m, n, k)) = match env.functions.get(function_name) {
+               Some(FunctionRepr::Direct(f, (m, n, k))) => Some((&**f, *m, *n, *k)),
                _ => None
             } {
                 if given_arg_exprs.len() < m + n {
                     return Err(format!("Wrong number of arguments provided for function '{}' (expected at least {}).", function_name, m + n));
                 }
-                let mut evaluated_args_status = eval_mul_exprs(given_arg_exprs.iter().take(m), extra_vars, env)?;
-                if b {
-                    evaluated_args_status.merge(eval_mul_exprs(given_arg_exprs.iter().skip(m+n), extra_vars, env)?)
-                }
-                evaluated_args_status.try_map_flatten(
+                eval_mul_exprs( // evaluated_args
+                    given_arg_exprs[..m].iter() // Just the range [0..m]
+                    .chain(
+                        given_arg_exprs[ // If k != 1, this is non-empty
+                            m + n + if k == 0 {0} else {(given_arg_exprs.len() - m - n) / k}..
+                        ].iter()
+                    ),
+                    extra_vars,
+                    env
+                )?
+                .try_map_flatten(
                     |evaluated_args| f(
                         &evaluated_args,
-                        if b {&given_arg_exprs[m .. (m+n)]} else {&given_arg_exprs[m..]}, Some((extra_vars, env))
+                        &given_arg_exprs[m .. m + n + if k == 0 {0} else {(given_arg_exprs.len() - m - n) / k}],
+                        Some((extra_vars, env))
                     )
                 )
             }
@@ -502,8 +498,8 @@ pub fn eval(
         Expression::Assignment(lhs, rhs) => {
             eval_assignment(lhs, rhs, extra_vars, env)
         }
-        Expression::PartialDerivative(wrt, expr) => {
-            math::differentiation::analytic_partial_derivative(expr, wrt, extra_vars, env)
+        Expression::PartialDerivative(seq, expr) => {
+            math::differentiation::apply_seq_of_partial_derivatives(expr, seq, extra_vars, env)
             .map(|s| s.map(|e| Object::LiteralExpression(e)))
         }
         Expression::DirectionalDerivative(vars, expr, point_exprs, direction_exprs) => {
@@ -554,6 +550,52 @@ fn eval_mul_exprs_to_f64(expressions: &[Expression], extra_vars: &VarStack, env:
     )
 }
 
+/// Performs the given binary operation on the given expressions.
+/// 
+/// Does _not_ check whether `test_function_equality` should be called in case `op` is a comparison.
+pub fn eval_binop(
+    lhs: &Expression,
+    rhs: &Expression,
+    op: &BinaryOperation,
+    extra_vars: &VarStack,
+    env: &mut Env
+) -> ExtResult {
+    let Status{value: lhs_eval, mut warnings} = eval(lhs, extra_vars, env)?;
+    // If the LHS is evaluated to zero and `op` is `*` or `&&`, we can skip evaluating the RHS.
+    // Furthermore, we actually SHOULD skip it, since this enables us to use indicator functions smartly.
+    if let Object::Real(x) = &lhs_eval && x.is_finite() && approx_eq(*x, 0.0) && (*op == BinaryOperation::Mul || *op == BinaryOperation::And) {
+        Ok(Status{value: rhs.get_type(extra_vars, env).map(|t| t.zero())?, warnings})
+    } else {
+        try_operation(&lhs_eval, &eval(rhs, extra_vars, env)?.unpack_into(&mut warnings), op)
+        .map(|value| Status{value, warnings})
+    }
+}
+
+/// Performs the given comparison on the given expressions.
+/// 
+/// Detects whether `test_function_equality` should be called or not.
+pub fn compare_expressions(
+    lhs: &Expression,
+    rhs: &Expression,
+    op: Comparison,
+    precision_expr: &Option<Box<Expression>>,
+    extra_vars: &VarStack,
+    env: &mut Env
+) -> ExtResult {
+    // Check if at least one of `lhs`, `rhs` is a function. Here, being a function means having unknown identifiers within.
+    let mut lhs_free_variables = HashSet::<String>::new();
+    lhs.list_unknown_identifiers(extra_vars, env, &mut lhs_free_variables);
+    let mut rhs_free_variables = HashSet::<String>::new();
+    rhs.list_unknown_identifiers(extra_vars, env, &mut rhs_free_variables);
+    if !lhs_free_variables.is_empty() {
+        test_function_equality(lhs, rhs, lhs_free_variables, rhs_free_variables, op, false, precision_expr, extra_vars, env)
+    } else if !rhs_free_variables.is_empty() {
+        test_function_equality(rhs, lhs, rhs_free_variables, lhs_free_variables, op, true, precision_expr, extra_vars, env)
+    } else {
+        eval_binop(lhs, rhs, &BinaryOperation::Comp(op, None), extra_vars, env)
+    }
+}
+
 /// Tests whether two expressions `lhs` and `rhs` are equal by plugging in a range of arguments (cf. implementation for details).
 /// 
 /// * `lhs_free_variables` - Identifiers in `lhs` for which values should be inserted.
@@ -566,7 +608,7 @@ fn test_function_equality(
     rhs: &Expression,
     mut lhs_free_variables: HashSet<String>,
     rhs_free_variables: HashSet<String>,
-    op: &BinaryOperation,
+    op: Comparison,
     mirror: bool,
     precision_expr: &Option<Box<Expression>>,
     extra_vars: &VarStack,
@@ -626,7 +668,8 @@ fn test_function_equality(
                 .unpack_into_with_cap(&mut warnings, 8);
         }
         // If the objects' comparison yields `false`, return that. If the objects aren't comparable, return the appropriate error. Otherwise, continue.
-        match if mirror {try_operation(&rhs_eval, &lhs_eval, op)} else {try_operation(&lhs_eval, &rhs_eval, op)} {
+        let binop = BinaryOperation::Comp(op, None);
+        match if mirror {try_operation(&rhs_eval, &lhs_eval, &binop)} else {try_operation(&lhs_eval, &rhs_eval, &binop)} {
             Ok(Object::Real(0.0)) => { return Ok(Status{value: Object::Real(0.0), warnings}); }
             Err(_) => { return Err(format!("Couldn't compare `{}` and `{}` (arising from environment {:?}).", lhs_eval, rhs_eval, env.constants)); }
             _ => {}
@@ -641,8 +684,8 @@ fn eval_assignment(
     extra_vars: &VarStack,
     env: &mut Env
 ) -> ExtResult {
-    // Note that names starting with "___" are forbidden (prefix "___tmp_" reserved for temporary variables, prefix "___diff_" for the derivative of a function with direct representation).
-    /// Helper function. We need this because multiple syntax structures lead to a function definition:
+    // Names starting with "___" are forbidden (they are reserved for internal helpers).
+    /// We need this because multiple syntax structures lead to a function definition:
     /// - `Expression::Function(function_name, args)`
     /// - `Expression::BinaryOperation(Identifier(function_name), BinaryOperation::Mul, Identifier(arg))`
     /// - `Expression::BinaryOperation(Identifier(function_name), BinaryOperation::Mul, Vector(args))`
@@ -673,9 +716,6 @@ fn eval_assignment(
                 expr
             ));
             // The .clone() above is no problem since function definitions are rare (in the sense that performance doesn't matter for this).
-            // Next, if there was already a function `__diff_{function_name}` present in `functions` (cf. `analytic_derivative`),
-            // then it is now outdated, so we remove it.
-            env.functions.remove(&format!("___diff_num_{}", function_name));
             // Lastly, if `function_name` was already a constant, then we should remove it to avoid ambiguity.
             // We emit a warning if this happens.
             if let Some(old_val) = env.constants.remove(function_name) {

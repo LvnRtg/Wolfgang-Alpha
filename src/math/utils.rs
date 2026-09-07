@@ -130,3 +130,29 @@ pub fn fold_res_obj_iter(mut iter: impl Iterator<Item=Result<Object, String>>, b
         )
     ))
 }
+
+/// Returns `Some(x)` if `it` returns exactly one element `x`, otherwise `None`.
+pub fn expect_exactly_one<T>(mut it: impl Iterator<Item=T>) -> Option<T> {
+    if let Some(x) = it.next() {
+        if it.next().is_none() {
+            Some(x)
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+/// Returns `Ok(Some(x))` if `it` returns exactly one element `Ok(x)`, otherwise `None`. Short-circuits on `Err`.
+pub fn try_expect_exactly_one<T, E>(mut it: impl Iterator<Item=Result<T, E>>) -> Result<Option<T>, E> {
+    if let Some(r) = it.next() {
+        let t = r?;
+        if it.next().is_none() {
+            Ok(Some(t))
+        } else {
+            Ok(None)
+        }
+    } else {
+        Ok(None)
+    }
+}

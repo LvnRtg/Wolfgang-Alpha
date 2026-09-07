@@ -4,9 +4,11 @@ use std::collections::HashSet;
 use std::iter::Peekable;
 use std::vec::IntoIter;
 
+use crate::expr_unary_op;
 use crate::lang::lexer::{Keyword, Token, tokenize};
 use crate::math::operations::{BinaryOperation, Comparison, UnaryOperation, FoldedOperation};
-use crate::math::{Expression, FunctionRepr, Env, VarStack};
+use crate::math::{Env, Expression, FunctionRepr, utils, VarStack};
+use crate::status::Status;
 
 pub struct Parser {
     pub tokens: Peekable<IntoIter<Token>>
@@ -50,31 +52,35 @@ impl Parser {
     /// Uses the following functions to parse expressions separated by commas until the token `closer` follows an expression.
     /// 
     /// Consumes the closer.
-    fn parse_comma_expression(&mut self, closer: &Token, env: &mut Env) -> Result<Vec<Expression>, String> {
+    fn parse_comma_expression(&mut self, closer: &Token, env: &mut Env) -> Result<Status<Vec<Expression>>, String> {
         let mut exprs = Vec::<Expression>::new();
         if let Ok(t) = self.peek() && t == closer {
             _ = self.next();
-            return Ok(exprs);
+            return Ok(Status::ok(exprs));
         }
+        let mut warnings = Vec::new();
         loop {
-            exprs.push(self.parse_expression(0, None, env)?);
+            exprs.push(self.parse_expression(0, None, env)?.unpack_into(&mut warnings));
             match self.next()? {
                 Token::Comma => {},
                 some if &some == closer => {break;},
                 other => {return Err(format!("Expected '{:?}', found {:?}.", closer, other));}
             }
         }
-        Ok(exprs)
+        Ok(Status {
+            value: exprs,
+            warnings
+        })
     }
 
     /// Expects either `LBrace, ..., RBrace` (then parses `...` and returns the result) or `Identifier(...) | Number(...)`
     /// (then returns `...` directly). All other syntaxes return `Err`.
     /// 
     /// For example, you'd call this after encountering `sum_`.
-    fn expect_brace_expr(&mut self, env: &mut Env) -> Result<Expression, String> {
+    fn expect_brace_expr(&mut self, env: &mut Env) -> Result<Status<Expression>, String> {
         match self.next()? {
-            Token::Identifier(x) => Ok(Expression::Identifier(x)),
-            Token::Number(x) => Ok(Expression::Number(x)),
+            Token::Identifier(x) => Ok(Status::ok(Expression::Identifier(x))),
+            Token::Number(x) => Ok(Status::ok(Expression::Number(x))),
             Token::LBrace => {
                 let f: Box<dyn Fn(&Token) -> bool> = Box::new(|t: &Token| matches!(t, Token::RBrace));
                 let res = self.parse_expression(0, Some(&f), env)?;
@@ -88,10 +94,10 @@ impl Parser {
     /// (then returns `vec![...]` directly). All other syntaxes return `Err`.
     /// 
     /// For example, you'd call this after encountering `sum_`.
-    fn expect_brace_expr_with_commas(&mut self, env: &mut Env) -> Result<Vec<Expression>, String> {
+    fn expect_brace_expr_with_commas(&mut self, env: &mut Env) -> Result<Status<Vec<Expression>>, String> {
         match self.next()? {
-            Token::Identifier(x) => Ok(vec![Expression::Identifier(x)]),
-            Token::Number(x) => Ok(vec![Expression::Number(x)]),
+            Token::Identifier(x) => Ok(Status::ok(vec![Expression::Identifier(x)])),
+            Token::Number(x) => Ok(Status::ok(vec![Expression::Number(x)])),
             Token::LBrace => self.parse_comma_expression(&Token::RBrace, env),
             other => Err(format!("Expected '{{', identifier or number; got {:?} instead.", other))
         }
@@ -103,19 +109,20 @@ impl Parser {
     /// This is usually unnecessary (e.g. expressions between parentheses are parsed just fine without this), but is strictly required
     /// when parsing an expression between e.g. double pipes (`||`), because this token cannot necessarily be distinguished from the "or" operator.
     #[allow(clippy::type_complexity)]
-    fn parse_expression(&mut self, min_precedence: u8, return_early_if: Option<&Box<dyn Fn(&Token) -> bool>>, env: &mut Env) -> Result<Expression, String> {
+    fn parse_expression(&mut self, min_precedence: u8, return_early_if: Option<&Box<dyn Fn(&Token) -> bool>>, env: &mut Env) -> Result<Status<Expression>, String> {
         // First, determine the LHS of the next operation to execute.
         // This is either an identifier, a number or a further expression between parentheses.
+        let mut warnings = Vec::new();
         let mut lhs = match self.next()? {
-            Token::Minus => Expression::UnaryOperation(UnaryOperation::Neg, Box::new(self.parse_expression(6, None, env)?)),
+            Token::Minus => expr_unary_op!(Neg, self.parse_expression(6, None, env)?.unpack_into(&mut warnings)),
             Token::ExclamationMark // An exclamation mark before an expected expression signifies a `not` operator
-                => Expression::UnaryOperation(UnaryOperation::Not, Box::new(self.parse_expression(3, None, env)?)),
+                => expr_unary_op!(Not, self.parse_expression(6, None, env)?.unpack_into(&mut warnings)),
             Token::Identifier(id) if id == "D" || id == "D_" => { // Total derivative
                 // Expected tokens: ("D" | "D_{...}") <FunctionExpr> (<point>) [<direction>].
                 // For a list of all accepted syntaxes, see the documentation of the program's syntax.
                 let mut argnames = Vec::<String>::new();
                 if id == "D_" { // Then, parse argnames now. Otherwise, we need knowledge of `function_expr` for this.
-                    for inner_expr in self.expect_brace_expr_with_commas(env)?.into_iter() {
+                    for inner_expr in self.expect_brace_expr_with_commas(env)?.unpack_into(&mut warnings).into_iter() {
                         if let Expression::Identifier(s) = inner_expr {
                             argnames.push(s);
                         } else {
@@ -123,7 +130,7 @@ impl Parser {
                         }
                     }
                 }
-                let mut function_expr = self.parse_expression(8, None, env)?;
+                let mut function_expr = self.parse_expression(8, None, env)?.unpack_into(&mut warnings);
                 // At this point, the next token can either be a parenthesis or a bracket.
                 let point = match (self.peek()?, &mut function_expr) {
                     // This case means the point is yet to parse.
@@ -135,7 +142,7 @@ impl Parser {
                             argnames.sort_unstable();
                         }
                         self.next()?;
-                        self.parse_comma_expression(&Token::RParenthesis, env)?
+                        self.parse_comma_expression(&Token::RParenthesis, env)?.unpack_into(&mut warnings)
                     }
                     // The following case is only valid if `function_expr` is a `Expression::Function(f, x)`, in which case `x` is the actual point
                     // and the true arguments given to `f` should be its argnames in order (if f has direct representation, use x_1, ..., x_n
@@ -149,10 +156,9 @@ impl Parser {
                         std::mem::replace(args, argnames.iter().map(|x| Expression::Identifier(x.clone())).collect())
                     }
                     _ => return Err("Missing point to differentiate at in total derivative expression.".to_string())
-
                 };
                 self.expect_token(Token::LBracket, None)?;
-                let direction = self.parse_comma_expression(&Token::RBracket, env)?;
+                let direction = self.parse_comma_expression(&Token::RBracket, env)?.unpack_into(&mut warnings);
                 Expression::DirectionalDerivative(argnames, Box::new(function_expr), point, direction)
             }
             Token::Identifier(id) if let Some(op) = FoldedOperation::from_string(&id) => { // Folded operation
@@ -163,7 +169,7 @@ impl Parser {
                 //     Vec<Token> | (Identifier | Number),
                 // RBrace | None,
                 // Vec<Token>
-                let mut subscript = self.expect_brace_expr_with_commas(env)?; // Should be ["i = ...", *conditions]
+                let mut subscript = self.expect_brace_expr_with_commas(env)?.unpack_into(&mut warnings); // Should be ["i = ...", *conditions]
                 let (index_var_name, index_var_init, conditions) = match subscript.remove(0) {
                     Expression::BinaryOperation(lhs, BinaryOperation::Comp(Comparison::Eq, None), rhs) => match *lhs {
                         Expression::Identifier(s) => (s, *rhs, subscript), // Notice "i = ..." was removed from `subscript` already
@@ -172,8 +178,8 @@ impl Parser {
                     other => return Err(format!("Expected an expression of the form `Identifier(...) = ...`, got {:?}.", other))
                 };
                 self.expect_token(Token::Circumflex, Some(" to specify end of range"))?;
-                let superscript = self.expect_brace_expr(env)?;
-                let inner = self.parse_expression(op.priority() + 1, None, env)?;
+                let superscript = self.expect_brace_expr(env)?.unpack_into(&mut warnings);
+                let inner = self.parse_expression(op.priority() + 1, None, env)?.unpack_into(&mut warnings);
                 Expression::FoldedOperation(op, index_var_name, Box::new(index_var_init), conditions, Box::new(superscript), Box::new(inner))
             }
             Token::Identifier(id) if id.starts_with("int_") => {
@@ -185,15 +191,15 @@ impl Parser {
                     if rest_parser.parse_next(env).is_some() {
                         return Err("Multiple expressions encountered while parsing subscript of integral.".to_string())
                     }
-                    rest
+                    rest.unpack_into(&mut warnings)
                 } else {
-                    self.expect_brace_expr(env)?
+                    self.expect_brace_expr(env)?.unpack_into(&mut warnings)
                 };
                 self.expect_token(Token::Circumflex, Some(" to specify end of range"))?;
-                let superscript = self.expect_brace_expr(env)?;
+                let superscript = self.expect_brace_expr(env)?.unpack_into(&mut warnings);
                 // Parse inner expression but stop immediately if an identifier of length > 1 starting with `d` is encountered.
                 let stopper: Box<dyn Fn(&Token) -> bool> = Box::new(|t: &Token| matches!(t, Token::Identifier(id) if id.starts_with('d') && id.len() > 1));
-                let inner = self.parse_expression(0, Some(&stopper), env)?;
+                let inner = self.parse_expression(0, Some(&stopper), env)?.unpack_into(&mut warnings);
                 let int_var = match self.next()? {
                     Token::Identifier(id) if id.starts_with("d") && id.len() > 1 => id.strip_prefix("d").unwrap().to_string(),
                     other => return Err(format!("Expected \"dv\" where \"v\" is some identifier; got {:?}.", other))
@@ -206,9 +212,9 @@ impl Parser {
                 // way to know yet whether there will be an assignment operator on the same precedence level as we currently are. Therefore,
                 // this case will be handled afterwards by 'eval'. So, we only have to check the case:
                 match self.peek()? {
-                    Token::LParenthesis if env.functions.contains_key(&x) || x.starts_with("___diff_num_") || x == "del" => {
+                    Token::LParenthesis if env.functions.contains_key(&x) || x == "del" => {
                         let _ = self.next();
-                        Expression::Function(x, self.parse_comma_expression(&Token::RParenthesis, env)?)
+                        Expression::Function(x, self.parse_comma_expression(&Token::RParenthesis, env)?.unpack_into(&mut warnings))
                     }
                     _ => Expression::Identifier(x)
                 }
@@ -219,7 +225,7 @@ impl Parser {
                 match self.peek()? {
                     Token::LParenthesis => {
                         self.next()?;
-                        Expression::Function("1".to_string(), self.parse_comma_expression(&Token::RParenthesis, env)?)
+                        Expression::Function("1".to_string(), self.parse_comma_expression(&Token::RParenthesis, env)?.unpack_into(&mut warnings))
                     }
                     _ => Expression::Number(x)
                 }
@@ -227,7 +233,7 @@ impl Parser {
             Token::LParenthesis => {
                 // Parse expression between parentheses recursively. It could just be a single expression of multiple entries separated by commas.
                 // It could also be empty.
-                let mut entries = self.parse_comma_expression(&Token::RParenthesis, env)?;
+                let mut entries = self.parse_comma_expression(&Token::RParenthesis, env)?.unpack_into(&mut warnings);
                 match entries.len() {
                     0 => Expression::Tuple(Vec::new()),
                     1 => entries.pop().unwrap(), // I decided to not box the elements rightaway since the case `entries.len() == 1` is more common.
@@ -241,7 +247,7 @@ impl Parser {
                 let mut current_n: usize = 0;
                 loop {
                     current_n += 1;
-                    entries.push(self.parse_expression(0, None, env)?);
+                    entries.push(self.parse_expression(0, None, env)?.unpack_into(&mut warnings));
                     match self.next()? {
                         Token::Comma => {},
                         Token::Semicolon | Token::Backslash => {
@@ -274,13 +280,13 @@ impl Parser {
                 }
             }
             Token::Pipe => { // As for parentheses
-                let inner = self.parse_expression(0, None, env)?;
+                let inner = self.parse_expression(0, None, env)?.unpack_into(&mut warnings);
                 self.expect_token(Token::Pipe, Some(" as closer"))?;
                 Expression::UnaryOperation(UnaryOperation::Abs, Box::new(inner))
             }
             Token::DoublePipe => { // In this context: opener of a norm
                 let f: Box<dyn Fn(&Token) -> bool> = Box::new(|t: &Token| matches!(t, Token::DoublePipe));
-                let inner = self.parse_expression(0, Some(&f), env)?;
+                let inner = self.parse_expression(0, Some(&f), env)?.unpack_into(&mut warnings);
                 self.expect_token(Token::DoublePipe, Some(" as closer"))?;
                 match self.peek()? {
                     Token::Identifier(ident) if ident.starts_with('_') => {
@@ -290,7 +296,7 @@ impl Parser {
                                 Token::Identifier(a) => Expression::Identifier(a),
                                 Token::Number(a) => Expression::Number(a),
                                 Token::LBrace => {
-                                    let res = self.parse_expression(0, None, env)?;
+                                    let res = self.parse_expression(0, None, env)?.unpack_into(&mut warnings);
                                     self.expect_token(Token::RBrace, None)?;
                                     res
                                 }
@@ -311,13 +317,13 @@ impl Parser {
                 }
             }
             Token::Keyword(Keyword::If) => {
-                let condition = self.parse_expression(0, None, env)?; // Will return wenn LBrace is encountered.
+                let condition = self.parse_expression(0, None, env)?.unpack_into(&mut warnings); // Will return wenn LBrace is encountered.
                 self.expect_token(Token::LBrace, Some(" after condition"))?;
-                let iftrue = self.parse_expression(0, None, env)?;
+                let iftrue = self.parse_expression(0, None, env)?.unpack_into(&mut warnings);
                 self.expect_token(Token::RBrace, Some(" before `iftrue` expression"))?;
                 self.expect_token(Token::Keyword(Keyword::Else), None)?;
                 self.expect_token(Token::LBrace, Some(" after `else`"))?;
-                let iffalse = self.parse_expression(0, None, env)?;
+                let iffalse = self.parse_expression(0, None, env)?.unpack_into(&mut warnings);
                 self.expect_token(Token::RBrace, Some(" after `iffalse` expression"))?;
                 Expression::IfElse(Box::new(condition), Box::new(iftrue), Box::new(iffalse))
             }
@@ -330,7 +336,7 @@ impl Parser {
         // where an operator is expected.
         if let Some(f) = return_early_if && f(self.peek()?) {
             // Importantly, do not consume the encountered token so the caller can check it.
-            return Ok(lhs);
+            return Ok(Status{value: lhs, warnings});
         }
         loop {
             let (mut op, prec, consume) = match self.peek()? {
@@ -373,7 +379,7 @@ impl Parser {
                 if let Token::Comparison(c, param) = self.next()? { // As mentioned above, fetch the missing comparison parameter (if there is one)
                     let parsed_param = if let Some(p) = param {
                         let mut param_parser = Parser::from(p);
-                        let res = param_parser.parse_next(env).ok_or(format!("No expression to parse for parameter of comparison {c}."))??;
+                        let res = param_parser.parse_next(env).ok_or(format!("No expression to parse for parameter of comparison {c}."))??.unpack_into(&mut warnings);
                         if param_parser.parse_next(env).is_some() {
                             return Err(format!("Multiple expressions encountered while parsing parameter of comparison {c}."))
                         }
@@ -384,7 +390,7 @@ impl Parser {
             }
 
             // The RHS can only contain operators of strictly larger precedence, so we parse it with parameter 'prec+1'.
-            let rhs = self.parse_expression(prec + 1, return_early_if, env)?;
+            let rhs = self.parse_expression(prec + 1, return_early_if, env)?.unpack_into(&mut warnings);
 
             if let BinaryOperation::Pow(_) = op {
                 // Special case: the `^` operator is traditionally right-associative and not left-associative, i.e. 2^3^2 = 2^(3^2) and not (2^3)^2.
@@ -402,19 +408,48 @@ impl Parser {
                 *last_exponent_in_chain = Expression::BinaryOperation(Box::new(old), BinaryOperation::Pow(true), Box::new(rhs));
             } else {
                 // Otherwise, check a few more special cases or just combine `lhs`, `op` and `rhs` as expected.
-                lhs = match (lhs, &op, &rhs) {
+                lhs = match (lhs, op, rhs) {
                     // Assignment operator
-                    (lhs, ..) if prec == 0 => Expression::Assignment(Box::new(lhs), Box::new(rhs)),
+                    (lhs, _, rhs) if prec == 0 => Expression::Assignment(Box::new(lhs), Box::new(rhs)),
                     // Partial derivative
                     (
-                        Expression::Identifier(lhs_ident),
+                        numerator,
                         BinaryOperation::Div,
-                        Expression::Identifier(ident)
-                    ) if lhs_ident == "d" && ident.len() > 1
-                        // Parse the function to differentiate recursively.
-                        => Expression::PartialDerivative(ident[1..].to_string(), Box::new(self.parse_expression(8, None, env)?)),
+                        denominator
+                    ) if let Some((numerator_exp, denominator_exps)) = check_partial_derivative_syntax(&numerator, &denominator) => {
+                        // Check if the exponents in numerator and denominator match. If not, ignore the numerator but emit a warning.
+                        match crate::lang::evaluator::compare_expressions(
+                            &numerator_exp,
+                            &crate::expr_binop_from_iter!(Add, Sum, denominator_exps.iter().map(|&(_, ref x)| x.clone())),
+                            Comparison::Eq,
+                            &None,
+                            &crate::math::VarStack::Empty, // During parsing, no temporary extra vars are given
+                            env
+                        )
+                        .and_then(|s| s.value.expect_bool()) {
+                            Ok(true) => {}
+                            Ok(false) => warnings.push("Exponents in numerator and denominator of partial derivative operator do not match. Ignoring numerator.".to_string()),
+                            Err(e) => warnings.push(format!("Error while comparing exponents in numerator and denominator of partial derivative operator.\nTraceback: {e}"))
+                        }
+                        Expression::PartialDerivative(
+                            denominator_exps.into_iter().map(
+                                |(s, e)| match e {
+                                    Expression::Number(f) => {
+                                        let i = f.round();
+                                        if utils::approx_eq(f, i) && i >= 0.0 {
+                                            Ok((s, crate::math::expressions::Repeat::Number(i as usize)))
+                                        } else {
+                                            Err(format!("Exponents in denominator must be integers; got {f}."))
+                                        }
+                                    }
+                                    other => Ok((s, crate::math::expressions::Repeat::Expression(other)))
+                                }
+                            ).collect::<Result<Vec<_>, _>>()?,
+                            Box::new(self.parse_expression(8, None, env)?.unpack_into(&mut warnings))
+                        )
+                    }
                     // Default
-                    (lhs, ..) => Expression::BinaryOperation(Box::new(lhs), op, Box::new(rhs))
+                    (lhs, op, rhs) => crate::expr_binop_from_enum!(lhs, op, rhs)
                 };
             }
 
@@ -431,11 +466,11 @@ impl Parser {
             // For the integrand `x^2` instead, we still return because of the following lines of code,
             // but it wans't necessary to pass `return_early_if` down while parsing the RHS.
             if let Some(f) = return_early_if && f(self.peek()?) {
-                return Ok(lhs);
+                return Ok(Status{value: lhs, warnings});
             }
         }
 
-        Ok(lhs)
+        Ok(Status{value: lhs, warnings})
     }
 
     /// Parse the given vector of tokens recursively while consuming it until the end of the expression is met
@@ -459,21 +494,138 @@ impl Parser {
     /// <tr> <td>^<td/> <td>7<td/> </tr>
     /// <tr> <td>d/dx, D<td/> <td>8<td/> </tr>
     /// </table>
-    pub fn parse_next(&mut self, env: &mut Env) -> Option<Result<Expression, String>> {
+    pub fn parse_next(&mut self, env: &mut Env) -> Option<Result<Status<Expression>, String>> {
         // Note on design choice: works as an iterator instead of a vector because in some cases,
         // the parsing depends on the environment (e.g. `x(y+z)` is parsed differently depending on whether
         // `x` is a function or constant). Therefore, in some specific cases, it is important to evaluate the
         // expressions one by one, modifying the environment step by step, e.g. for `f(x) := x^2; g(x) := f(2x)`.
         // Hence, a part should only be parsed once all previous parts have been parsed _and_ evaluated.
         self.tokens.peek()?; // Return `None` if there are no tokens left in `self.tokens`
-        let expr = match self.parse_expression(0, None, env) {
-            Ok(e) => e,
+        let status = match self.parse_expression(0, None, env) {
+            Ok(s) => s,
             Err(e) => return Some(Err(e))
         };
         match self.next() {
-            Ok(Token::EOF) | Ok(Token::Semicolon) => Some(Ok(expr)),
+            Ok(Token::EOF) | Ok(Token::Semicolon) => Some(Ok(status)),
             Ok(other) => Some(Err(format!("Unexpected trailing token: {:?}", other))),
             Err(e) => Some(Err(e))
         }
     }
+}
+
+
+/// Given a fraction `numerator / denominator`, returns `Some(numerator_exp, denominator_exps)` if the fraction satisfies
+/// the syntax of a (possibly high-order) partial derivative, that is, `numerator = d^(numerator_exp)` and `denominator`
+/// is a chain of terms of the form `d(var)^(exp)`.
+/// 
+/// Then, `denominator_exps` is the collection of all tuples `(var, exp)` for which `d(var)^(exp)` appears in the denominator's
+/// chain, parsed from **right to left** (because this is the order the partial derivatives are evaluated in).
+fn check_partial_derivative_syntax(
+    numerator: &Expression,
+    mut denominator: &Expression
+) -> Option<(Expression, Vec<(String, Expression)>)> {
+    // The numerator must be of the form `dx^n`.
+    let numerator_exp = match numerator {
+        Expression::Identifier(s) if s == "d" => Expression::Number(1.0),
+        Expression::BinaryOperation(l, BinaryOperation::Pow(_), exp)
+        if let Expression::Identifier(s) = &**l && s == "d" => {
+            *exp.clone() // TODO check if this works without cloning. Idea: return only a pointer and move out of the pointer if the guard is satisfied
+        }
+        _ => return None
+    };
+    let mut v = Vec::new();
+    /* After parsing, the denominator could look like this:
+    `(((dx)^n * d) * var^2) * (dy)`
+    Notice:
+    - Multiplications are left-associative
+    - Inputs like `dx` will be parsed as one single identifier
+    - Inputs like `d(var)` will be parsed as `d * var`
+    - In cases like `d(var)^2`, `d` and `var^2` can effectively be separated by a parenthesis.
+    */
+    loop {
+        match denominator {
+            Expression::Identifier(s) if s.starts_with('d') => {
+                v.push((s[1..].into(), Expression::Number(1.0)));
+                break; // There can be no further nesting
+            }
+            Expression::BinaryOperation(l, BinaryOperation::Pow(_), r) => {
+                if let Expression::Identifier(s) = &**l && s.starts_with('d') {
+                    v.push((s[1..].into(), *r.clone()));
+                    break; // There can be no further nesting
+                } else {
+                    return None; // Expression cannot be a derivative
+                }
+            }
+            Expression::BinaryOperation(l, BinaryOperation::Mul, r) => {
+                // The first crucial information is whether `l` is only `Identifier("d")`, `... * "d"` or something else.
+                match &**l {
+                    Expression::Identifier(ls) if ls == "d" => {
+                        // In this case, `r` can be `ident` of `ident ^ ...`
+                        match &**r {
+                            Expression::Identifier(s) => {
+                                v.push((s.clone(), Expression::Number(1.0)));
+                            }
+                            Expression::BinaryOperation(_l, BinaryOperation::Pow(_), _r) => {
+                                if let Expression::Identifier(s) = &**_l {
+                                    v.push((s.clone(), *_r.clone()));
+                                } else {
+                                    return None; // Expression cannot be a derivative. We break after `match *r` anyway.
+                                }
+                            }
+                            _ => {return None;}
+                        }
+                        // and there cannot be any further nesting
+                        break;
+                    }
+                    Expression::BinaryOperation(_l, BinaryOperation::Mul, _r)
+                    if let Expression::Identifier(_s) = &**_r && _s == "d" => {
+                        // Then, `r` should be parsed as if `l` was just `Identifier("d")`.
+                        match &**r {
+                            Expression::Identifier(s) => {
+                                v.push((s.clone(), Expression::Number(1.0)));
+                            }
+                            Expression::BinaryOperation(_l, BinaryOperation::Pow(_), _r) => {
+                                if let Expression::Identifier(s) = &**_l {
+                                    v.push((s.clone(), *_r.clone()));
+                                } else {
+                                    return None; // Expression cannot be a derivative. We break after `match *r` anyway.
+                                }
+                            }
+                            _ => {return None;}
+                        }
+                        // However, this time, there can be further nesting.
+                        denominator = &**_l;
+                    }
+                    other_l => {
+                        // Other valid `l` would be e.g. power operations or multiplications such as `d * var^2`.
+                        // Then, we ignore `l` completely for the moment (we'll parse it in the next loop iteration).
+                        // For the moment, `r` has to be an expression like `dx^n` on its own, it can't rely on `"d"` coming from `l`.
+                        // Note: by left-associativity of the multiplication, `r` can't be a multiplication anymore.
+                        // The user _could_ circumvent this by typing `d^3/(dx * (dy * dz))`, but what maniac would do this?!
+                        match &**r {
+                            Expression::Identifier(s) if s.starts_with('d') => {
+                                v.push((s[1..].into(), Expression::Number(1.0)));
+                            }
+                            Expression::BinaryOperation(l, BinaryOperation::Pow(_), r) => {
+                                if let Expression::Identifier(s) = &**l && s.starts_with('d') {
+                                    v.push((s[1..].into(), *r.clone()));
+                                } else {
+                                    return None;
+                                }
+                            }
+                            _ => {
+                                return None;
+                            }
+                        }
+                        denominator = other_l; // Next thing to parse: `l`
+                    }
+                }
+            }
+            _ => {
+                // If `denominator` is anything else, it doesn't correspond to the syntax of a partial derivative.
+                return None;
+            }
+        }
+    }
+    Some((numerator_exp, v))
 }
