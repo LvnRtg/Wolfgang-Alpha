@@ -215,9 +215,9 @@ pub fn analytic_partial_derivative(
             // see case `Expression::FoldedOperation` below.
             let Status{value: inner_diff, mut warnings} = analytic_partial_derivative(inner, wrt, extra_vars, env)?;
             match (from.contains_identifier(wrt), to.contains_identifier(wrt)) { // Typically, both expressions must be checked anyway
-                (true, true) => warnings.push(format!("Assuming that both `{}` and `{}` are continuous in {} to differentiate product.", from, to, wrt)),
-                (true, false) => warnings.push(format!("Assuming that `{}` is continuous in {} to differentiate product.", from, wrt)),
-                (false, true) => warnings.push(format!("Assuming that `{}` is continuous in {} to differentiate product.", to, wrt)),
+                (true, true) => warnings.push(format!("Assuming that both `{}` and `{}` are continuous in {} to differentiate sum.", from, to, wrt)),
+                (true, false) => warnings.push(format!("Assuming that `{}` is continuous in {} to differentiate sum.", from, wrt)),
+                (false, true) => warnings.push(format!("Assuming that `{}` is continuous in {} to differentiate sum.", to, wrt)),
                 (false, false) => {}
             };
             Ok(Status{
