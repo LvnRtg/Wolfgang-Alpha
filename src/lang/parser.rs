@@ -551,6 +551,25 @@ impl Parser {
 /// 
 /// Then, `denominator_exps` is the collection of all tuples `(var, exp)` for which `d(var)^(exp)` appears in the denominator's
 /// chain, parsed from **right to left** (because this is the order the partial derivatives are evaluated in).
+/// 
+/// _Side note on implementation._ Context: having parsed an expression, we want to check if
+/// it is supposed to be a partial derivative. The main problem is the following.
+/// - Within an `if`-guard, we need to determine whether the given expression is a partial derivative.
+/// - We do not only want a boolean for this but need to identify the various components of the partial derivative as we go.
+/// - Doing this only requires references, but if the guard returns `true`, we want to move out of these references and have owned values.
+/// - If the guard returns `false`, we do not want to consume the original expression.
+/// - The exact construction of `v` requires relatively complex operations, which renders the following approach inefficient:
+///   "Check if the guard is true in a first pass using only references; if it returns `true`, do a second pass
+///   consuming the expression to construct `v` with owned values without cloning."
+/// 
+/// There is a way to do this without cloning but did not implement it since the expressions handled here are relatively small,
+/// so cloning them isn't very expensive compared so the overhead the other method would have. Said method would be to write
+/// a simple enum `ExpressionPlan` that planifies which parts of the expression should be kept and which ones should be ignored.
+/// Then, in a first pass, the structure of the expression is parsed without consuming it. Instead of constructing the `v` below
+/// by cloning the expression bit by bit, we construct an `ExpressionPlan`. In a second pass, we then only use the plan to
+/// efficiently convert the expression into below `v` while consuming it. In essence, the "plan" remembers the steps to get
+/// from an expression to `v`, allowing us to execute these steps without performing the costly calculations again that led us
+/// to them.
 fn check_partial_derivative_syntax(
     numerator: &Expression,
     mut denominator: &Expression
@@ -560,7 +579,7 @@ fn check_partial_derivative_syntax(
         Expression::Identifier(s) if s == "d" => Expression::Number(1.0),
         Expression::BinaryOperation(l, BinaryOperation::Pow(_), exp)
         if let Expression::Identifier(s) = &**l && s == "d" => {
-            *exp.clone() // TODO check if this works without cloning. Idea: return only a pointer and move out of the pointer if the guard is satisfied
+            *exp.clone()
         }
         _ => return None
     };
@@ -628,11 +647,13 @@ fn check_partial_derivative_syntax(
                         denominator = &**_l;
                     }
                     other_l => {
-                        // Other valid `l` would be e.g. power operations or multiplications such as `d * var^2`.
-                        // Then, we ignore `l` completely for the moment (we'll parse it in the next loop iteration).
-                        // For the moment, `r` has to be an expression like `dx^n` on its own, it can't rely on `"d"` coming from `l`.
-                        // Note: by left-associativity of the multiplication, `r` can't be a multiplication anymore.
-                        // The user _could_ circumvent this by typing `d^3/(dx * (dy * dz))`, but what maniac would do this?!
+                        /*
+                        Other valid `l` would be e.g. power operations or multiplications such as `d * var^2`.
+                        Then, we ignore `l` completely for the moment (we'll parse it in the next loop iteration).
+                        For the moment, `r` has to be an expression like `dx^n` on its own, it can't rely on `"d"` coming from `l`.
+                        Note: by left-associativity of the multiplication, `r` can't be a multiplication anymore.
+                        The user _could_ circumvent this by typing `d^3/(dx * (dy * dz))`, but what maniac would do this?!
+                        */
                         match &**r {
                             Expression::Identifier(s) if s.starts_with('d') => {
                                 v.push((s[1..].into(), Expression::Number(1.0)));
