@@ -1,5 +1,6 @@
 //! Most functions in this module have for sole objective to simplify typing and enhance readability.
 
+use num_traits::NumCast;
 use std::collections::HashSet;
 
 use crate::math::Matrix;
@@ -137,6 +138,15 @@ pub fn fold_res_obj_iter(mut iter: impl Iterator<Item=Result<Object, String>>, b
             )
         )
     ))
+}
+
+pub fn expect_int<T: NumCast + Copy>(f: f64) -> Option<T> {
+    let i = f.round();
+    if approx_eq(f, i) {
+        Some(T::from(i).unwrap())
+    } else {
+        None
+    }
 }
 
 /// Returns `Some(x)` if `it` returns exactly one element `x`, otherwise `None`.
