@@ -416,7 +416,7 @@ impl Parser {
                         numerator,
                         BinaryOperation::Div,
                         denominator
-                    ) if let Some((numerator_exp, denominator_exps)) = check_partial_derivative_syntax(&numerator, &denominator) => {
+                    ) if let Some((numerator_exp, mut denominator_exps)) = check_partial_derivative_syntax(&numerator, &denominator) => {
                         // Check if the exponents in numerator and denominator match. If not, ignore the numerator but emit a warning.
                         match crate::lang::evaluator::compare_expressions(
                             &numerator_exp,
@@ -428,7 +428,38 @@ impl Parser {
                         )
                         .and_then(|s| s.value.expect_bool()) {
                             Ok(true) => {}
-                            Ok(false) => warnings.push("Exponents in numerator and denominator of partial derivative operator do not match. Ignoring numerator.".to_string()),
+                            Ok(false) => {
+                                // There is an edge case here which we have to take care of.
+                                // If the user types `d^2/dxdy`, the denominator is initially interpreted as `d(xdy)`. Only the exponent in the numerator tells us
+                                // something is off: indeed, if it were `d/dxdy`, then `d(xdy)` would be the correct interpretation.
+                                // So, since we just detected that there is a mismatch between numerator and denominator, we look at the denominator again
+                                // to see if some identifiers contain the character 'd'.
+                                // In doing this, we create an alternate interpretation of the denominator:
+                                let mut alt_denominator_exps = Vec::<(String, Expression)>::new();
+                                for (s, n) in denominator_exps.iter() {
+                                    // `d(xdydz)^2` shall become `dx dy dz^2`.
+                                    for substr in s.split('d') {
+                                        alt_denominator_exps.push((substr.to_string(), Expression::Number(1.0)));
+                                    }
+                                    alt_denominator_exps.last_mut().unwrap().1 = n.clone();
+                                }
+                                // Check if now, the exponents match
+                                if let Ok(true) = crate::lang::evaluator::compare_expressions(
+                                    &numerator_exp,
+                                    &crate::expr_binop_from_iter!(Add, Sum, alt_denominator_exps.iter().map(|&(_, ref x)| x.clone())),
+                                    Comparison::Eq,
+                                    &None,
+                                    &crate::math::VarStack::Empty, // During parsing, no temporary extra vars are given
+                                    env
+                                )
+                                .and_then(|s| s.value.expect_bool()) {
+                                    // If so, use the alternate exponents instead
+                                    denominator_exps = alt_denominator_exps;
+                                } else {
+                                    // Otherwise, keep the old interpretation
+                                    warnings.push("Exponents in numerator and denominator of partial derivative operator do not match. Ignoring numerator.".to_string())
+                                }
+                            }
                             Err(e) => warnings.push(format!("Error while comparing exponents in numerator and denominator of partial derivative operator.\nTraceback: {e}"))
                         }
                         Expression::PartialDerivative(

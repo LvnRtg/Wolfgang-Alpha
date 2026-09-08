@@ -69,7 +69,7 @@ The basic matrix/vector operations are all implemented. Below, we only list a re
 - The product of two vectors of the same dimension is valid and returns their inner product.
 - The operations `/`, `%`, `//` are valid whenever one operand (on either side) is a scalar and the other one a matrix/vector. The operation is then simply performed component-wise. For instance, `2 % [x; y]` is equivalent to `[2 % x; 2 % y]`.<br>
 Note: defining $1/v$ as $(1/v_1, \ldots, 1/v_n)$ is consistent with the interpretation of vector multiplication as inner product: indeed, for $v \in \mathbb{R}^n$, we then have $v \cdot (1/v) = n = \overrightarrow{1} \cdot \overrightarrow{1}$.
-- The operation `not` (`!`) is performed component-wise. Operations `and` and `or` are currently not implemented for matrices/vectors.
+- The operation `not` (`!`) is performed component-wise. Operations `and` and `or` are not implemented for matrices/vectors.
 - The inverse of a matrix can be computed by simply raising the matrix to the power `-1`, e.g. `A^(-1)`. If the matrix is not invertible, this throws an error.
 - A square matrix can be raised to a power $n \in \mathbb{N}_0$ by simply typing `A^n`. The power $n=0$ returns the identity matrix. If the matrix is invertible, negative integer powers are valid too.
 - Many matrix functions (e.g. matrix multiplication, transposition) are implemented with view to efficiency for large matrices (using optimization strategies like tiling for better cache locality and parallelization using the `raylib` crate), even though in this specific application, most matrices are likely small.
@@ -144,6 +144,7 @@ For higher derivatives, use the natural notation, for example `d^2/(dx dy) f(x, 
   - If the exponent in the numerator doesn't match with the sum of the exponents in the denominator, e.g. in `d^3/(dx dy)`, a warning is emitted and the numerator's exponent is ignore. For instance, `d^3/(dx dy) x*y` will emit a warning but then output `1`.
   - Exponents do not need to be constant numbers. For instance, the syntax `d^n/dx^n` for a user-defined variable `n` is allowed.
   - Recall that writing `f(x) := d^n/dx^n g(x)` will evaluate the derivative before defining `f`. Therefore, the syntax `f(x, n) := d^n/dx^n g(x)` is generally _not_ valid (except if `n` already exists outside of this definition).
+  - The shortened syntax `d^2/dxdy` (i.e. without the space in the denominator) is allowed as long as the exponents match. The example `d^2/dxdy` is correctly interpreted as "differentiate once w.r.t. `y` and then once w.r.t. `x`", but e.g. `d/dxdy` will be interpreted as "differentiate once w.r.t. `xdy`".
 
 #### Directional derivatives
 For the directional derivative, multiple syntaxes are available. All of them return an object and not an expression (unlike the partial derivative).
