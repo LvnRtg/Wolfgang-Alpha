@@ -282,9 +282,9 @@ impl ops::Mul<f64> for Object {
     }
 }
 impl ops::Add<Object> for Object {
-    type Output = Result<Object, String>;
+    type Output = ExtResult;
     fn add(self, rhs: Object) -> Self::Output {
-        try_operation(&self, &rhs, &BinaryOperation::Add)
+        try_operation(&self, &rhs, &BinaryOperation::Add, None)
     }
 }
 impl ops::Neg for &Object {
@@ -397,70 +397,82 @@ fn compare_complex(x: &Complex, y: &Complex, comp: &Comparison) -> Object {
     }
 }
 
-/// Attempts to perform the given operation 'op' on the given operands 'lhs' and 'rhs'.
-/// On success, returns 'Some(lhs op rhs)'. On failure, returns 'None'.
+/// Attempts to perform the given operation 'op' on the given operands `lhs` and `rhs`.
 /// 
-/// I don't really see any significantly better way of doing this than to compare types, since we need to put the output into an 'Object' too
+/// `context` is a parameter that is only rarely required, namely when `op` is a comparison and at least one operand is a literal expression.
+/// It is made optional to allow clean overloading of standard arithmetic operators for `Object` without having to pass a `VarStack` and an
+/// `Env` that won't be used anyway.
+/// 
+/// I don't really see any significantly better way of doing this than to compare types, since we need to put the output into an `Object` too
 /// and we must take care of possible dimension mismatches too.
-/// I'd go as far as saying this is fine since there are (currently) only 4 different types.
-pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation, varstack: &VarStack, env: &mut Env) -> ExtResult {
+pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation, context: Option<(&VarStack, &mut Env)>) -> ExtResult {
     match (lhs, rhs, op) {
         // Below types can't do any binary operations.
         (o @ (Object::Success | Object::Undefined | Object::Tuple(_)), ..) | (_, o @ (Object::Success | Object::Undefined | Object::Tuple(_)), _) => {
             Err(format!("Objects of type `{}` to not support binary operations.", o.get_type()))
         }
         (Object::LiteralExpression(lexpr), Object::LiteralExpression(rexpr), BinaryOperation::Comp(c, precision_expr)) => {
-            evaluator::compare_expressions(lexpr, rexpr, *c, precision_expr, varstack, env)
+            context.ok_or_else(|| format!("Operation '{}' requires `VarStack` and `Env` when applied to a literal expression.", c))
+            .and_then(
+                |(varstack, env)|
+                evaluator::compare_expressions(lexpr, rexpr, *c, precision_expr, varstack, env)
+            )
         }
         (Object::LiteralExpression(lexpr), _, BinaryOperation::Comp(c, precision_expr)) => {
-            evaluator::Evaluable::from_expr(lexpr, varstack, env).and_then(|s| s.try_map_flatten(
-                |(lhs_ev, free_variables)| {
-                    if let evaluator::Evaluable::Object(lhs_eval) = lhs_ev {
-                        try_operation(
-                            lhs_eval.as_ref(),
-                            rhs,
-                            &BinaryOperation::Comp(*c, None),
-                            varstack,
-                            env
-                        )
-                    } else {
-                        evaluator::test_function_equality(
-                            &lhs_ev,
-                            &evaluator::Evaluable::Object(Cow::Borrowed(rhs)),
-                            &free_variables,
-                            *c,
-                            precision_expr,
-                            varstack,
-                            env
-                        )
+            context.ok_or_else(|| format!("Operation '{}' requires `VarStack` and `Env` when applied to a literal expression.", c))
+            .and_then(
+                |(varstack, env)|
+                evaluator::Evaluable::from_expr(lexpr, varstack, env).and_then(|s| s.try_map_flatten(
+                    |(lhs_ev, free_variables)| {
+                        if let evaluator::Evaluable::Object(lhs_eval) = lhs_ev {
+                            try_operation(
+                                lhs_eval.as_ref(),
+                                rhs,
+                                &BinaryOperation::Comp(*c, None),
+                                Some((varstack, env))
+                            )
+                        } else {
+                            evaluator::test_function_equality(
+                                &lhs_ev,
+                                &evaluator::Evaluable::Object(Cow::Borrowed(rhs)),
+                                &free_variables,
+                                *c,
+                                precision_expr,
+                                varstack,
+                                env
+                            )
+                        }
                     }
-                }
-            ))
+                ))
+            )
         }
         (_, Object::LiteralExpression(rexpr), BinaryOperation::Comp(c, precision_expr)) => {
-            evaluator::Evaluable::from_expr(rexpr, varstack, env).and_then(|s| s.try_map_flatten(
-                |(rhs_ev, free_variables)| {
-                    if let evaluator::Evaluable::Object(rhs_eval) = rhs_ev {
-                        try_operation(
-                            lhs,
-                            rhs_eval.as_ref(),
-                            &BinaryOperation::Comp(*c, None),
-                            varstack,
-                            env
-                        )
-                    } else {
-                        evaluator::test_function_equality(
-                            &evaluator::Evaluable::Object(Cow::Borrowed(lhs)),
-                            &rhs_ev,
-                            &free_variables,
-                            *c,
-                            precision_expr,
-                            varstack,
-                            env
-                        )
+            context.ok_or_else(|| format!("Operation '{}' requires `VarStack` and `Env` when applied to a literal expression.", c))
+            .and_then(
+                |(varstack, env)|
+                evaluator::Evaluable::from_expr(rexpr, varstack, env).and_then(|s| s.try_map_flatten(
+                    |(rhs_ev, free_variables)| {
+                        if let evaluator::Evaluable::Object(rhs_eval) = rhs_ev {
+                            try_operation(
+                                lhs,
+                                rhs_eval.as_ref(),
+                                &BinaryOperation::Comp(*c, None),
+                                Some((varstack, env))
+                            )
+                        } else {
+                            evaluator::test_function_equality(
+                                &evaluator::Evaluable::Object(Cow::Borrowed(lhs)),
+                                &rhs_ev,
+                                &free_variables,
+                                *c,
+                                precision_expr,
+                                varstack,
+                                env
+                            )
+                        }
                     }
-                }
-            ))
+                ))
+            )
         }
         // If at least one of both `lhs` and `rhs` is a literal expression, the binop should yield a literal expression too.
         (Object::LiteralExpression(_), _, op) | (_, Object::LiteralExpression(_), op) => {

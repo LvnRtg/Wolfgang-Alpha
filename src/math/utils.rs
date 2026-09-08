@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use crate::math::Matrix;
 use crate::math::objects::{Object, try_operation};
 use crate::math::operations::BinaryOperation;
+use crate::status::{ExtResult, Status};
 
 
 const ABS_TOL: f64 = 1e-12;
@@ -128,13 +129,16 @@ pub fn linspace_as_objects(a: f64, b: f64, n: usize) -> Vec<Object> {
 
 
 /// Folds all elements in the iterator, short-circuiting if an `Err` is found. Returns `None` iff the iterator is empty.
-pub fn fold_res_obj_iter(mut iter: impl Iterator<Item=Result<Object, String>>, binop: &BinaryOperation) -> Option<Result<Object, String>> {
+pub fn fold_res_obj_iter(mut iter: impl Iterator<Item=Result<Object, String>>, binop: &BinaryOperation) -> Option<ExtResult> {
     let first = iter.next()?;
     Some(iter.fold(
-        first,
+        first.map(Status::ok),
         |acc, new| acc.and_then(
-            |lhs| new.and_then(
-                |rhs| try_operation(&lhs, &rhs, binop)
+            |lhs_s| new.and_then(
+                |rhs|
+                // "safe" to pass `None` because this method never gets called on `binop = Comparison(..)`
+                // and iterating a comparison in this way doesn't make sense anyway.
+                lhs_s.try_map_flatten(|lhs| try_operation(&lhs, &rhs, binop, None))
             )
         )
     ))

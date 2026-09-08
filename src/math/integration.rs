@@ -9,6 +9,7 @@ use crate::math::{Env, Expression, Object, VarStack, VarStackLookup};
 use crate::math::differentiation;
 use crate::math::objects::try_operation;
 use crate::math::operations::{BinaryOperation, FoldedOperation, UnaryOperation};
+use crate::math::operations::folded_operations::FOLDED_OP_WARNING_CAP;
 use crate::status::{ExtResult, Status};
 
 /// Approximates the integral `\int_a^b f(x) dx` by splitting `[a, b]` into
@@ -48,9 +49,11 @@ where F: Fn(T) -> U,
 }
 /// Variant of `simpson_rule` where `f` outputs `Result` which is passed down on error.
 pub fn simpson_rule_result_variant<F, T, U>(mut f: F, a: T, b: T, n: usize) -> Result<Status<U>, String>
-where F: FnMut(T) -> Result<Status<U>, String>,
-      T: Float + AddAssign<T> + Div<f64, Output=T>,
-      U: Add<U, Output=Result<U, String>> + Mul<f64, Output=U> + Neg<Output=Result<U, String>> + Mul<T, Output=U> {
+where
+    F: FnMut(T) -> Result<Status<U>, String>,
+    T: Float + AddAssign<T> + Div<f64, Output=T>,
+    U: Add<U, Output=Result<Status<U>, String>> + Mul<f64, Output=U> + Neg<Output=Result<U, String>> + Mul<T, Output=U>
+{
     if b < a {
         return simpson_rule_result_variant(f, b, a, n)?.neg(); // Type inference problem => use `.neg()` instead of `-`
     }
@@ -60,14 +63,14 @@ where F: FnMut(T) -> Result<Status<U>, String>,
     let mut res = f(a)?.unpack_into_with_cap(&mut warnings, 5);
     for _ in 0..(n-1) {
         x += h;
-        res = (res + (f(x)?.unpack_into_with_cap(&mut warnings, 5) * 4.0))?;
+        res = (res + (f(x)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP) * 4.0))?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP);
         x += h;
-        res = (res + (f(x)?.unpack_into_with_cap(&mut warnings, 5) * 2.0))?;
+        res = (res + (f(x)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP) * 2.0))?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP);
     }
     x += h;
-    res = (res + (f(x)?.unpack_into_with_cap(&mut warnings, 5) * 4.0))?;
+    res = (res + (f(x)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP) * 4.0))?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP);
     x += h;
-    res = (res + f(x)?.unpack_into_with_cap(&mut warnings, 5))?;
+    res = (res + f(x)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP))?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP);
     Ok(Status{value: res * (h / 3.0), warnings})
 }
 
@@ -244,10 +247,10 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
             )
         }
         Expression::UnaryOperation(UnaryOperation::Neg, e) => integrate(e, a, b, wrt, extra_vars, env)?.neg(),
-        Expression::BinaryOperation(lhs, op @ (BinaryOperation::Add | BinaryOperation::Sub), rhs) => Status::combine(
+        Expression::BinaryOperation(lhs, op @ (BinaryOperation::Add | BinaryOperation::Sub), rhs) => Status::combine_flatten(
             integrate(lhs, a, b, wrt, extra_vars, env)?,
             integrate(rhs, a, b, wrt, extra_vars, env)?,
-                |lhs, rhs| try_operation(&lhs, &rhs, op)
+                |lhs, rhs| try_operation(&lhs, &rhs, op, None)
         ),
         // Only consider sums if all bounds do not include the integration variable (i.e. `w.r.t.`).
         Expression::FoldedOperation(FoldedOperation::Sum, index_var, from, conditions, to, inner)
@@ -304,9 +307,9 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
                 try_operation(
                     &eval(inner, &extra_vars.with(wrt, Cow::Owned(Object::Real(b))), env)?.unpack_into(&mut warnings),
                     &eval(inner, &extra_vars.with(wrt, Cow::Owned(Object::Real(a))), env)?.unpack_into(&mut warnings),
-                    &BinaryOperation::Sub
-                )
-                .map(|value| Status{value, warnings})
+                    &BinaryOperation::Sub,
+                    None
+                ).map(|s| Status{value: s.unpack_into(&mut warnings), warnings})
             } else {
                 // Use `\int_a^b d^n/dx^n f(x) dx = (d^{n-1}/dx^{n-1} f(x)|_b) - (d^{n-1}/dx^{n-1} f(x)|_a)`
                 let new_inner = differentiation::apply_n_partial_derivatives(
@@ -320,8 +323,9 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
                     value: try_operation(
                         &eval(&new_inner, &extra_vars.with(wrt, Cow::Owned(Object::Real(b))), env)?.unpack_into(&mut warnings),
                         &eval(&new_inner, &extra_vars.with(wrt, Cow::Owned(Object::Real(a))), env)?.unpack_into(&mut warnings),
-                        &BinaryOperation::Sub
-                    )?,
+                        &BinaryOperation::Sub,
+                        None
+                    )?.unpack_into(&mut warnings),
                     warnings
                 })
             }

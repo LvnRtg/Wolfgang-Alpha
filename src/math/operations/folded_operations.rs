@@ -13,7 +13,7 @@ use super::binary_operations::BinaryOperation;
 /// 
 /// Reason for having a cap: every iteration could emit at least one warning (in fact, if some iteration emits a warning,
 /// this is very likely), which would saturate the console and consume huge amounts of memory for nothing.
-const FOLDED_OP_WARNING_CAP: usize = 10;
+pub const FOLDED_OP_WARNING_CAP: usize = 10;
 
 
 /// Any operation for which an operator of the type `sum_{i=1}^n ...` is implemented.
@@ -189,7 +189,7 @@ where
 
         // At this point, all conditions are met.
         let next_term = get_inner(&varstack, env)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP);
-        res = try_operation(&res, &next_term, &binop)?;
+        res = try_operation(&res, &next_term, &binop, None)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP);
         i += 1.0;
     }
     Ok(Status{value: res, warnings})
@@ -253,29 +253,46 @@ where
         });
         let mut res = if let Some(r) = utils::fold_res_obj_iter(first_factors, &BinaryOperation::Mul) {
             // If `first_factors` is non-empty, compute `(prod_{x in first_factors} x) * f'(i)`
-            r.and_then(|lhs| get_f_prime(&extra_vars.with(index_var, Cow::Owned(Object::Real(*i as f64))), env)
-            .and_then(|rhs| try_operation(
-                &lhs,
-                &rhs.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP),
-                &BinaryOperation::Mul
-            )))
+            r.and_then(
+                |lhs_s| get_f_prime(&extra_vars.with(index_var, Cow::Owned(Object::Real(*i as f64))), env
+            ).and_then(
+                |rhs_s| Status::combine_flatten(
+                    lhs_s,
+                    rhs_s,
+                    |lhs, rhs| try_operation(
+                        &lhs,
+                        &rhs,
+                        &BinaryOperation::Mul,
+                        None
+                    )
+                )
+            ))
         } else {
             // Otherwise, this is the same as `f'(i)`
             get_f_prime(&extra_vars.with(index_var, Cow::Owned(Object::Real(*i as f64))), env)
-            .map(|s| s.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP))
-        };
+        }
+        .map(|s| s.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP));
+
         // Multiply with all remaining factors
         for j in i_range[i_index+1..].iter() {
             res = res.and_then(
                 |lhs|
                 get_f(&extra_vars.with(index_var, Cow::Owned(Object::Real(*j as f64))), env)
                 .and_then(
-                    |f_j| try_operation(&lhs, &f_j.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP), &BinaryOperation::Mul)
+                    |f_j| try_operation(
+                        &lhs,
+                        &f_j.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP),
+                        &BinaryOperation::Mul,
+                        None
+                    ).map(|s| s.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP))
                 )
             );
         }
         res
     });
     // Safe to unwrap below since summands keeps the length of `i_range` and if `i_range` were empty, this function would have returned already.
-    Ok(Status{value: utils::fold_res_obj_iter(summands, &BinaryOperation::Add).unwrap()?, warnings})
+    Ok(Status {
+        value: utils::fold_res_obj_iter(summands, &BinaryOperation::Add).unwrap()?.unpack_into(&mut warnings),
+        warnings
+    })
 }

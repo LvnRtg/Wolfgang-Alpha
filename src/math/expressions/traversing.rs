@@ -113,14 +113,14 @@ impl Expression {
     /// variable of an integral) into a HashSet `modified_identifiers`.
     /// 
     /// Ignores the LHS of assignment operators.
-    pub fn list_unknown_identifiers(
+    pub fn get_unknown_identifiers(
         &self,
         extra_vars: &VarStack,
         env: &Env,
         modified_identifiers: &mut HashSet<String>
     ) {
         fill_match!(
-            self; iter; list_unknown_identifiers(extra_vars, env, modified_identifiers);
+            self; iter; get_unknown_identifiers(extra_vars, env, modified_identifiers);
             Identifier(x) => {
                 if !env.constants.contains_key(x) && extra_vars.lookup(x).is_none() {
                     modified_identifiers.insert(x.clone());
@@ -129,14 +129,14 @@ impl Expression {
             FoldedOperation(_, varname, from, conditions, to, inner) => {
                 // Important: `varname` is no longer unknown within `conditions`, `inner` and `to`; however, it is still unknown within `from`.
                 let varstack = extra_vars.with(varname, Cow::Owned(Object::Success)); // Varstack where `varname` is declared as known
-                from.list_unknown_identifiers(extra_vars, env, modified_identifiers); // Here, use old `extra_vars`
-                conditions.iter().for_each(|v| v.list_unknown_identifiers(&varstack, env, modified_identifiers));
-                to.list_unknown_identifiers(&varstack, env, modified_identifiers); // Here too
-                inner.list_unknown_identifiers(&varstack, env, modified_identifiers);
+                from.get_unknown_identifiers(extra_vars, env, modified_identifiers); // Here, use old `extra_vars`
+                conditions.iter().for_each(|v| v.get_unknown_identifiers(&varstack, env, modified_identifiers));
+                to.get_unknown_identifiers(&varstack, env, modified_identifiers); // Here too
+                inner.get_unknown_identifiers(&varstack, env, modified_identifiers);
             },
             PartialDerivative(wrt, expr) => {
                 // Same as above
-                expr.list_unknown_identifiers(
+                expr.get_unknown_identifiers(
                     &extra_vars.with_multiple(wrt.iter().map(|&(ref s, _)| s), std::iter::repeat_n(&Object::Success, wrt.len())),
                     env,
                     modified_identifiers
@@ -144,22 +144,22 @@ impl Expression {
             },
             DirectionalDerivative(vars, expr, point, direction) => {
                 // Same again
-                expr.list_unknown_identifiers(
+                expr.get_unknown_identifiers(
                     &extra_vars.with_multiple(vars.iter(), std::iter::repeat_n(&Object::Success, vars.len())),
                     env,
                     modified_identifiers
                 );
-                point.iter().for_each(|v| v.list_unknown_identifiers(extra_vars, env, modified_identifiers));
-                direction.iter().for_each(|v| v.list_unknown_identifiers(extra_vars, env, modified_identifiers));
+                point.iter().for_each(|v| v.get_unknown_identifiers(extra_vars, env, modified_identifiers));
+                direction.iter().for_each(|v| v.get_unknown_identifiers(extra_vars, env, modified_identifiers));
             },
             Integral(func, a, b, wrt) => {
-                func.list_unknown_identifiers(
+                func.get_unknown_identifiers(
                     &extra_vars.with(wrt, Cow::Owned(Object::Success)),
                     env,
                     modified_identifiers
                 );
-                a.list_unknown_identifiers(extra_vars, env, modified_identifiers);
-                b.list_unknown_identifiers(extra_vars, env, modified_identifiers);
+                a.get_unknown_identifiers(extra_vars, env, modified_identifiers);
+                b.get_unknown_identifiers(extra_vars, env, modified_identifiers);
             }
         )
     }

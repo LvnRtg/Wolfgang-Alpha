@@ -9,6 +9,7 @@ use crate::math;
 use crate::math::{Env, Expression, FunctionRepr, Object, VarStack, VarStackLookup};
 use crate::math::objects::try_operation;
 use crate::math::operations::{BinaryOperation, Comparison, UnaryOperation};
+use crate::math::operations::folded_operations::FOLDED_OP_WARNING_CAP;
 use crate::math::utils::{approx_eq, linspace_as_objects};
 use crate::status::{ExtResult, Status};
 
@@ -19,6 +20,58 @@ const DEFAULT_TESTEQ_REPETITIONS: usize = 20;
 const KEYWORDS: [&str; 2] = [
     "if", "else"
 ];
+
+
+/// Acts like a smart pointer: on demand, gives back a reference to a previously given object or evaluates the contained expression and gives back the corresponding result.
+pub enum Evaluable<'a> {
+    Object(Cow<'a, Object>),
+    Expression(&'a Expression)
+}
+
+impl<'a> std::fmt::Display for Evaluable<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Evaluable::Object(obj) => write!(f, "{}", obj.as_ref()),
+            Evaluable::Expression(expr) => write!(f, "{}", expr)
+        }
+    }
+}
+
+impl<'a> Evaluable<'a> {
+    /// If the given expression contains unknown identifiers, returns `(Evaluable::Expression(expr), unknown_identifiers)`.
+    /// 
+    /// Otherwise, evaluates the expression once and returns `(Evaluable::Object(eval(expr)), empty_set)`.
+    pub fn from_expr(expr: &'a Expression, varstack: &VarStack, env: &mut Env) -> Result<Status<(Self, HashSet<String>)>, String> {
+        let mut unknown = HashSet::new();
+        expr.get_unknown_identifiers(varstack, env, &mut unknown);
+        if unknown.is_empty() {
+            eval(expr, varstack, env).map(|s| s.map(
+                |o| (Evaluable::Object(Cow::Owned(o)), unknown)
+            ))
+        } else {
+            Ok(Status::ok((Evaluable::Expression(expr), unknown)))
+        }
+    }
+
+    /// If `self` is `Evaluable::Object`, returns a reference to the contained object. Otherwise, evaluates the contained expression and returns the result.
+    pub fn eval(&'a self, varstack: &VarStack, env: &mut Env) -> Result<Status<Cow<'a, Object>>, String> {
+        match self {
+            Evaluable::Object(obj) => Ok(Status::ok(Cow::Borrowed(&*obj))),
+            Evaluable::Expression(expr) => match eval(expr, varstack, env) {
+                Ok(s) => Ok(s.map(Cow::Owned)),
+                Err(e) => Err(format!(
+                    "Couldn't evaluate `{}` with stack top frame {}.\nTraceback: {}",
+                    self,
+                    match varstack.get_top_level() {
+                        Some(t) => format!("{:?}", t.as_ref()),
+                        None => "`Empty`".to_string()
+                    },
+                    e
+                ))
+            }
+        }
+    }
+}
 
 
 /// When an function definition is encountered, the expression on the RHS is processed in a special way.
@@ -378,69 +431,6 @@ pub fn eval(
             // We can be sure about this because the assignment operator is given the lowest priority level by the tokenizer
             // and the case `Expression::Assignment` in this function does not call itself recursively on the LHS
             // of an assignment operation.
-            
-            // // TODO rm
-            // // If `function_name` is of the form with `___diff_num_f`, this isn't a function contained in `functions` but the request to numerically differentiate `f`.
-            // if let Some(real_function_name) = function_name.strip_prefix("___diff_num_") {
-            //     // Ensure that `given_arg_exprs` is even. There is a special case where an uneven number is tolerated: if only a single argument
-            //     // is provided, simply set the direction as 1.0 (default for 1d derivative).
-            //     let mut tmp: Vec<Expression>;
-            //     let arg_exprs = if given_arg_exprs.len() % 2 != 0 {
-            //         if given_arg_exprs.len() == 1 {
-            //             tmp = given_arg_exprs.clone();
-            //             tmp.push(Expression::Number(1.0));
-            //             &tmp
-            //         }
-            //         else {
-            //             return Err("___diff_num_{{...}} takes an even number of arguments.".to_string()); // See splitting of arguments below
-            //         }
-            //     } else { given_arg_exprs };
-            //     let rm = env.functions.remove(real_function_name);
-            //     let res = match rm {
-            //         Some(FunctionRepr::Direct(f_ref, _)) => {
-            //             let Status{value: (point, direction), warnings} = Status::combine(
-            //                 eval_mul_exprs(arg_exprs[0..arg_exprs.len()/2].iter(), extra_vars, env)?,
-            //                 eval_mul_exprs(arg_exprs[arg_exprs.len()/2..arg_exprs.len()].iter(), extra_vars, env)?,
-            //                 |lhs, rhs| Ok((lhs, rhs))
-            //             )?;
-            //             let mut mutable_version = |x: &[Object], y: &[Expression], z: Option<(&VarStack, &mut Env)>| f_ref(x, y, z);
-            //             math::differentiation::numerical_directional_derivative(&mut mutable_version, point, direction, extra_vars, env)
-            //             .map(|s| s.with_extra_warnings(warnings))
-            //         }
-            //         Some(FunctionRepr::ByExpression(ref f_varnames, ref f_expr)) => {
-            //             // This is rare, but if e.g. an integral should be differentiated, then we need this case
-            //             // (cf. `math::differentiation::analytic_partial_derivative`, case `Expression::Integral`).
-            //             let Status{value: (point, direction), warnings} = Status::combine(
-            //                 eval_mul_exprs(arg_exprs[0..arg_exprs.len()/2].iter(), extra_vars, env)?,
-            //                 eval_mul_exprs(arg_exprs[arg_exprs.len()/2..arg_exprs.len()].iter(), extra_vars, env)?,
-            //                 |lhs, rhs| Ok((lhs, rhs))
-            //             )?;
-            //             #[allow(clippy::type_complexity)] 
-            //             let mut f_as_direct: Box<dyn for<'a, 'b, 'c, 'd> FnMut(&'a [Object], &'b [Expression], Option<(&'c VarStack, &'d mut Env)>) -> ExtResult> = Box::new(
-            //                 |parsed_args, _, context| {
-            //                     if parsed_args.len() != f_varnames.len() {
-            //                         Err(format!("Wrong number of arguments provided for function '{}' (expected {}, got {}).", real_function_name, f_varnames.len(), parsed_args.len()))
-            //                     } else if let Some((_varstack, _env)) = context {
-            //                         eval(
-            //                             f_expr,
-            //                             &_varstack.with_multiple(f_varnames.iter(), parsed_args.iter()),
-            //                             _env
-            //                         )
-            //                     } else {
-            //                         Err("[Unreachable] Function requires varstack and environment.".to_string())
-            //                     }
-            //                 }
-            //             );
-            //             math::differentiation::numerical_directional_derivative(&mut f_as_direct, point, direction, extra_vars, env)
-            //             .map(|s| s.with_extra_warnings(warnings))
-            //         }
-            //         None => Err(format!("No such function: {:?}", function_name))
-            //     };
-            //     if let Some(x) = rm {
-            //         env.functions.insert(real_function_name.to_string(), x);
-            //     }
-            //     res
-            // }
 
             // Check if `function_name` corresponds to a known `FunctionRepr::ByExpression(argnames, defining_expr)` in `env.functions`.
             // If so, we need to clone `argnames` and `defining_expr`:
@@ -449,7 +439,6 @@ pub fn eval(
             // would render this `eval` call impossible since we would need to reborrow `env` as mutable again.
             // Note: we can't just temporarily remove `function_name` from `env.functions` and later reinsert it since this would
             // make expressions like `exp(exp(0))` impossible.
-            // else // TODO <- rm this line
             if let Some((argnames, defining_expr)) = match env.functions.get(function_name) {
                Some(FunctionRepr::ByExpression(argnames, defining_expr)) => Some((argnames.clone(), defining_expr.clone())),
                _ => None
@@ -566,8 +555,15 @@ pub fn eval_binop(
     if let Object::Real(x) = &lhs_eval && x.is_finite() && approx_eq(*x, 0.0) && (*op == BinaryOperation::Mul || *op == BinaryOperation::And) {
         Ok(Status{value: rhs.get_type(extra_vars, env).map(|t| t.zero())?, warnings})
     } else {
-        try_operation(&lhs_eval, &eval(rhs, extra_vars, env)?.unpack_into(&mut warnings), op)
-        .map(|value| Status{value, warnings})
+        Ok(Status {
+            value: try_operation(
+                &lhs_eval,
+                &eval(rhs, extra_vars, env)?.unpack_into(&mut warnings),
+                op,
+                Some((extra_vars, env))
+            )?.unpack_into(&mut warnings),
+            warnings
+        })
     }
 }
 
@@ -579,44 +575,38 @@ pub fn compare_expressions(
     rhs: &Expression,
     op: Comparison,
     precision_expr: &Option<Box<Expression>>,
-    extra_vars: &VarStack,
+    varstack: &VarStack,
     env: &mut Env
 ) -> ExtResult {
     // Check if at least one of `lhs`, `rhs` is a function. Here, being a function means having unknown identifiers within.
-    let mut lhs_free_variables = HashSet::<String>::new();
-    lhs.list_unknown_identifiers(extra_vars, env, &mut lhs_free_variables);
-    let mut rhs_free_variables = HashSet::<String>::new();
-    rhs.list_unknown_identifiers(extra_vars, env, &mut rhs_free_variables);
-    if !lhs_free_variables.is_empty() {
-        test_function_equality(lhs, rhs, lhs_free_variables, rhs_free_variables, op, false, precision_expr, extra_vars, env)
-    } else if !rhs_free_variables.is_empty() {
-        test_function_equality(rhs, lhs, rhs_free_variables, lhs_free_variables, op, true, precision_expr, extra_vars, env)
-    } else {
-        eval_binop(lhs, rhs, &BinaryOperation::Comp(op, None), extra_vars, env)
-    }
+    let Status{value: (lhs_ev, mut free_variables), mut warnings} = Evaluable::from_expr(lhs, varstack, env)?;
+    let (rhs_ev, other) = Evaluable::from_expr(rhs, varstack, env)?.unpack_into(&mut warnings);
+    free_variables.extend(other.into_iter());
+    Ok(Status {
+        value: if free_variables.is_empty() {
+            eval_binop(lhs, rhs, &BinaryOperation::Comp(op, None), varstack, env)?.unpack_into(&mut warnings)
+        } else {
+            test_function_equality(&lhs_ev, &rhs_ev, &free_variables, op, precision_expr, varstack, env)?.unpack_into(&mut warnings)
+        },
+        warnings
+    })
 }
 
 /// Tests whether two expressions `lhs` and `rhs` are equal by plugging in a range of arguments (cf. implementation for details).
 /// 
-/// * `lhs_free_variables` - Identifiers in `lhs` for which values should be inserted.
-/// * `rhs_free_variables` - Identifiers in `rhs` for which values should be inserted.
+/// * `free_variables` - Identifiers for which values should be inserted.
 /// * `op` - The comparison operator to be used. It is assumed to be a comparison and not another binary operation.
-/// * `mirror` - Whether the comparison operator `op` should subsequently be mirrored (e.g. `>` becomes `<`) or not.
 /// * `precision_expr` - If `Some(e)`, tries to evaluate `e` to an integer and use this as precision. Otherwise, uses `DEFAULT_TESTEQ_REPETITIONS`.
-fn test_function_equality(
-    lhs: &Expression,
-    rhs: &Expression,
-    mut lhs_free_variables: HashSet<String>,
-    rhs_free_variables: HashSet<String>,
+pub fn test_function_equality(
+    lhs: &Evaluable,
+    rhs: &Evaluable,
+    free_variables: &HashSet<String>,
     op: Comparison,
-    mirror: bool,
     precision_expr: &Option<Box<Expression>>,
     extra_vars: &VarStack,
     env: &mut Env
 ) -> ExtResult {
     let mut warnings = Vec::<String>::new(); // We will accumulate warnings in this list
-    let rhs_only_needs_single_eval = rhs_free_variables.is_empty();
-    lhs_free_variables.extend(rhs_free_variables.into_iter());
 
     // Determine number of iterations
     let n = if let Some(p) = precision_expr {
@@ -630,16 +620,7 @@ fn test_function_equality(
         DEFAULT_TESTEQ_REPETITIONS
     };
 
-    let mut rhs_eval = Object::Success; // Placeholder
-    // If `rhs` doesn't contain any free variables
-    // (<=> the second `list_unknown_identifiers` call in `eval` right before calling `test_function_equality` actually modified the expression),
-    // it suffices to evaluate `rhs` once. Then, evaluating every time would be inefficient, especially if many values will be tested.
-    // Therefore, it makes sense to check whether this is the case beforehand, and if so, simply evaluate once and save the value for later.
-    if rhs_only_needs_single_eval {
-        rhs_eval = eval(&rhs, extra_vars, env)?.unpack_into(&mut warnings);
-    }
-
-    // Note that the size of the following vector is 6n, so if lhs_free_variables is large, the number of test values can quickly blow up.
+    // Note that the size of the following vector is 6n, so if free_variables is large, the number of test values can quickly blow up.
     // Generally speaking, this is necessary though, since checking that multivariate functions are equal logically requires us to check
     // various possible combinations of input variables.
     let linspaces: Vec<Object> = [
@@ -654,24 +635,22 @@ fn test_function_equality(
     .flat_map(|v| v.into_iter())
     .collect();
 
-    for test_values in (0..lhs_free_variables.len()).map(|_| linspaces.iter()).multi_cartesian_product() {
-        let new_stack = extra_vars.with_multiple(lhs_free_variables.iter(), test_values.iter().map(|x| *x));
+    for test_values in (0..free_variables.len()).map(|_| linspaces.iter()).multi_cartesian_product() {
+        let new_stack = extra_vars.with_multiple(free_variables.iter(), test_values.iter().map(|x| *x));
         // In order to avoid massive storage usage, we only allow for a fixed number of warnings emitted.
-        let lhs_eval = eval(&lhs, &new_stack, env)
-            .map_err(|e| format!("Couldn't evaluate `{}` with environment {:?}. Traceback: {}", lhs, new_stack.get_top_level().unwrap().as_ref(), e))
-            ?
-            .unpack_into_with_cap(&mut warnings, 8);
-        if !rhs_only_needs_single_eval {
-            rhs_eval = eval(&rhs, &new_stack, env)
-                .map_err(|e| format!("Couldn't evaluate `{}` with environment {:?}. Traceback: {}", rhs, new_stack.get_top_level().unwrap().as_ref(), e))
-                ?
-                .unpack_into_with_cap(&mut warnings, 8);
-        }
         // If the objects' comparison yields `false`, return that. If the objects aren't comparable, return the appropriate error. Otherwise, continue.
-        let binop = BinaryOperation::Comp(op, None);
-        match if mirror {try_operation(&rhs_eval, &lhs_eval, &binop)} else {try_operation(&lhs_eval, &rhs_eval, &binop)} {
-            Ok(Object::Real(0.0)) => { return Ok(Status{value: Object::Real(0.0), warnings}); }
-            Err(_) => { return Err(format!("Couldn't compare `{}` and `{}` (arising from environment {:?}).", lhs_eval, rhs_eval, env.constants)); }
+        match try_operation(
+            &lhs.eval(&new_stack, env)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP),
+            &rhs.eval(&new_stack, env)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP),
+            &BinaryOperation::Comp(op, None),
+            Some((&new_stack, env))
+        ).map(|s| s.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP)) {
+            Ok(Object::Real(0.0)) => return Ok(Status{value: Object::Real(0.0), warnings}),
+            Err(e) => return Err(format!(
+                "{}\nStack top frame: {:?}",
+                e,
+                new_stack.get_top_level().unwrap().as_ref()
+            )),
             _ => {}
         }
     }
