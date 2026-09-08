@@ -96,6 +96,10 @@ impl Matrix {
 
     pub fn m(&self) -> usize {self.m}
     pub fn n(&self) -> usize {self.n}
+
+    pub fn iter(&self) -> impl Iterator<Item=f64> {
+        self.values.iter().cloned()
+    }
 }
 
 
@@ -135,6 +139,10 @@ impl Vector {
     #[inline]
     fn unchecked_dot_iter(a: std::iter::Map<std::ops::Range<usize>, impl FnMut(usize) -> f64>, b: &[f64]) -> f64 {
         a.zip(b.iter()).map(|(x, y)| x * y).sum()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item=f64> {
+        self.values.iter().cloned()
     }
 }
 
