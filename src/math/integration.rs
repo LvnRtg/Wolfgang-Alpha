@@ -7,7 +7,6 @@ use crate::{expr_binop, expr_square, expr_unary_op};
 use crate::lang::eval;
 use crate::math::{Env, Expression, Object, VarStack, VarStackLookup};
 use crate::math::differentiation;
-use crate::math::objects::try_operation;
 use crate::math::operations::{BinaryOperation, FoldedOperation, UnaryOperation};
 use crate::math::operations::folded_operations::FOLDED_OP_WARNING_CAP;
 use crate::status::{ExtResult, Status};
@@ -81,6 +80,9 @@ where
 /// (e.g. a sum, a constant, etc.; for a detailed list, cf. implementation),
 /// compute the integral accordingly (e.g. via direct calculation for constants or by integrating both summands and then adding the results).
 /// If no special form is found, integrate numericaclly using the Simpson rule on a grid of 100 equally distributed points.
+/// 
+/// Note: special forms are not destined to make the computation faster (in fact, they generally make it slower because several integrals
+/// are evaluated instead of a single one). Rather, their aim is to lead to a more precise approximation.
 /// 
 /// If `a = -∞` or `b = ∞`, we use a substitution trick to reduce to a finite interval.
 pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &VarStack, env: &mut Env) -> ExtResult {
@@ -247,11 +249,12 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
             )
         }
         Expression::UnaryOperation(UnaryOperation::Neg, e) => integrate(e, a, b, wrt, extra_vars, env)?.neg(),
-        Expression::BinaryOperation(lhs, op @ (BinaryOperation::Add | BinaryOperation::Sub), rhs) => Status::combine_flatten(
-            integrate(lhs, a, b, wrt, extra_vars, env)?,
-            integrate(rhs, a, b, wrt, extra_vars, env)?,
-                |lhs, rhs| try_operation(&lhs, &rhs, op, None)
-        ),
+        Expression::BinaryOperation(lhs, BinaryOperation::Add, rhs) => {
+            integrate(lhs, a, b, wrt, extra_vars, env)? + integrate(rhs, a, b, wrt, extra_vars, env)?
+        }
+        Expression::BinaryOperation(lhs, BinaryOperation::Sub, rhs) => {
+            integrate(lhs, a, b, wrt, extra_vars, env)? - integrate(rhs, a, b, wrt, extra_vars, env)?
+        }
         // Only consider sums if all bounds do not include the integration variable (i.e. `w.r.t.`).
         Expression::FoldedOperation(FoldedOperation::Sum, index_var, from, conditions, to, inner)
         if !from.contains_identifier(wrt) && !to.contains_identifier(wrt) && conditions.iter().all(|e| !e.contains_identifier(wrt)) => {
@@ -304,11 +307,9 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
         if let Some(Status{value: n, mut warnings}) = differentiation::all_partial_derivatives_wrt_same_var(diff_wrt, wrt, extra_vars, env)? => {
             if n == 1 {
                 // Use `\int_a^b d/dx f(x) dx = f(b) - f(a)`
-                try_operation(
-                    &eval(inner, &extra_vars.with(wrt, Cow::Owned(Object::Real(b))), env)?.unpack_into(&mut warnings),
-                    &eval(inner, &extra_vars.with(wrt, Cow::Owned(Object::Real(a))), env)?.unpack_into(&mut warnings),
-                    &BinaryOperation::Sub,
-                    None
+                (
+                    eval(inner, &extra_vars.with(wrt, Cow::Owned(Object::Real(b))), env)?
+                    - eval(inner, &extra_vars.with(wrt, Cow::Owned(Object::Real(a))), env)?
                 ).map(|s| Status{value: s.unpack_into(&mut warnings), warnings})
             } else {
                 // Use `\int_a^b d^n/dx^n f(x) dx = (d^{n-1}/dx^{n-1} f(x)|_b) - (d^{n-1}/dx^{n-1} f(x)|_a)`
@@ -320,11 +321,9 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
                     env
                 )?.unpack_into(&mut warnings);
                 Ok(Status {
-                    value: try_operation(
-                        &eval(&new_inner, &extra_vars.with(wrt, Cow::Owned(Object::Real(b))), env)?.unpack_into(&mut warnings),
-                        &eval(&new_inner, &extra_vars.with(wrt, Cow::Owned(Object::Real(a))), env)?.unpack_into(&mut warnings),
-                        &BinaryOperation::Sub,
-                        None
+                    value: (
+                        eval(&new_inner, &extra_vars.with(wrt, Cow::Owned(Object::Real(b))), env)?
+                        - eval(&new_inner, &extra_vars.with(wrt, Cow::Owned(Object::Real(a))), env)?
                     )?.unpack_into(&mut warnings),
                     warnings
                 })

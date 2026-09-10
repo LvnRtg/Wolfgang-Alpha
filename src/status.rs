@@ -1,8 +1,10 @@
 //! Implements the struct `Status`.
 
+use paste::paste;
 use std::ops;
 
-use crate::math::Object;
+use crate::math::objects::{Object, try_operation};
+use crate::math::operations::BinaryOperation;
 
 /// Contains a value of type `T` and a (potentially empty) list of warnings.
 #[derive(Clone)]
@@ -147,7 +149,9 @@ impl Status<Object> {
 }
 
 
-// Below implementations are just there to simplify typing. They do not carry much logical weight.
+// Below are a few implementations that simplify typing in e.g. `analytic_directional_derivative`.
+// I only implement the operations I actively need somewhere.
+
 impl<T> Status<T> where T: ops::Neg<Output=Result<T, String>> {
     /// Implemented without `std::ops` because doing so would cause errors when writing `-eval(inner)?` because of type inference.
     pub fn neg(self) -> Result<Status<T>, String> {
@@ -158,5 +162,91 @@ impl<T> Status<T> where T: ops::Not<Output=Result<T, String>> {
     /// Implemented without `std::ops` because doing so would cause errors when writing `!eval(inner)?` because of type inference.
     pub fn not(self) -> Result<Status<T>, String> {
         self.try_map(|t| !t)
+    }
+}
+
+/// The compiler will optimize away unused operations, so this won't affect the performance at runtime.
+macro_rules! impl_binop {
+    ($op:ident) => {
+        paste!{
+            impl ops::$op<Status<Object>> for Status<Object> {
+                type Output = ExtResult;
+                fn [<$op:lower>](self, rhs: Status<Object>) -> Self::Output {
+                    Status::combine_flatten(
+                        self,
+                        rhs,
+                        |l, r| try_operation(&l, &r, &BinaryOperation::$op, None)
+                    )
+                }
+            }
+            impl ops::$op<Object> for Status<Object> {
+                type Output = ExtResult;
+                fn [<$op:lower>](self, rhs: Object) -> Self::Output {
+                    self.try_map_flatten(|l| try_operation(&l, &rhs, &BinaryOperation::$op, None))
+                }
+            }
+            impl ops::$op<&Object> for Status<Object> {
+                type Output = ExtResult;
+                fn [<$op:lower>](self, rhs: &Object) -> Self::Output {
+                    self.try_map_flatten(|l| try_operation(&l, rhs, &BinaryOperation::$op, None))
+                }
+            }
+            impl ops::$op<Status<Object>> for Object {
+                type Output = ExtResult;
+                fn [<$op:lower>](self, rhs: Status<Object>) -> Self::Output {
+                    rhs.try_map_flatten(|r| try_operation(&self, &r, &BinaryOperation::$op, None))
+                }
+            }
+            impl ops::$op<Object> for Object {
+                type Output = ExtResult;
+                fn [<$op:lower>](self, rhs: Object) -> Self::Output {
+                    try_operation(&self, &rhs, &BinaryOperation::$op, None)
+                }
+            }
+            impl ops::$op<&Object> for Object {
+                type Output = ExtResult;
+                fn [<$op:lower>](self, rhs: &Object) -> Self::Output {
+                    try_operation(&self, rhs, &BinaryOperation::$op, None)
+                }
+            }
+            impl ops::$op<Object> for &Object {
+                type Output = ExtResult;
+                fn [<$op:lower>](self, rhs: Object) -> Self::Output {
+                    try_operation(self, &rhs, &BinaryOperation::$op, None)
+                }
+            }
+            impl ops::$op<&Object> for &Object {
+                type Output = ExtResult;
+                fn [<$op:lower>](self, rhs: &Object) -> Self::Output {
+                    try_operation(self, rhs, &BinaryOperation::$op, None)
+                }
+            }
+        }
+    }
+}
+
+impl_binop!(Add);
+impl_binop!(Sub);
+impl_binop!(Mul);
+impl_binop!(Div);
+
+impl Status<Object> {
+    pub fn pow(self, rhs: Status<Object>) -> ExtResult {
+        Status::combine_flatten(
+            self,
+            rhs,
+            |l, r| try_operation(&l, &r, &BinaryOperation::Pow(false), None)
+        )
+    }
+    pub fn squared(self) -> ExtResult {
+        self.try_map_flatten(|l| try_operation(&l, &Object::Real(2.0), &BinaryOperation::Pow(false), None))
+    }
+}
+impl Object {
+    pub fn pow(self, rhs: Status<Object>) -> ExtResult {
+        rhs.try_map_flatten(|r| try_operation(&self, &r, &BinaryOperation::Pow(false), None))
+    }
+    pub fn pow_ref(&self, rhs: Status<Object>) -> ExtResult {
+        rhs.try_map_flatten(|r| try_operation(self, &r, &BinaryOperation::Pow(false), None))
     }
 }

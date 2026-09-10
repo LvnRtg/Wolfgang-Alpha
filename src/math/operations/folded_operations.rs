@@ -253,20 +253,7 @@ where
         });
         let mut res = if let Some(r) = utils::fold_res_obj_iter(first_factors, &BinaryOperation::Mul) {
             // If `first_factors` is non-empty, compute `(prod_{x in first_factors} x) * f'(i)`
-            r.and_then(
-                |lhs_s| get_f_prime(&extra_vars.with(index_var, Cow::Owned(Object::Real(*i as f64))), env
-            ).and_then(
-                |rhs_s| Status::combine_flatten(
-                    lhs_s,
-                    rhs_s,
-                    |lhs, rhs| try_operation(
-                        &lhs,
-                        &rhs,
-                        &BinaryOperation::Mul,
-                        None
-                    )
-                )
-            ))
+            r? * get_f_prime(&extra_vars.with(index_var, Cow::Owned(Object::Real(*i as f64))), env)?
         } else {
             // Otherwise, this is the same as `f'(i)`
             get_f_prime(&extra_vars.with(index_var, Cow::Owned(Object::Real(*i as f64))), env)
@@ -275,18 +262,7 @@ where
 
         // Multiply with all remaining factors
         for j in i_range[i_index+1..].iter() {
-            res = res.and_then(
-                |lhs|
-                get_f(&extra_vars.with(index_var, Cow::Owned(Object::Real(*j as f64))), env)
-                .and_then(
-                    |f_j| try_operation(
-                        &lhs,
-                        &f_j.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP),
-                        &BinaryOperation::Mul,
-                        None
-                    ).map(|s| s.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP))
-                )
-            );
+            res = (res? * get_f(&extra_vars.with(index_var, Cow::Owned(Object::Real(*j as f64))), env)?).map(|s| s.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP));
         }
         res
     });

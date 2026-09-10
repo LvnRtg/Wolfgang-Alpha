@@ -281,12 +281,7 @@ impl ops::Mul<f64> for Object {
         rhs * &self
     }
 }
-impl ops::Add<Object> for Object {
-    type Output = ExtResult;
-    fn add(self, rhs: Object) -> Self::Output {
-        try_operation(&self, &rhs, &BinaryOperation::Add, None)
-    }
-}
+// Binary operations are implemented via macro in `status.rs`
 impl ops::Neg for &Object {
     type Output = Result<Object, String>;
     fn neg(self) -> Self::Output {
@@ -330,6 +325,11 @@ impl ops::Not for Object {
             Object::Matrix(m) => Ok(Object::Matrix(m.transform(|x| if x == 0.0 {1.0} else {0.0}))),
             Object::LiteralExpression(e) => Ok(Object::LiteralExpression(crate::expr_unary_op!(Not, e))),
         }
+    }
+}
+impl Object {
+    pub fn squared(self) -> ExtResult {
+        try_operation(&self, &Object::Real(2.0), &BinaryOperation::Pow(false), None)
     }
 }
 

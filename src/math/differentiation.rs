@@ -7,7 +7,6 @@ use crate::math::{Env, Expression, FunctionRepr, integration, Object, ObjType, M
 use crate::math::expressions::Repeat;
 use crate::math::expressions::simplification::*;
 use crate::math::matrices_and_vectors::{VectorNorm, MatrixNorm};
-use crate::math::objects::{try_operation};
 use crate::math::operations::{BinaryOperation, Comparison, FoldedOperation, UnaryOperation};
 use crate::math::operations::folded_operations::{compute_folded_operation, compute_product_derivative_helper};
 use crate::math::utils::{approx_eq, min};
@@ -616,78 +615,40 @@ pub fn analytic_directional_derivative(
             let Status{value: diff_l, mut warnings} = analytic_directional_derivative(vars, lhs, point, direction, extra_vars, env)?;
             let diff_r = analytic_directional_derivative(vars, rhs, point, direction, extra_vars, env)?.unpack_into(&mut warnings);
             match op {
-                BinaryOperation::Add | BinaryOperation::Sub => try_operation(&diff_l, &diff_r, op, None).map(|s| s.unpack_into(&mut warnings)),
+                BinaryOperation::Add => diff_l + diff_r,
+                BinaryOperation::Sub => diff_l - diff_r,
                 BinaryOperation::Quo | BinaryOperation::Rem | BinaryOperation::And | BinaryOperation::Or => Err(format!("Cannot differentiate the operation `{op}`.")),
                 BinaryOperation::Mul => {
                     let varstack = extra_vars.with_multiple(vars.iter(), point.iter());
-                    try_operation(
-                        &try_operation(
-                            &diff_l,
-                            &eval(rhs, &varstack, env)?.unpack_into(&mut warnings),
-                            &BinaryOperation::Mul,
-                            None
-                        )?.unpack_into(&mut warnings), // f'(x) * g(x)
-                        &try_operation(
-                            &eval(lhs, &varstack, env)?.unpack_into(&mut warnings),
-                            &diff_r,
-                            &BinaryOperation::Mul,
-                            None
-                        )?.unpack_into(&mut warnings),  // f(x) * g'(x)
-                        &BinaryOperation::Add,
-                        None
-                    ).map(|s| s.unpack_into(&mut warnings))
+                    // f'(x) * g(x) + f(x) * g'(x)
+                    (diff_l * eval(rhs, &varstack, env)?)? // f'(x) * g(x)
+                    + (eval(lhs, &varstack, env)? * diff_r)?  // f(x) * g'(x)
                 },
                 BinaryOperation::Div => {
                     let varstack = extra_vars.with_multiple(vars.iter(), point.iter());
-                    let eval_lhs = eval(lhs, &varstack, env)?.unpack_into(&mut warnings);
                     let eval_rhs = eval(rhs, &varstack, env)?.unpack_into(&mut warnings);
-                    try_operation( // d/dx (f(x) / g(x)) = (f'(x)g(x) - f(x)g'(x)) / g(x)²
-                        &try_operation(
-                            &try_operation(&diff_l, &eval_rhs, &BinaryOperation::Mul, None)?.unpack_into(&mut warnings),
-                            &try_operation(&eval_lhs, &diff_r, &BinaryOperation::Mul, None)?.unpack_into(&mut warnings),
-                            &BinaryOperation::Sub,
-                            None
-                        )?.unpack_into(&mut warnings),
-                        &try_operation(
-                            &eval_rhs,
-                            &Object::Real(2.0),
-                            &BinaryOperation::Pow(true),
-                            None
-                        )?.unpack_into(&mut warnings),
-                        &BinaryOperation::Div,
-                        None
-                    ).map(|s| s.unpack_into(&mut warnings))
+                    // d/dx (f(x) / g(x)) = (f'(x)g(x) - f(x)g'(x)) / g(x)²
+                    ((&diff_l * &eval_rhs)? - (eval(lhs, &varstack, env)? * &diff_r)?)?
+                    / eval_rhs.squared()?.unpack_into(&mut warnings)
                 }
                 BinaryOperation::Pow(_) => {
                     let varstack = extra_vars.with_multiple(vars.iter(), point.iter());
                     let eval_lhs = eval(lhs, &varstack, env)?.unpack_into(&mut warnings);
                     let eval_rhs = eval(rhs, &varstack, env)?.unpack_into(&mut warnings);
-                    try_operation( // d/dx (f(x) ^ g(x)) = f(x)^(g(x)-1) * (f'(x)g(x) + f(x)g'(x)ln(f(x)))
-                        &try_operation(
-                            &eval_lhs,
-                            &try_operation(&eval_rhs, &Object::Real(1.0), &BinaryOperation::Sub, None)?.unpack_into(&mut warnings),
-                            &BinaryOperation::Pow(true),
-                            None
-                        )?.unpack_into(&mut warnings),
-                        &try_operation(
-                            &try_operation(&diff_l, &eval_rhs, &BinaryOperation::Mul, None)?.unpack_into(&mut warnings),
-                            // The following argument `rhs` should be f(x)g'(x)ln(f(x)). However, if g'(x) = 0, then
-                            // f(x) may be negative, so we then want to avoid calling f(x).ln().
-                            &match (try_operation(&eval_lhs, &diff_r, &BinaryOperation::Mul, None)?.unpack_into(&mut warnings), eval_lhs) {
-                                (Object::Real(x), _) if approx_eq(x, 0.0) => Ok(Object::Real(0.0)),
-                                (l, Object::Real(x)) => try_operation(&l, &Object::Real(x.ln()), &BinaryOperation::Mul, None).map(|s| s.unpack_into(&mut warnings)),
-                                _ => {return Err(format!("Evaluation of {:?} is not of type `float`.", lhs));},
-                            }?,
-                            &BinaryOperation::Add,
-                            None
-                        )?.unpack_into(&mut warnings),
-                        &BinaryOperation::Mul,
-                        None
-                    ).map(|s| s.unpack_into(&mut warnings))
+                    // d/dx (f(x) ^ g(x)) = f(x)^(g(x)-1) * (f'(x)g(x) + f(x)g'(x)ln(f(x)))
+                    eval_lhs.pow_ref((&eval_rhs - Object::Real(1.0))?)?
+                    * (
+                        (diff_l * eval_rhs)?
+                        + match ((&eval_lhs * diff_r)?.unpack_into(&mut warnings), eval_lhs) {
+                            (Object::Real(x), _) if approx_eq(x, 0.0) => Object::Real(0.0),
+                            (l, Object::Real(x)) => (l * Object::Real(x.ln()))?.unpack_into(&mut warnings),
+                            _ => return Err(format!("Evaluation of {:?} is not of type `float`.", lhs)),
+                        }
+                    )?
                 }
                 BinaryOperation::Comp(..) => Err(format!("Cannot differentiate comparison {:?}", expr)),
             }
-            .map(|value| Status{value, warnings})
+            .map(|s| Status{value: s.unpack_into(&mut warnings), warnings})
         }
         Expression::FoldedOperation(FoldedOperation::Sum, index_var, from, conditions, to, inner) => {
             // As in `analytic_partial_derivative`,
@@ -843,13 +804,8 @@ pub fn analytic_directional_derivative(
                     &extra_vars.with(int_var, Cow::Owned(ax)),
                     env
                 )?.unpack_into(&mut warnings);
-                try_operation(
-                    &try_operation(&hbx, &dvb, &BinaryOperation::Mul, None)?.unpack_into(&mut warnings),
-                    &try_operation(&hax, &dva, &BinaryOperation::Mul, None)?.unpack_into(&mut warnings),
-                    &BinaryOperation::Sub,
-                    None
-                ).map(|s| Status{
-                    value: s.unpack_into(&mut warnings),
+                Ok(Status {
+                    value: ((hbx * dvb)? - (hax * dva)?)?.unpack_into(&mut warnings),
                     warnings
                 })
             } else {
@@ -913,11 +869,11 @@ pub fn numerical_directional_derivative<F: FnMut(&[Object], &[Expression], Optio
     let h = 1e-6 * (1.0 + min(norm_of_point.into_iter()).unwrap_or(0.0));
     for (i, coord) in point.iter_mut().enumerate() {
         direction[i] = h * &direction[i]; // Spares us another operation later
-        *coord = try_operation(coord, &direction[i], &BinaryOperation::Add, None)?.unpack_into(&mut warnings); // point + h*direction
+        *coord = (&*coord + &direction[i])?.unpack_into(&mut warnings); // point + h*direction
     }
     let left_res = f(&point, &[], Some((extra_vars, env)))?.unpack_into(&mut warnings);
     for (i, coord) in point.iter_mut().enumerate() {
-        *coord = try_operation(coord, &(2.0 * &direction[i]), &BinaryOperation::Sub, None)?.unpack_into(&mut warnings);
+        *coord = (&*coord - (2.0 * &direction[i]))?.unpack_into(&mut warnings);
     }
     let right_res = f(&point, &[], Some((extra_vars, env)))?.unpack_into(&mut warnings);
     match (left_res, right_res) {
