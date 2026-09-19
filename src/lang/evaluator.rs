@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use statrs::function::gamma;
 use itertools::Itertools;
 
+use crate::ok;
 use crate::math;
 use crate::math::{Env, Expression, FunctionRepr, Object, VarStack, VarStackLookup};
 use crate::math::objects::try_operation;
@@ -49,14 +50,14 @@ impl<'a> Evaluable<'a> {
                 |o| (Evaluable::Object(Cow::Owned(o)), unknown)
             ))
         } else {
-            Ok(Status::ok((Evaluable::Expression(expr), unknown)))
+            ok!((Evaluable::Expression(expr), unknown))
         }
     }
 
     /// If `self` is `Evaluable::Object`, returns a reference to the contained object. Otherwise, evaluates the contained expression and returns the result.
     pub fn eval(&'a self, varstack: &VarStack, env: &mut Env) -> Result<Status<Cow<'a, Object>>, String> {
         match self {
-            Evaluable::Object(obj) => Ok(Status::ok(Cow::Borrowed(&*obj))),
+            Evaluable::Object(obj) => ok!(Cow::Borrowed(&*obj)),
             Evaluable::Expression(expr) => match eval(expr, varstack, env) {
                 Ok(s) => Ok(s.map(Cow::Owned)),
                 Err(e) => Err(format!(
@@ -105,8 +106,8 @@ pub fn parse_function_definition(
     env: &mut Env
 ) -> Result<Status<Expression>, String> {
     match expr {
-        Expression::None => Ok(Status::ok(Expression::None)),
-        Expression::Identifier(x) => Ok(Status::ok(
+        Expression::None => ok!(Expression::None),
+        Expression::Identifier(x) => ok!(
             if argument_names.contains(x) {
                 Expression::Identifier(format!("___tmp_{}", x))
             } else if let Some(y) = extra_vars.lookup(x) {
@@ -116,8 +117,8 @@ pub fn parse_function_definition(
             } else {
                 Expression::Identifier(x.clone())
             }
-        )),
-        Expression::Number(x) => Ok(Status::ok(Expression::Number(*x))),
+        ),
+        Expression::Number(x) => ok!(Expression::Number(*x)),
         Expression::Tuple(v) => Status::from_iter(
             v.iter(),
             |x| parse_function_definition(x, argument_names, extra_vars, env)
@@ -296,11 +297,11 @@ pub fn eval(
         Expression::Identifier(ident) => {
             // First, iterate `extra_vars` in reverse order and search for `ident`.
             if let Some(x) = extra_vars.lookup(ident) {
-                Ok(Status::ok(x.clone()))
+                ok!(x.clone())
             }
             // If nothing is found, look in `constants`.
             else if let Some(x) = env.constants.get(ident) {
-                Ok(Status::ok(x.clone()))
+                ok!(x.clone())
                 // We only call 'clone' for every time a variable from 'constants' is used, which can only happen so often
                 // since the user still has to enter at least one character per time it is used. Therefore,
                 // even if these are large matrices, it is a totally acceptable runtime.
@@ -310,7 +311,7 @@ pub fn eval(
                 Err(format!("Unknown identifier: {:?}", ident))
             }
         }
-        Expression::Number(x) => Ok(Status::ok(Object::Real(*x))),
+        Expression::Number(x) => ok!(Object::Real(*x)),
         Expression::Tuple(entries) => {
             // As mentioned in the docs, we capture the environment for tuple evaluation.
             // Two approaches:
@@ -330,14 +331,33 @@ pub fn eval(
             }
             Ok(res.map(Object::Tuple))
         }
-        Expression::Vector(entries) => Ok(
-            eval_mul_exprs_to_f64(entries, extra_vars, env)?
-            .map(|values| Object::Vector(math::Vector{ values }))
-        ),
-        Expression::Matrix(m, n, entries) => Ok(
-            eval_mul_exprs_to_f64(entries, extra_vars, env)?
-            .map(|values| Object::Matrix(math::Matrix::from(*m, *n, values)))
-        ),
+        Expression::Vector(entries) => {
+            let mut warnings = Vec::new();
+            Object::expect_scalar_vector(
+                entries.iter().map(
+                    |e|
+                    match eval(e, extra_vars, env) {
+                        Ok(s) => Ok(s.unpack_into(&mut warnings)),
+                        Err(err) => Err(format!("Couldn't evaluate `{}`. Traceback: {}", e, err))
+                    }
+                )
+            )
+            .map(|value| Status{value, warnings})
+        }
+        Expression::Matrix(m, n, entries) => {
+            let mut warnings = Vec::new();
+            Object::expect_scalar_matrix(
+                *m, *n,
+                entries.iter().map(
+                    |e|
+                    match eval(e, extra_vars, env) {
+                        Ok(s) => Ok(s.unpack_into(&mut warnings)),
+                        Err(err) => Err(format!("Couldn't evaluate `{}`. Traceback: {}", e, err))
+                    }
+                )
+            )
+            .map(|value| Status{value, warnings})
+        }
         Expression::UnaryOperation(op, rhs) => {
             match op {
                 UnaryOperation::Neg => eval(rhs, extra_vars, env)?.neg(),
@@ -382,14 +402,14 @@ pub fn eval(
                                 Object::Real(x.modulus())
                             }
                             Object::Vector(x) => {
-                                let Status{value: norm_type, warnings: new_warnings} = math::matrices_and_vectors::VectorNorm::from_expr(opt, extra_vars, env)?;
+                                let Status{value: norm_type, warnings: new_warnings} = math::vectors::VectorNorm::from_expr(opt, extra_vars, env)?;
                                 warnings.extend(new_warnings);
-                                Object::Real(x.norm(&norm_type))
+                                crate::dispatch_vector!(x, v => Object::Real(v.norm(&norm_type)))
                             }
                             Object::Matrix(x) => {
-                                let Status{value: norm_type, warnings: new_warnings} = math::matrices_and_vectors::MatrixNorm::from_expr(opt, extra_vars, env)?;
+                                let Status{value: norm_type, warnings: new_warnings} = math::matrices::MatrixNorm::from_expr(opt, extra_vars, env)?;
                                 warnings.extend(new_warnings);
-                                Object::Real(x.norm(&norm_type)?)
+                                crate::dispatch_matrix!(x, m => Object::Real(m.norm(&norm_type)?))
                             }
                             Object::LiteralExpression(e) => Object::LiteralExpression(
                                 Expression::UnaryOperation(UnaryOperation::Norm(opt.clone()), Box::new(e))
@@ -526,16 +546,6 @@ fn eval_mul_exprs<'a>(
     Status::from_iter(
         expressions,
         |e| eval(e, extra_vars, env).map_err(|err| format!("Couldn't evaluate `{}`. Traceback: {}", e, err))
-    )
-}
-/// Helper function, tailored to use case
-fn eval_mul_exprs_to_f64(expressions: &[Expression], extra_vars: &VarStack, env: &mut Env) -> Result<Status<Vec<f64>>, String> {
-    Status::from_iter(
-        expressions.iter(),
-        |e| eval(e, extra_vars, env)
-            .map_err(|err| format!("Couldn't evaluate `{}`. Traceback: {}", e, err))
-            ?
-            .try_map(|o| o.expect_float())
     )
 }
 
@@ -701,7 +711,7 @@ fn eval_assignment(
                 warnings.push(format!("The constant `{}` with value {} was removed.", function_name, old_val));
                 Ok(Status{value: Object::Success, warnings})
             } else {
-                Ok(Status::ok(Object::Success))
+                ok!(Object::Success)
             }
         }
     }
@@ -728,7 +738,7 @@ fn eval_assignment(
             if let Some(old_val) = env.functions.remove(constant_name) {
                 Ok(Status{value, warnings: vec![format!("The function `{}` given by {:?} was removed.", constant_name, old_val)]})
             } else {
-                Ok(Status::ok(value))
+                ok!(value)
             }
         }
     }

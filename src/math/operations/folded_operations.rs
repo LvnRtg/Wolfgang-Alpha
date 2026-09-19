@@ -4,6 +4,7 @@ use std::fmt;
 
 use crate::lang::eval;
 use crate::math::objects::try_operation;
+use crate::math::traits::*;
 use crate::math::{Env, Expression, Object, ObjType, utils, VarStack};
 use crate::status::{ExtResult, Status};
 use super::binary_operations::BinaryOperation;
@@ -253,7 +254,7 @@ where
         });
         let mut res = if let Some(r) = utils::fold_res_obj_iter(first_factors, &BinaryOperation::Mul) {
             // If `first_factors` is non-empty, compute `(prod_{x in first_factors} x) * f'(i)`
-            r? * get_f_prime(&extra_vars.with(index_var, Cow::Owned(Object::Real(*i as f64))), env)?
+            r?.mul(get_f_prime(&extra_vars.with(index_var, Cow::Owned(Object::Real(*i as f64))), env)?)
         } else {
             // Otherwise, this is the same as `f'(i)`
             get_f_prime(&extra_vars.with(index_var, Cow::Owned(Object::Real(*i as f64))), env)
@@ -262,7 +263,7 @@ where
 
         // Multiply with all remaining factors
         for j in i_range[i_index+1..].iter() {
-            res = (res? * get_f(&extra_vars.with(index_var, Cow::Owned(Object::Real(*j as f64))), env)?).map(|s| s.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP));
+            res = res?.mul(get_f(&extra_vars.with(index_var, Cow::Owned(Object::Real(*j as f64))), env)?).map(|s| s.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP));
         }
         res
     });

@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::iter::Peekable;
 use std::vec::IntoIter;
 
-use crate::expr_unary_op;
+use crate::{expr_unary_op, ok};
 use crate::lang::lexer::{Keyword, Token, tokenize};
 use crate::math::operations::{BinaryOperation, Comparison, UnaryOperation, FoldedOperation};
 use crate::math::{Env, Expression, FunctionRepr, utils, VarStack};
@@ -56,7 +56,7 @@ impl Parser {
         let mut exprs = Vec::<Expression>::new();
         if let Ok(t) = self.peek() && t == closer {
             _ = self.next();
-            return Ok(Status::ok(exprs));
+            return ok!(exprs);
         }
         let mut warnings = Vec::new();
         loop {
@@ -79,8 +79,8 @@ impl Parser {
     /// For example, you'd call this after encountering `sum_`.
     fn expect_brace_expr(&mut self, env: &mut Env) -> Result<Status<Expression>, String> {
         match self.next()? {
-            Token::Identifier(x) => Ok(Status::ok(Expression::Identifier(x))),
-            Token::Number(x) => Ok(Status::ok(Expression::Number(x))),
+            Token::Identifier(x) => ok!(Expression::Identifier(x)),
+            Token::Number(x) => ok!(Expression::Number(x)),
             Token::LBrace => {
                 let f: Box<dyn Fn(&Token) -> bool> = Box::new(|t: &Token| matches!(t, Token::RBrace));
                 let res = self.parse_expression(0, Some(&f), env)?;
@@ -96,8 +96,8 @@ impl Parser {
     /// For example, you'd call this after encountering `sum_`.
     fn expect_brace_expr_with_commas(&mut self, env: &mut Env) -> Result<Status<Vec<Expression>>, String> {
         match self.next()? {
-            Token::Identifier(x) => Ok(Status::ok(vec![Expression::Identifier(x)])),
-            Token::Number(x) => Ok(Status::ok(vec![Expression::Number(x)])),
+            Token::Identifier(x) => ok!(vec![Expression::Identifier(x)]),
+            Token::Number(x) => ok!(vec![Expression::Number(x)]),
             Token::LBrace => self.parse_comma_expression(&Token::RBrace, env),
             other => Err(format!("Expected '{{', identifier or number; got {:?} instead.", other))
         }

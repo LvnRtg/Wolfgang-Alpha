@@ -1,10 +1,10 @@
 //! Implements the struct `Status`.
 
 use paste::paste;
-use std::ops;
 
 use crate::math::objects::{Object, try_operation};
 use crate::math::operations::BinaryOperation;
+use crate::math::traits::*;
 
 /// Contains a value of type `T` and a (potentially empty) list of warnings.
 #[derive(Clone)]
@@ -14,6 +14,13 @@ pub struct Status<T> {
 }
 
 pub type ExtResult = Result<Status<Object>, String>;
+
+#[macro_export]
+macro_rules! ok {
+    ($inner:expr) => {
+        Ok(Status::ok($inner))
+    }
+}
 
 impl<T> Status<T> {
     /// Returns a `Status` with the given value and no warnings.
@@ -152,13 +159,13 @@ impl Status<Object> {
 // Below are a few implementations that simplify typing in e.g. `analytic_directional_derivative`.
 // I only implement the operations I actively need somewhere.
 
-impl<T> Status<T> where T: ops::Neg<Output=Result<T, String>> {
+impl<T> Status<T> where T: Neg<Output=Result<T, String>> {
     /// Implemented without `std::ops` because doing so would cause errors when writing `-eval(inner)?` because of type inference.
     pub fn neg(self) -> Result<Status<T>, String> {
-        self.try_map(|t| -t)
+        self.try_map(|t| t.neg())
     }
 }
-impl<T> Status<T> where T: ops::Not<Output=Result<T, String>> {
+impl<T> Status<T> where T: std::ops::Not<Output=Result<T, String>> {
     /// Implemented without `std::ops` because doing so would cause errors when writing `!eval(inner)?` because of type inference.
     pub fn not(self) -> Result<Status<T>, String> {
         self.try_map(|t| !t)
@@ -169,7 +176,7 @@ impl<T> Status<T> where T: ops::Not<Output=Result<T, String>> {
 macro_rules! impl_binop {
     ($op:ident) => {
         paste!{
-            impl ops::$op<Status<Object>> for Status<Object> {
+            impl $op<Status<Object>> for Status<Object> {
                 type Output = ExtResult;
                 fn [<$op:lower>](self, rhs: Status<Object>) -> Self::Output {
                     Status::combine_flatten(
@@ -179,43 +186,43 @@ macro_rules! impl_binop {
                     )
                 }
             }
-            impl ops::$op<Object> for Status<Object> {
+            impl $op<Object> for Status<Object> {
                 type Output = ExtResult;
                 fn [<$op:lower>](self, rhs: Object) -> Self::Output {
                     self.try_map_flatten(|l| try_operation(&l, &rhs, &BinaryOperation::$op, None))
                 }
             }
-            impl ops::$op<&Object> for Status<Object> {
+            impl $op<&Object> for Status<Object> {
                 type Output = ExtResult;
                 fn [<$op:lower>](self, rhs: &Object) -> Self::Output {
                     self.try_map_flatten(|l| try_operation(&l, rhs, &BinaryOperation::$op, None))
                 }
             }
-            impl ops::$op<Status<Object>> for Object {
+            impl $op<Status<Object>> for Object {
                 type Output = ExtResult;
                 fn [<$op:lower>](self, rhs: Status<Object>) -> Self::Output {
                     rhs.try_map_flatten(|r| try_operation(&self, &r, &BinaryOperation::$op, None))
                 }
             }
-            impl ops::$op<Object> for Object {
+            impl $op<Object> for Object {
                 type Output = ExtResult;
                 fn [<$op:lower>](self, rhs: Object) -> Self::Output {
                     try_operation(&self, &rhs, &BinaryOperation::$op, None)
                 }
             }
-            impl ops::$op<&Object> for Object {
+            impl $op<&Object> for Object {
                 type Output = ExtResult;
                 fn [<$op:lower>](self, rhs: &Object) -> Self::Output {
                     try_operation(&self, rhs, &BinaryOperation::$op, None)
                 }
             }
-            impl ops::$op<Object> for &Object {
+            impl $op<Object> for &Object {
                 type Output = ExtResult;
                 fn [<$op:lower>](self, rhs: Object) -> Self::Output {
                     try_operation(self, &rhs, &BinaryOperation::$op, None)
                 }
             }
-            impl ops::$op<&Object> for &Object {
+            impl $op<&Object> for &Object {
                 type Output = ExtResult;
                 fn [<$op:lower>](self, rhs: &Object) -> Self::Output {
                     try_operation(self, rhs, &BinaryOperation::$op, None)

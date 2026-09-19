@@ -1,48 +1,53 @@
 //! Implements the QR algorithm and QR-adjacent functions such as `eig` to obtain the eigenvalues of a matrix.
 
-use crate::math::{Complex, Matrix, Object, utils};
+use crate::math::{Complex, utils};
+use crate::math::traits::*;
+use super::Matrix;
 
 /// A Givens rotation acting on rows/columns `i` and `j`:
 /// G = I everywhere except G[i][i] = c, G[j][j] = c, G[i][j] = s, G[j][i] = -s.
 #[derive(Debug, Clone, Copy)]
-struct GivensRotation {
+struct GivensRotation<T: Scalar> {
     i: usize,
     j: usize,
-    c: f64,
-    s: f64,
+    c: T,
+    s: T,
 }
  
-impl GivensRotation {
+impl<T: Scalar> GivensRotation<T> {
     #[inline]
     fn is_identity(&self) -> bool {
-        self.c == 1.0 && self.s == 0.0
+        self.c == T::one() && self.s == T::zero()
     }
 }
 
-impl Matrix {
+impl<T: Scalar> Matrix<T> {
     /// Computes the matrix `G` such that `G * self` rotates the plane spanned by the rows `i` and `j`
     /// precisely such that `A[j][col]` becomes zero. Returns `GivensRotation` instead of `Matrix`
     /// to avoid materializing the full matrix.
     /// 
     /// Assumes that `self` is quadratic (if this function becomes public, this may be changed).
-    fn givens_rotation(&self, i: usize, j: usize, col: usize) -> GivensRotation {
-        let x = (self.get(i, col).powi(2) + self.get(j, col).powi(2)).sqrt();
-        if utils::approx_eq(x, 0.0) {
-            return GivensRotation { i, j, c: 1.0, s: 0.0 };
-        }
-        GivensRotation {
-            i,
-            j,
-            c: self.get(i, col) / x,
-            s: self.get(j, col) / x,
+    fn givens_rotation(&self, i: usize, j: usize, col: usize) -> GivensRotation<T> {
+        let x = self.get(i, col).powi(2)
+            .add(self.get(j, col).powi(2))
+            .sqrt();
+        if utils::approx_eq(x, T::zero()) {
+            GivensRotation { i, j, c: T::one(), s: T::zero() }
+        } else {
+            GivensRotation {
+                i,
+                j,
+                c: self.get(i, col).div(x),
+                s: self.get(j, col).div(x),
+            }
         }
     }
 
-    /// Performs `self = self * G` in place.
+    /// Performs `self = G * self` in place.
     /// 
     /// Assume that all columns before `col_start` are already zero in rows `i` and `j`.
     /// This is true for Hessenberg matrices processed left-to-right as we do in the QR algorithm.
-    fn apply_givens_left(&mut self, rot: &GivensRotation, col_start: usize) {
+    fn apply_givens_left(&mut self, rot: &GivensRotation<T>, col_start: usize) {
         if rot.is_identity() {
             return;
         }
@@ -50,13 +55,13 @@ impl Matrix {
         for k in col_start..self.n {
             let ai = self.get(i, k);
             let aj = self.get(j, k);
-            self.set(i, k, c * ai + s * aj);
-            self.set(j, k, -s * ai + c * aj);
+            self.set(i, k, c.mul(ai).add(s.mul(aj)));
+            self.set(j, k, c.mul(aj).sub(s.mul(ai)));
         }
     }
  
     /// Performs `self = self * G^T` in place.
-    fn apply_givens_right(&mut self, rot: &GivensRotation, row_start: usize) {
+    fn apply_givens_right(&mut self, rot: &GivensRotation<T>, row_start: usize) {
         if rot.is_identity() {
             return;
         }
@@ -64,15 +69,15 @@ impl Matrix {
         for k in row_start..self.m {
             let ai = self.get(k, i);
             let aj = self.get(k, j);
-            self.set(k, i, c * ai + s * aj);
-            self.set(k, j, -s * ai + c * aj);
+            self.set(k, i, c.mul(ai).add(s.mul(aj)));
+            self.set(k, j, c.mul(aj).sub(s.mul(ai)));
         }
     }
 
     /// Computes the eigenvalues of `self` in O(n^3) using a QR algorithm, Hessenberg matrices and Givens rotations.
     /// 
     /// Returns `None` if `self` is not quadratic. 
-    pub fn eigenvalues(&self) -> Option<Vec<Object>> {
+    pub fn eigenvalues(&self) -> Option<Vec<Complex<T::UnderlyingFloat>>> {
         if self.m != self.n {
             return None;
         }
@@ -84,8 +89,8 @@ impl Matrix {
         let (mut h, pg) = self.upper_hessenberg();
         let mut u = pg.transpose();
  
-        let mut eigenvalues = vec![Object::Real(0.0); n];
-        const EPS: f64 = 1e-13;
+        let mut eigenvalues = vec![Complex::<T::UnderlyingFloat>::zero(); n];
+        let eps = T::UnderlyingFloat::from_f64(1e-13);
         const MAX_ITERS_PER_BLOCK: usize = 200;
  
         // `p` = size of the active (not-yet-deflated) leading block [0, p).
@@ -93,7 +98,7 @@ impl Matrix {
  
         while p > 0 {
             if p == 1 {
-                eigenvalues[0] = Object::Real(h.get(0, 0));
+                eigenvalues[0] = h.get(0, 0);
                 break;
             }
  
@@ -102,10 +107,10 @@ impl Matrix {
                 // Look for a subdiagonal entry we can treat as zero, scanning from the bottom of the active block.
                 let mut split_at: Option<usize> = None;
                 for i in (1..p).rev() {
-                    let scale = h.get(i - 1, i - 1).abs() + h.get(i, i).abs();
-                    let threshold = EPS * scale.max(f64::MIN_POSITIVE);
+                    let scale = h.get(i - 1, i - 1).abs().add(h.get(i, i).abs());
+                    let threshold = eps.mul(utils::max(scale, T::UnderlyingFloat::min_positive()));
                     if h.get(i, i - 1).abs() <= threshold {
-                        h.set(i, i - 1, 0.0);
+                        h.set(i, i - 1, Complex::<T::UnderlyingFloat>::zero());
                         split_at = Some(i);
                         break;
                     }
@@ -117,7 +122,7 @@ impl Matrix {
                     // and re-scan; the next pass finds the (now closer to
                     // the edge) splits first since we scan bottom-up.
                     if i == p - 1 {
-                        eigenvalues[p - 1] = Object::Real(h.get(p - 1, p - 1));
+                        eigenvalues[p - 1] = h.get(p - 1, p - 1);
                         p -= 1;
                         break;
                     } else if i == p - 2 {
@@ -138,35 +143,36 @@ impl Matrix {
                         eigenvalues[p - 1] = e2;
                         p = p.saturating_sub(2);
                     } else {
-                        eigenvalues[p - 1] = Object::Real(h.get(p - 1, p - 1));
+                        eigenvalues[p - 1] = h.get(p - 1, p - 1);
                         p -= 1;
                     }
                     break;
                 }
  
                 // Wilkinson shift from the trailing 2x2 of the active block.
-                let a = h.get(p - 2, p - 2);
-                let b = h.get(p - 2, p - 1);
-                let c = h.get(p - 1, p - 2);
-                let d = h.get(p - 1, p - 1);
-                let shift = Matrix::wilkinson_shift(a, b, c, d);
+                let shift = Matrix::<T>::wilkinson_shift(
+                    h.get(p - 2, p - 2),
+                    h.get(p - 2, p - 1),
+                    h.get(p - 1, p - 2),
+                    h.get(p - 1, p - 1)
+                );
  
-                for k in 0..n {
-                    h.set(k, k, h.get(k, k) - shift);
+                for k in 0..p {
+                    h.set(k, k, h.get(k, k).sub(shift));
                 }
  
                 // R, plus the rotations used to build it. Q is never formed
                 // densely: apply each rotation directly to h (forming R*Q)
                 // and to u (accumulating U*Q), one O(n) update at a time.
-                let (r, rotations) = h.qr_decomposition_for_hessenberg_matrix();
+                let (r, rotations) = h.qr_decomposition_for_hessenberg_matrix(p);
                 h = r;
                 for rot in &rotations {
                     h.apply_givens_right(rot, 0);
                     u.apply_givens_right(rot, 0);
                 }
  
-                for k in 0..n {
-                    h.set(k, k, h.get(k, k) + shift);
+                for k in 0..p {
+                    h.set(k, k, h.get(k, k).add(shift));
                 }
             }
         }
@@ -174,26 +180,28 @@ impl Matrix {
         Some(eigenvalues)
     }
 
-    /// Computes the QR decomposition of `self`. Only works if `self` is a Hessenberg matrix.
-    fn qr_decomposition_for_hessenberg_matrix(&self) -> (Matrix, Vec<GivensRotation>) {
+    /// Computes the QR decomposition of the leading `size x size` block of `self`.
+    /// Only works if that leading block is a Hessenberg matrix.
+    fn qr_decomposition_for_hessenberg_matrix(&self, size: usize) -> (Matrix<T>, Vec<GivensRotation<T>>) {
         let mut r = self.clone();
-        let mut rotations = Vec::with_capacity(self.m.saturating_sub(1));
-        for i in 0..self.m.saturating_sub(1) {
+        let mut rotations = Vec::with_capacity(size.saturating_sub(1));
+        for i in 0..size.saturating_sub(1) {
             let rot = r.givens_rotation(i, i + 1, i);
             // Columns < i are already zero in rows i, i+1 (Hessenberg structure maintained inductively), so restrict to i..n.
             r.apply_givens_left(&rot, i);
             rotations.push(rot);
         }
         (r, rotations)
-
     }
 
     /// Computes the matrix `G` such that `G * self` rotates the plane spanned by the rows `i` and `j`
     /// precisely such that `A[j][col]` becomes zero.
     /// 
+    /// Returns it as complex matrix (even though for real input matrices, it is real) for the sake of simplicity.
+    /// 
     /// Assumes that `self` is quadratic (if this function becomes public, this may be changed).
-    fn upper_hessenberg(&self) -> (Matrix, Matrix) {
-        let mut h = self.clone();
+    fn upper_hessenberg(&self) -> (Matrix<Complex<T::UnderlyingFloat>>, Matrix<Complex<T::UnderlyingFloat>>) {
+        let mut h = self.transform(|x| x.to_complex());
         let mut pg = Matrix::identity(self.m);
         if self.m > 1 {
             for col in 0..self.m - 2 {
@@ -215,44 +223,34 @@ impl Matrix {
     }
 
     /// Performs a wilkinson shift.
-    fn wilkinson_shift(a: f64, b: f64, c: f64, d: f64) -> f64 {
-        let tr = a + d;
-        let det = a * d - b * c;
-        let disc = tr * tr - 4.0 * det;
-        if disc >= 0.0 {
-            let sq = disc.sqrt();
-            let l1 = (tr + sq) / 2.0;
-            let l2 = (tr - sq) / 2.0;
-            if (l1 - d).abs() < (l2 - d).abs() {
-                l1
-            } else {
-                l2
-            }
+    /// 
+    /// Idea: shift the given 2x2 block towards the eigenvalue closest to `d` to accelerate convergence.
+    fn wilkinson_shift(a: Complex<T::UnderlyingFloat>, b: Complex<T::UnderlyingFloat>, c: Complex<T::UnderlyingFloat>, d: Complex<T::UnderlyingFloat>) -> Complex<T::UnderlyingFloat> {
+        let tr = a.add(d);
+        let det = a.mul(d).sub(b.mul(c));
+        let disc_sqrt = tr.mul(tr).sub(det.mul(T::UnderlyingFloat::from_usize(4))).sqrt();
+        let l1 = tr.add(disc_sqrt).div(T::UnderlyingFloat::from_usize(2));
+        let l2 = tr.sub(disc_sqrt).div(T::UnderlyingFloat::from_usize(2));
+        if l1.sub(d).modulus() <= l2.sub(d).modulus() {
+            l1
         } else {
-            d
+            l2
         }
     }
 
     /// Returns the eigenvalues of the 2x2-block of `self` situated at `(i, i)`. Only returns `Some` this block exists.
-    fn eigenvalues_of_2x2_block(&self, i: usize) -> Option<(Object, Object)> {
-        if self.m <= i + 1 || self.n <= i+1 {return None;}
+    fn eigenvalues_of_2x2_block(&self, i: usize) -> Option<(Complex<T::UnderlyingFloat>, Complex<T::UnderlyingFloat>)> {
+        if self.m <= i + 1 || self.n <= i + 1 {return None;}
         let a = self.get(i, i);
         let b = self.get(i, i + 1);
         let c = self.get(i + 1, i);
         let d = self.get(i + 1, i + 1);
-        let tr = a + d;
-        let det = a * d - b * c;
-        let disc = tr * tr - 4.0 * det;
-        if disc >= 0.0 {
-            let sq = disc.sqrt();
-            Some((
-                Object::Real((tr + sq) / 2.0),
-                Object::Real((tr - sq) / 2.0),
-            ))
-        } else {
-            let re = tr / 2.0;
-            let im = (-disc).sqrt() / 2.0;
-            Some((Object::Complex(Complex { real: re, imag: im }), Object::Complex(Complex { real: re, imag: -im })))
-        }
+        let tr = a.add(d);
+        let det = a.mul(d).sub(b.mul(c));
+        let disc_sqrt = tr.mul(tr).sub(det.mul(T::UnderlyingFloat::from_usize(4))).to_complex().sqrt();
+        Some((
+            tr.to_complex().add(disc_sqrt).div(T::UnderlyingFloat::from_usize(2)),
+            tr.to_complex().sub(disc_sqrt).div(T::UnderlyingFloat::from_usize(2))
+        ))
     }
 }

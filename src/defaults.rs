@@ -4,13 +4,14 @@ use std::collections::HashMap;
 use std::f64::consts;
 use std::sync::LazyLock;
 
-use crate::{expr_1arg_func, expr_binop, expr_compare, expr_if_else, expr_square, expr_unary_op};
+use crate::{dispatch_matrix, expr_1arg_func, expr_binop, expr_compare, expr_if_else, expr_square, expr_unary_op, map_mv, try_map_mv};
 use crate::lang::eval;
 use crate::math::differentiation;
 use crate::math::expressions;
+use crate::math::objects::{MatrixType, VectorType};
 use crate::math::operations::folded_operations;
-use crate::math::utils::permutation_to_matrix;
-use crate::math::{Complex, DirectFunction, Env, Expression, FunctionRepr, Matrix, Object, VarStack};
+use crate::math::traits::*;
+use crate::math::{Complex, DirectFunction, Env, Expression, FunctionRepr, Matrix, Object, VarStack, Vector};
 use crate::status::Status;
 
 /// Wrapped in a function because const hashmaps aren't available yet.
@@ -26,11 +27,11 @@ pub fn default_constants() -> HashMap<String, Object> {
 }
 
 /// Takes a function name `name`, e.g. `exp`, and returns a `FunctionRepr::Direct` (along with its mask) which expects
-/// exactly one `f64` as argument; if such an argument is given, it returns `Ok(x.name())`, otherwise, the appropriate `Err`.
+/// exactly one scalar (i.e. `f64` or `Complex<f64>` as argument; if such an argument is given, it returns `Ok(x.name())`, otherwise, the appropriate `Err`.
 /// 
-/// Note: "`FunctionRepr::Direct` which expects exactly one `f64`-arg" implies that in reality, three args are expected:
-/// the `f64`, the varstack and the environment.
-macro_rules! float_1_function {
+/// Note: "`FunctionRepr::Direct` which expects exactly one scalar arg" implies that in reality, three args are expected:
+/// the scalar, the varstack and the environment.
+macro_rules! scalar_1_function {
     ($name:ident) => {
         (
             Box::new(|evaluated_args, unevaluated_args, _| {
@@ -51,8 +52,9 @@ macro_rules! float_1_function {
                 } else {
                     match &evaluated_args[0] {
                         Object::Real(x) => Ok(Status{value: Object::Real(x.$name()), warnings}),
+                        Object::Complex(z) => Ok(Status{value: Object::Complex(z.$name()), warnings}),
                         other => Err(format!(
-                            "Wrong type of argument provided for function '{}' (expected float, got {}).",
+                            "Wrong type of argument provided for function '{}' (expected scalar, got {}).",
                             stringify!($name),
                             other.get_type()
                         )),
@@ -99,7 +101,7 @@ macro_rules! expect_n_objs {
 }
 
 /// For examples, see the use of the macro in `default_functions`.
-macro_rules! apply_matrix_fn {
+macro_rules! apply_matrix_to_scalar_fn {
     ($name:ident, $e:expr) => {
         (
             Box::new(|evaluated_args, unevaluated_args, _| {
@@ -118,8 +120,40 @@ macro_rules! apply_matrix_fn {
                         evaluated_args.len()
                     ))
                 } else {
-                    if let Object::Matrix(mat) = &evaluated_args[0] {
-                        $e(mat.$name(), &mat).map(|value| Status{value, warnings})
+                    if let Object::Matrix(mtype) = &evaluated_args[0] {
+                        try_map_mv!((mtype, Matrix) -> Object {mat => $e(mat.$name(), mtype)}).map(|value| Status{value, warnings})
+                    } else {
+                        Err(format!("Wrong type for argument of function '{}' (expected Matrix).", stringify!($name)))
+                    }
+                }
+            }),
+            (1, 0, 1)
+        )
+    };
+}
+/// For examples, see the use of the macro in `default_functions`.
+macro_rules! apply_matrix_to_matrix_fn {
+    ($name:ident, $e:expr) => {
+        (
+            Box::new(|evaluated_args, unevaluated_args, _| {
+                let warnings = if unevaluated_args.is_empty() {
+                    vec![]
+                } else {
+                    vec![format!(
+                        "Provided {} unevaluated arguments although none are expected.",
+                        unevaluated_args.len()
+                    )]
+                };
+                if evaluated_args.len() != 1 {
+                    Err(format!(
+                        "Wrong number of evaluated arguments provided for function '{}' (expected 1, got {}).",
+                        stringify!($name),
+                        evaluated_args.len()
+                    ))
+                } else {
+                    if let Object::Matrix(mtype) = &evaluated_args[0] {
+                        try_map_mv!((mtype, Matrix) -> MatrixType {mat => $e(mat.$name(), mtype)})
+                        .map(|value| Status{value: Object::Matrix(value), warnings})
                     } else {
                         Err(format!("Wrong type for argument of function '{}' (expected Matrix).", stringify!($name)))
                     }
@@ -140,14 +174,14 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, u
     expect_n_objs!(sign, 1, |args: &[Object]| {
         match &args[0] {
             Object::Real(x) => Ok(Object::Real(if *x >= 0.0 {1.0} else {-1.0})),
-            Object::Vector(v) => Ok(Object::Vector(v.transform(|x| if x >= 0.0 {1.0} else {-1.0}))),
-            Object::Matrix(m) => Ok(Object::Matrix(m.transform(|x| if x >= 0.0 {1.0} else {-1.0}))),
+            Object::Vector(VectorType::Real(v)) => Ok(Object::Vector(VectorType::Real(v.transform(|x| if x >= 0.0 {1.0} else {-1.0})))),
+            Object::Matrix(MatrixType::Real(m)) => Ok(Object::Matrix(MatrixType::Real(m.transform(|x| if x >= 0.0 {1.0} else {-1.0})))),
             other => Err(format!("Undefined operation `sign` for operand {:?}.", other))
         }
     }),
 
-    float_1_function!(exp),
-    float_1_function!(ln),
+    scalar_1_function!(exp),
+    scalar_1_function!(ln),
     expect_n_objs!(log, 2, |args: &[Object]| {
         if let Object::Real(base) = args[1] {
             match args[0] {
@@ -157,31 +191,68 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, u
         }
         else { Err("Wrong type for second argument (base) of function 'log' (expected float).".to_string()) }
     }),
-    float_1_function!(sqrt),
+    scalar_1_function!(sqrt),
 
-    float_1_function!(cos), float_1_function!(cosh), float_1_function!(acos), float_1_function!(acosh),
-    float_1_function!(sin), float_1_function!(sinh), float_1_function!(asin), float_1_function!(asinh),
-    float_1_function!(tan), float_1_function!(tanh), float_1_function!(atan), float_1_function!(atanh),
+    scalar_1_function!(cos), scalar_1_function!(cosh), scalar_1_function!(acos), scalar_1_function!(acosh),
+    scalar_1_function!(sin), scalar_1_function!(sinh), scalar_1_function!(asin), scalar_1_function!(asinh),
+    scalar_1_function!(tan), scalar_1_function!(tanh), scalar_1_function!(atan), scalar_1_function!(atanh),
 
     expect_n_objs!(eig, 1, |args: &[Object]| {
-        if let Object::Matrix(mat) = &args[0] {
-            match mat.eigenvalues() {
-                Some(eig) => Ok(Object::Tuple(eig)),
+        if let Object::Matrix(mtype) = &args[0] {
+            dispatch_matrix!(mtype, mat => match mat.eigenvalues() {
+                Some(eig) => Ok(Object::Tuple(eig.into_iter().map(Object::Complex).collect())),
                 None => Err(format!("Matrix must be quadratic (got size {}x{}).", mat.m(), mat.n()))
-            }
+            })
         }
         else { Err("Wrong type for argument of function 'eig' (expected Matrix).".to_string()) }
     }),
-    apply_matrix_fn!(det, |r, mat: &Matrix| match r {
-        Some(res) => Ok(Object::Real(res)),
-        None => Err(format!("Matrix must be quadratic (got size {}x{}).", mat.m(), mat.n()))
+    apply_matrix_to_scalar_fn!(det, |r, mtype: &MatrixType| match r {
+        Some(res) => Ok(res),
+        None => {
+            let (m, n) = dispatch_matrix!(mtype, mat => (mat.m(), mat.n()));
+            Err(format!("Matrix must be quadratic (got size {}x{}).", m, n))
+        }
     }),
-    apply_matrix_fn!(adj, |r, mat: &Matrix| match r {
-        Some(res) => Ok(Object::Matrix(res)),
-        None => Err(format!("Matrix must be quadratic (got size {}x{}).", mat.m(), mat.n()))
+    apply_matrix_to_matrix_fn!(adj, |r, mtype: &MatrixType| match r {
+        Some(res) => Ok(res),
+        None => {
+            let (m, n) = dispatch_matrix!(mtype, mat => (mat.m(), mat.n()));
+            Err(format!("Matrix must be quadratic (got size {}x{}).", m, n))
+        }
     }),
-    apply_matrix_fn!(tr, |r: Result<f64, String>, _| {r.map(Object::Real)}),
-    apply_matrix_fn!(transpose, |r: Matrix, _| {Ok(Object::Matrix(r))}),
+    apply_matrix_to_scalar_fn!(tr, |r, _| r),
+    // `transpose` (not using macro because input/output types can be a vectors too)
+    (
+        Box::new(|evaluated_args, unevaluated_args, _| {
+            let warnings = if unevaluated_args.is_empty() {
+                vec![]
+            } else {
+                vec![format!(
+                    "Provided {} unevaluated arguments although none are expected.",
+                    unevaluated_args.len()
+                )]
+            };
+            if evaluated_args.len() != 1 {
+                Err(format!(
+                    "Wrong number of evaluated arguments provided for function 'transpose' (expected 1, got {}).",
+                    evaluated_args.len()
+                ))
+            } else {
+                match &evaluated_args[0] {
+                    Object::Vector(vtype) => Ok(Object::Matrix(map_mv!((vtype, Vector) -> MatrixType {v => Matrix::from(1, v.len(), v.iter().cloned().collect())}))),
+                    Object::Matrix(mtype) if dispatch_matrix!(mtype, m => m.m()) == 1 => Ok(
+                        Object::Vector(map_mv!((mtype, Matrix) -> VectorType {
+                            m => Vector{values: m.iter().cloned().collect()}
+                        }))
+                    ),
+                    Object::Matrix(mtype) => Ok(Object::Matrix(map_mv!((mtype, Matrix) -> MatrixType {m => m.transpose()}))),
+                    other => Err(format!("Wrong type for argument of function 'transpose' (expected Vector or Matrix, got {other})."))
+                }
+                .map(|value| Status{value, warnings})
+            }
+        }),
+        (1, 0, 1)
+    ),
     // LU
     (
         Box::new(|evaluated_args, unevaluated_args, _| {
@@ -199,13 +270,15 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, u
                     evaluated_args.len()
                 ))
             } else {
-                if let Object::Matrix(mat) = &evaluated_args[0] {
-                    mat.lu_decomposition()
-                    .ok_or("No LU decomposition exists for this matrix.".to_string())
-                    .map(|(l, u)| Status{
-                        value: Object::Tuple(vec![Object::Matrix(l), Object::Matrix(u)]),
-                        warnings
-                    })
+                if let Object::Matrix(mtype) = &evaluated_args[0] {
+                    dispatch_matrix!(mtype, mat => 
+                        mat.lu_decomposition()
+                        .ok_or("No LU decomposition exists for this matrix.".to_string())
+                        .map(|(l, u)| Status{
+                            value: Object::Tuple(vec![Object::Matrix(l.wrap_in_type()), Object::Matrix(u.wrap_in_type())]),
+                            warnings
+                        })
+                    )
                 } else {
                     Err("Wrong type for argument of function 'LU' (expected Matrix).".to_string())
                 }
@@ -230,17 +303,19 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, u
                     evaluated_args.len()
                 ))
             } else {
-                if let Object::Matrix(mat) = &evaluated_args[0] {
-                    mat.plu_decomposition()
-                    .ok_or("No partial LU decomposition exists for this matrix, i.e. the matrix isn't invertible.".to_string())
-                    .map(|(p, l, u)| Status{
-                        value: Object::Tuple(vec![
-                            Object::Matrix(permutation_to_matrix(&p)),
-                            Object::Matrix(l),
-                            Object::Matrix(u)
-                        ]),
-                        warnings
-                    })
+                if let Object::Matrix(mtype) = &evaluated_args[0] {
+                    dispatch_matrix!(mtype, mat =>
+                        mat.plu_decomposition()
+                        .ok_or("No partial LU decomposition exists for this matrix, i.e. the matrix isn't invertible.".to_string())
+                        .map(|(p, l, u)| Status{
+                            value: Object::Tuple(vec![
+                                Object::Matrix(MatrixType::Real(p.to_matrix())),
+                                Object::Matrix(l.wrap_in_type()),
+                                Object::Matrix(u.wrap_in_type())
+                            ]),
+                            warnings
+                        })
+                    )
                 } else {
                     Err("Wrong type for argument of function 'PLU' (expected Matrix).".to_string())
                 }
@@ -265,18 +340,20 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, u
                     evaluated_args.len()
                 ))
             } else {
-                if let Object::Matrix(mat) = &evaluated_args[0] {
-                    mat.lu_decomposition_full_pivot()
-                    .ok_or("The given matrix isn't square.".to_string())
-                    .map(|(l, u, p, q)| Status{
-                        value: Object::Tuple(vec![
-                            Object::Matrix(permutation_to_matrix(&p)),
-                            Object::Matrix(permutation_to_matrix(&q)),
-                            Object::Matrix(l),
-                            Object::Matrix(u)
-                        ]),
-                        warnings
-                    })
+                if let Object::Matrix(mtype) = &evaluated_args[0] {
+                    dispatch_matrix!(mtype, mat =>
+                        mat.lu_decomposition_full_pivot()
+                        .ok_or("The given matrix isn't square.".to_string())
+                        .map(|(l, u, p, q)| Status{
+                            value: Object::Tuple(vec![
+                                Object::Matrix(MatrixType::Real(p.to_matrix())),
+                                Object::Matrix(MatrixType::Real(q.to_matrix())),
+                                Object::Matrix(l.wrap_in_type()),
+                                Object::Matrix(u.wrap_in_type())
+                            ]),
+                            warnings
+                        })
+                    )
                 } else {
                     Err("Wrong type for argument of function 'FPLU' (expected Matrix).".to_string())
                 }
@@ -335,24 +412,27 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, u
                     env
                 ).and_then(|s| s.try_map(|o| o.expect_matrix()))
             )?;
-            if k_a >= matrices[0].m() {
-                return Err(format!("Index out of range: row {k_a} isn't accessible in matrix of size {}x{}.", matrices[0].m(), matrices[0].n()));
+            if k_a >= dispatch_matrix!(&matrices[0], m => m.m()) {
+                return Err(format!("Index out of range: row {k_a} isn't accessible in matrix of size {}x{}.", dispatch_matrix!(&matrices[0], m => m.m()), dispatch_matrix!(&matrices[0], m => m.n())));
             }
-            if k_bp1 >= matrices.last().unwrap().n() {
+            if k_bp1 >= dispatch_matrix!(matrices.last().unwrap(), m => m.n()) {
                 // unwraps here are safe because the check `if i_range.is_empty() {return}` ensures `matrices` has at least one element.
-                return Err(format!("Index out of range: column {k_bp1} isn't accessible in matrix of size {}x{}.", matrices.last().unwrap().m(), matrices.last().unwrap().n()));
+                return Err(format!("Index out of range: column {k_bp1} isn't accessible in matrix of size {}x{}.", dispatch_matrix!(matrices.last().unwrap(), m => m.m()), dispatch_matrix!(matrices.last().unwrap(), m => m.n())));
             }
             let mut ranges = vec![vec![evaluated_args[0].expect_nonnegative_int()?]]; // k_a only takes the provided value
             // Every k_s, a<s<=b, ranges from 1 to m(s) (or in index notation, 0 to m(s)-1)
-            ranges.extend(matrices.iter().skip(1).map(|x| (0..x.m()).collect()));
+            ranges.extend(matrices.iter().skip(1).map(|x| (0..dispatch_matrix!(x, m => m.m())).collect()));
             ranges.push(vec![evaluated_args[1].expect_nonnegative_int()?]); // k_{b+1} has its fixed value again
-            Ok(Status{
-                value: Object::Real(ranges.into_iter().multi_cartesian_product()
+            let res: Complex<f64> = ranges
+                .into_iter()
+                .multi_cartesian_product()
                 .map(|multiindex| i_range.iter().fold(
-                    1.0,
-                    |acc, s| acc * matrices[*s].get(multiindex[*s], multiindex[*s+1])
+                    Complex::<f64>::one(),
+                    |acc, s| dispatch_matrix!(&matrices[*s], m => acc.mul(m.get(multiindex[*s], multiindex[*s+1])))
                 ))
-                .sum()),
+                .sum();
+            Ok(Status{
+                value: res.to_obj(),
                 warnings
             })
         }),

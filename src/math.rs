@@ -13,17 +13,22 @@ pub mod differentiation;
 pub mod env;
 pub mod expressions;
 pub mod integration;
-pub mod matrices_and_vectors;
+pub mod matrices;
 pub mod objects;
 pub mod operations;
 pub mod optimization;
+pub mod permutations;
+pub mod traits;
 pub mod utils;
+pub mod vectors;
 
 pub use crate::math::complex::Complex;
 pub use crate::math::env::{Env, VarStack, VarStackLookup};
 pub use crate::math::expressions::Expression;
-pub use crate::math::matrices_and_vectors::{Matrix, Vector};
+pub use crate::math::matrices::Matrix;
 pub use crate::math::objects::{DirectFunction, FunctionRepr, Object, ObjType};
+pub use crate::math::permutations::Permutation;
+pub use crate::math::vectors::Vector;
 
 /// Set this constant such that `BLOCK^2 * 8` fits in your L1 Cache. Find out the capacity of the latter by running `sudo lshw -C memory`.
 /// 

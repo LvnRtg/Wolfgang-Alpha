@@ -1,114 +1,191 @@
-use std::ops;
+use std::fmt::{Debug, Display};
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct Complex {
-    pub real: f64,
-    pub imag: f64
+use crate::math::Object;
+use crate::math::traits::*;
+use crate::math::utils::approx_eq;
+
+mod ops;
+
+
+#[derive(Copy, Clone, PartialEq)]
+pub struct Complex<T: Float> {
+    pub real: T,
+    pub imag: T
 }
 
-impl std::fmt::Display for Complex {
+impl<T: Float + Display> Display for Complex<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} + {}*i", self.real, self.imag)
     }
 }
+impl<T: Float + Debug> Debug for Complex<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "({:?}) + ({:?})*i", self.real, self.imag)
+    }
+}
 
-impl std::default::Default for Complex {
+impl<T: Float> std::default::Default for Complex<T> {
     fn default() -> Self {
-        Complex { real: 0.0, imag: 0.0 }
+        Complex::<T>::zero()
     }
 }
 
-impl ops::Neg for &Complex {
-    type Output = Complex;
-    fn neg(self) -> Self::Output {
-        Complex { real: -self.real, imag: -self.imag }
+impl<T: Float> Complex<T> {
+    pub fn i() -> Complex<T> {
+        Complex { real: T::zero(), imag: T::one() }
     }
-}
-impl ops::Add<&Complex> for &Complex {
-    type Output = Complex;
-    fn add(self, rhs: &Complex) -> Self::Output {
-        Complex { real: self.real + rhs.real, imag: self.imag + rhs.imag }
-    }
-}
-impl ops::AddAssign<&Complex> for Complex {
-    fn add_assign(&mut self, rhs: &Complex) {
-        self.real += rhs.real;
-        self.imag += rhs.imag;
-    }
-}
-impl ops::Sub<&Complex> for &Complex {
-    type Output = Complex;
-    fn sub(self, rhs: &Complex) -> Self::Output {
-        Complex { real: self.real - rhs.real, imag: self.imag - rhs.imag }
-    }
-}
-impl ops::SubAssign<&Complex> for Complex {
-    fn sub_assign(&mut self, rhs: &Complex) {
-        self.real -= rhs.real;
-        self.imag -= rhs.imag;
-    }
-}
-impl ops::Mul<&Complex> for &Complex {
-    type Output = Complex;
-    fn mul(self, rhs: &Complex) -> Self::Output {
-        Complex {
-            real: self.real * rhs.real - self.imag * rhs.imag,
-            imag: self.real * rhs.imag + self.imag * rhs.real
-        }
-    }
-}
-impl ops::MulAssign<&Complex> for Complex {
-    fn mul_assign(&mut self, rhs: &Complex) {
-        *self = Complex {
-            real: self.real * rhs.real - self.imag * rhs.imag,
-            imag: self.real * rhs.imag + self.imag * rhs.real
-        };
-    }
-}
-impl ops::Div<&Complex> for &Complex {
-    type Output = Complex;
-    #[allow(clippy::suspicious_arithmetic_impl)]
-    fn div(self, rhs: &Complex) -> Self::Output {
-        self * &rhs.inv()
-    }
-}
-impl ops::DivAssign<&Complex> for Complex {
-    #[allow(clippy::suspicious_op_assign_impl)]
-    fn div_assign(&mut self, rhs: &Complex) {
-        *self *= &rhs.inv();
-    }
-}
 
-impl Complex {
-    pub fn conjugate(&self) -> Complex {
-        Complex { real: self.real, imag: -self.imag }
+    pub fn conjugate(&self) -> Complex<T> {
+        Complex { real: self.real, imag: self.imag.neg() }
     }
 
     /// Computes the inverse of `self`.
-    pub fn inv(&self) -> Complex {
-        let x = self.real.powi(2) + self.imag.powi(2);
-        Complex { real: self.real / x, imag: -self.imag / x }
+    pub fn inv(&self) -> Complex<T> {
+        let x = self.real.powi(2).add(self.imag.powi(2));
+        Complex { real: self.real.div(x), imag: self.imag.neg().div(x) }
     }
 
-    pub fn modulus(&self) -> f64 {
-        (self.real.powi(2) + self.imag.powi(2)).sqrt()
+    pub fn modulus(&self) -> T {
+        self.real.powi(2).add(self.imag.powi(2)).sqrt()
     }
 
     /// Computes the argument (in radian) of the given complex number `a + bi`.
     /// We use the convention `arg(z) ∈ (-π, π]`.
-    pub fn arg(&self) -> f64 {
+    pub fn arg(&self) -> T {
         self.imag.atan2(self.real)
     }
 
     /// Computes `exp(a + bi)` using Euler's formula.
-    pub fn exp(&self) -> Complex {
+    pub fn exp(&self) -> Complex<T> {
         let x = self.real.exp();
-        Complex { real: x * self.imag.cos(), imag: x * self.imag.sin() }
+        Complex { real: x.mul(self.imag.cos()), imag: x.mul(self.imag.sin()) }
     }
 
-    /// Computes `self ^ exponent`.
-    pub fn pow(&self, exponent: &Complex) -> Complex {
-        // z^w = exp(w * ln(z)) = exp(w * (ln(|z|) + i * arg(z)));
-        (exponent * &Complex { real: self.modulus().ln(), imag: self.arg() }).exp()
+    pub fn ln(&self) -> Complex<T> {
+        Complex { real: self.modulus().ln(), imag: self.arg() }
+    }
+
+    pub fn cos(&self) -> Complex<T> {
+        Complex { real: self.real.cos().mul(self.imag.cosh()), imag: self.real.sin().mul(self.imag.sinh()).neg() }
+    }
+    pub fn sin(&self) -> Complex<T> {
+        Complex { real: self.real.sin().mul(self.imag.cosh()), imag: self.real.cos().mul(self.imag.sinh()) }
+    }
+    pub fn tan(&self) -> Complex<T> {
+        let denom = self.real.mul(T::from_usize(2))
+        .cos()
+        .add(
+            self.imag.mul(T::from_usize(2))
+            .cosh()
+        );
+        Complex {
+            real: self.real.mul(T::from_usize(2)).sin().div(denom),
+            imag: self.imag.mul(T::from_usize(2)).sinh().div(denom)
+        }
+    }
+    pub fn cosh(&self) -> Complex<T> {
+        Complex { real: self.real.cosh().mul(self.imag.cos()), imag: self.real.sinh().mul(self.imag.sin()) }
+    }
+    pub fn sinh(&self) -> Complex<T> {
+        Complex { real: self.real.sinh().mul(self.imag.cos()), imag: self.real.cosh().mul(self.imag.sin()) }
+    }
+    pub fn tanh(&self) -> Complex<T> {
+        let denom = self.real.mul(T::from_usize(2))
+        .cosh()
+        .add(
+            self.imag.mul(T::from_usize(2))
+            .cos()
+        );
+        Complex {
+            real: self.real.mul(T::from_usize(2)).sinh().div(denom),
+            imag: self.imag.mul(T::from_usize(2)).sin().div(denom)
+        }
+    }
+    pub fn acos(&self) -> Complex<T> {
+        Complex::i()
+        .neg()
+        .mul(
+            self
+            .add(
+                self.mul(*self)
+                .sub(T::one())
+                .sqrt()
+            )
+            .ln()
+        )
+    }
+    pub fn asin(&self) -> Complex<T> {
+        Complex::i()
+        .neg()
+        .mul(
+            Complex::i().mul(*self)
+            .add(
+                Complex::one()
+                .sub(self.mul(*self))
+                .sqrt()
+            )
+            .ln()
+        )
+    }
+    pub fn atan(&self) -> Complex<T> {
+        Complex::one().add(
+            Complex::i().mul(*self)
+        )
+        .div(
+            Complex::one().sub(Complex::i().mul(*self))
+        )
+        .ln()
+        .div(
+            Complex::i().mul(T::from_usize(2))
+        )
+    }
+    pub fn acosh(&self) -> Complex<T> {
+        self
+        .add(
+            self.add(T::one()).sqrt()
+            .mul(
+                self.sub(T::one()).sqrt()
+            )
+        )
+        .ln()
+    }
+    pub fn asinh(&self) -> Complex<T> {
+        self
+        .add(
+            self
+            .mul(*self)
+            .add(T::one())
+            .sqrt()
+        )
+        .ln()
+    }
+    pub fn atanh(&self) -> Complex<T> {
+        Complex::one().add(*self)
+        .div(Complex::one().sub(*self))
+        .ln()
+        .div(T::from_usize(2))
+    }
+    pub fn atan2(&self, x: Complex<T>) -> Complex<T> {
+        Complex::<T>::i().inv().mul((x.add(Complex::<T>::i().mul(*self)).div(x.sub(Complex::<T>::i().mul(*self)))).ln().div(T::from_usize(2)))
+    }
+
+    /// Returns the square root of `self` with non-negative real part.
+    pub fn sqrt(&self) -> Complex<T> {
+        let z = self.modulus();
+        // Formula: sqrt(a + ib) = ±(sqrt((z+a)/2) + i * sign(b) * sqrt((z-a)/2))
+        Complex {
+            real: z.add(self.real).div(T::from_usize(2)).sqrt(),
+            imag: self.imag.normalized().mul(z.sub(self.real).div(T::from_usize(2)).sqrt())
+        }
+    }
+}
+
+impl Complex<f64> {
+    pub fn to_obj(self) -> Object {
+        if approx_eq(self.imag, 0.0) {
+            Object::Real(self.real)
+        } else {
+            Object::Complex(self)
+        }
     }
 }

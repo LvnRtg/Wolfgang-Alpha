@@ -1,15 +1,17 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use crate::{defaults, expr_1arg_func, expr_binop, expr_compare, expr_if_else, expr_unary_op};
+use crate::{defaults, dispatch_matrix, dispatch_vector, expr_1arg_func, expr_binop, expr_compare, expr_if_else, expr_unary_op, ok};
 use crate::lang::eval;
-use crate::math::{Env, Expression, FunctionRepr, integration, Object, ObjType, Matrix, VarStack, Vector};
+use crate::math::{Env, Expression, FunctionRepr, integration, Object, ObjType, VarStack};
 use crate::math::expressions::Repeat;
 use crate::math::expressions::simplification::*;
-use crate::math::matrices_and_vectors::{VectorNorm, MatrixNorm};
+use crate::math::matrices::MatrixNorm;
 use crate::math::operations::{BinaryOperation, Comparison, FoldedOperation, UnaryOperation};
 use crate::math::operations::folded_operations::{compute_folded_operation, compute_product_derivative_helper};
-use crate::math::utils::{approx_eq, min};
+use crate::math::traits::*;
+use crate::math::utils;
+use crate::math::vectors::VectorNorm;
 use crate::status::{ExtResult, Status};
 
 
@@ -53,7 +55,7 @@ pub fn apply_seq_of_partial_derivatives(expr: &Expression, seq: &[(String, Repea
         )
         .map(|value| Status{value, warnings})
     } else {
-        Ok(Status::ok(expr.clone()))
+        ok!(expr.clone())
     }
 }
 
@@ -95,9 +97,9 @@ pub fn analytic_partial_derivative(
     env: &mut Env
 ) -> Result<Status<Expression>, String> {
     match expr {
-        Expression::None => Ok(Status::ok(Expression::None)),
-        Expression::Identifier(ident) => Ok(Status::ok(Expression::Number(if ident == wrt { 1.0 } else { 0.0 }))),
-        Expression::Number(_) => Ok(Status::ok(Expression::Number(0.0))),
+        Expression::None => ok!(Expression::None),
+        Expression::Identifier(ident) => ok!(Expression::Number(if ident == wrt { 1.0 } else { 0.0 })),
+        Expression::Number(_) => ok!(Expression::Number(0.0)),
         Expression::Tuple(entries) => Status::from_iter(
             entries.iter(),
             |x| analytic_partial_derivative(x, wrt, extra_vars, env)
@@ -121,7 +123,7 @@ pub fn analytic_partial_derivative(
             // We use: d/dx x! = Γ'(x+1) = \int_0^\infty e^{-t} t^x ln(t) dt
             //      => d/dx f(x)! = f'(x) * \int_0^\infty e^{-t} t^{f(x)} ln(t) dt
             let wrt = inner.get_new_free_identifier("t");
-            Ok(Status::ok(Expression::Integral(
+            ok!(Expression::Integral(
                 Box::new(expr_binop!(
                     expr_1arg_func!("exp", expr_unary_op!(Neg, Expression::Identifier(wrt.clone()))),
                     Mul,
@@ -131,7 +133,7 @@ pub fn analytic_partial_derivative(
                 Box::new(Expression::Number(0.0)),
                 Box::new(Expression::Identifier("inf".to_string())),
                 wrt
-            )))
+            ))
         }
         Expression::UnaryOperation(UnaryOperation::Abs, rhs) => analytic_partial_derivative(rhs, wrt, extra_vars, env)
         .map(|s| s.map(
@@ -155,7 +157,7 @@ pub fn analytic_partial_derivative(
                 Expression::Vector(components) => apd_of_norm_for_vector(wrt, opt, &components, extra_vars, env),
                 Expression::Matrix(m, n, components) => apd_of_norm_for_matrix(wrt, opt, &components, m, n, extra_vars, env),
                 _ if matches!(rhs_type, ObjType::Tuple | ObjType::NonObject) => Err(format!("Operation 'Norm' invalid for operand {:?}.", rhs_toplevel)),
-                other if rhs_type == ObjType::LiteralExpression => Ok(Status::ok(Expression::UnaryOperation(UnaryOperation::Norm(opt.clone()), Box::new(other)))),
+                other if rhs_type == ObjType::LiteralExpression => ok!(Expression::UnaryOperation(UnaryOperation::Norm(opt.clone()), Box::new(other))),
                 other => { // Scalar type
                     // In this case, the norm should simply be an absolute value, regardless of `opt`.
                     analytic_partial_derivative(&other, wrt, extra_vars, env)
@@ -324,7 +326,7 @@ pub fn analytic_partial_derivative(
         // For the directional derivative of a directional derivative, we must currently use numerical differentiation because directional derivatives can only be evaluated pointwise.
         // This might be extended later.
         Expression::DirectionalDerivative(inner_vars, inner_expr, inner_point, inner_direction) => {
-            Ok(Status::ok(Expression::Function(
+            ok!(Expression::Function(
                 "___diff_num".to_string(),
                 vec![
                     Expression::DirectionalDerivative(inner_vars.clone(), inner_expr.clone(), inner_point.clone(), inner_direction.clone()),
@@ -332,7 +334,7 @@ pub fn analytic_partial_derivative(
                     Expression::Identifier(wrt.clone()),
                     Expression::Number(1.0)
                 ]
-            )))
+            ))
         }
         Expression::Integral(inner, a, b, int_var) => {
             // Since we can't always exchange differentiation and integration, we proceed as follows. First,
@@ -356,7 +358,7 @@ pub fn analytic_partial_derivative(
                     ))
                 )
             } else {
-                Ok(Status::ok(
+                ok!(
                     Expression::Function(
                         "___diff_num".to_string(),
                         vec![
@@ -366,7 +368,7 @@ pub fn analytic_partial_derivative(
                             Expression::Number(1.0),
                         ]
                     )
-                ))
+                )
             }
         }
         Expression::IfElse(x, y, z) => Status::combine(
@@ -546,26 +548,39 @@ pub fn analytic_directional_derivative(
 ) -> ExtResult {
     match expr {
         Expression::None => Err("Cannot differentiate expression `None`.".to_string()),
-        Expression::Identifier(ident) => Ok(Status::ok(
+        Expression::Identifier(ident) => ok!(
             if let Some(i) = vars.iter().position(|n| n == ident) { direction[i].clone() } else { Object::Real(0.0) }
-        )),
-        Expression::Number(_) => Ok(Status::ok(Object::Real(0.0))),
+        ),
+        Expression::Number(_) => ok!(Object::Real(0.0)),
         Expression::Tuple(entries) => Status::from_iter(
             entries.iter(),
             |x| analytic_directional_derivative(vars, x, point, direction, extra_vars, env)
         ).map(|s| s.map(Object::Tuple)),
-        Expression::Vector(entries) => Status::from_iter(
-            entries.iter(),
-            |x| analytic_directional_derivative(vars, x, point, direction, extra_vars, env).and_then(|s| s.try_map(|o| o.expect_float()))
-        ).map(|s| s.map(
-            |values| Object::Vector(Vector{values})
-        )),
-        Expression::Matrix(m, n, entries) => Status::from_iter(
-            entries.iter(),
-            |x| analytic_directional_derivative(vars, x, point, direction, extra_vars, env).and_then(|s| s.try_map(|o| o.expect_float()))
-        ).map(|s| s.map(
-            |values| Object::Matrix(Matrix::from(*m, *n, values))
-        )),
+        Expression::Vector(entries) => {
+            let mut warnings = Vec::new();
+            Object::expect_scalar_vector(
+                entries.iter()
+                .map(
+                    |x|
+                    analytic_directional_derivative(vars, x, point, direction, extra_vars, env)
+                    .map(|s| s.unpack_into(&mut warnings))
+                )
+            )
+            .map(|value| Status{value, warnings})
+        }
+        Expression::Matrix(m, n, entries) => {
+            let mut warnings = Vec::new();
+            Object::expect_scalar_matrix(
+                *m, *n,
+                entries.iter()
+                .map(
+                    |x|
+                    analytic_directional_derivative(vars, x, point, direction, extra_vars, env)
+                    .map(|s| s.unpack_into(&mut warnings))
+                )
+            )
+            .map(|value| Status{value, warnings})
+        }
         Expression::UnaryOperation(UnaryOperation::Neg, rhs)
             => analytic_directional_derivative(vars, rhs, point, direction, extra_vars, env)?.neg(),
         Expression::UnaryOperation(UnaryOperation::Not, _) => Err("Cannot differentiate the operation `Not`.".to_string()),
@@ -600,7 +615,7 @@ pub fn analytic_directional_derivative(
                 Object::Real(x) => if x > 0.0 {
                     Ok(diff_r)
                 } else if x < 0.0 {
-                    -&diff_r
+                    diff_r.neg()
                 } else {
                     Ok(Object::Undefined)
                 },
@@ -615,36 +630,40 @@ pub fn analytic_directional_derivative(
             let Status{value: diff_l, mut warnings} = analytic_directional_derivative(vars, lhs, point, direction, extra_vars, env)?;
             let diff_r = analytic_directional_derivative(vars, rhs, point, direction, extra_vars, env)?.unpack_into(&mut warnings);
             match op {
-                BinaryOperation::Add => diff_l + diff_r,
-                BinaryOperation::Sub => diff_l - diff_r,
+                BinaryOperation::Add => diff_l.add(diff_r),
+                BinaryOperation::Sub => diff_l.sub(diff_r),
                 BinaryOperation::Quo | BinaryOperation::Rem | BinaryOperation::And | BinaryOperation::Or => Err(format!("Cannot differentiate the operation `{op}`.")),
                 BinaryOperation::Mul => {
                     let varstack = extra_vars.with_multiple(vars.iter(), point.iter());
                     // f'(x) * g(x) + f(x) * g'(x)
-                    (diff_l * eval(rhs, &varstack, env)?)? // f'(x) * g(x)
-                    + (eval(lhs, &varstack, env)? * diff_r)?  // f(x) * g'(x)
+                    diff_l.mul(eval(rhs, &varstack, env)?)? // f'(x) * g(x)
+                    .add(eval(lhs, &varstack, env)?.mul(diff_r)?)  // f(x) * g'(x)
                 },
                 BinaryOperation::Div => {
                     let varstack = extra_vars.with_multiple(vars.iter(), point.iter());
                     let eval_rhs = eval(rhs, &varstack, env)?.unpack_into(&mut warnings);
                     // d/dx (f(x) / g(x)) = (f'(x)g(x) - f(x)g'(x)) / g(x)²
-                    ((&diff_l * &eval_rhs)? - (eval(lhs, &varstack, env)? * &diff_r)?)?
-                    / eval_rhs.squared()?.unpack_into(&mut warnings)
+                    diff_l.mul(&eval_rhs)?
+                    .sub(eval(lhs, &varstack, env)?.mul(diff_r)?)?
+                    .div(eval_rhs.squared()?.unpack_into(&mut warnings))
                 }
                 BinaryOperation::Pow(_) => {
                     let varstack = extra_vars.with_multiple(vars.iter(), point.iter());
                     let eval_lhs = eval(lhs, &varstack, env)?.unpack_into(&mut warnings);
                     let eval_rhs = eval(rhs, &varstack, env)?.unpack_into(&mut warnings);
                     // d/dx (f(x) ^ g(x)) = f(x)^(g(x)-1) * (f'(x)g(x) + f(x)g'(x)ln(f(x)))
-                    eval_lhs.pow_ref((&eval_rhs - Object::Real(1.0))?)?
-                    * (
-                        (diff_l * eval_rhs)?
-                        + match ((&eval_lhs * diff_r)?.unpack_into(&mut warnings), eval_lhs) {
-                            (Object::Real(x), _) if approx_eq(x, 0.0) => Object::Real(0.0),
-                            (l, Object::Real(x)) => (l * Object::Real(x.ln()))?.unpack_into(&mut warnings),
-                            _ => return Err(format!("Evaluation of {:?} is not of type `float`.", lhs)),
-                        }
-                    )?
+                    eval_lhs.pow_ref(((&eval_rhs).sub(Object::Real(1.0)))?)?
+                    .mul(
+                        diff_l
+                        .mul(eval_rhs)?
+                        .add(
+                            match ((&eval_lhs).mul(diff_r)?.unpack_into(&mut warnings), eval_lhs) {
+                                (Object::Real(x), _) if utils::approx_eq(x, 0.0) => Object::Real(0.0),
+                                (l, Object::Real(x)) => (l.mul(Object::Real(x.ln())))?.unpack_into(&mut warnings),
+                                _ => return Err(format!("Evaluation of {:?} is not of type `float`.", lhs)),
+                            }
+                        )?
+                    )
                 }
                 BinaryOperation::Comp(..) => Err(format!("Cannot differentiate comparison {:?}", expr)),
             }
@@ -665,11 +684,11 @@ pub fn analytic_directional_derivative(
             compute_folded_operation(
                 &FoldedOperation::Sum,
                 index_var,
-                |_, _| Ok(Status::ok(from_eval)),
+                |_, _| ok!(from_eval),
                 conditions.iter().map(|condition: &Expression| {
                     |_varstack: &VarStack<'_, '_>, _env: &mut Env| eval(condition, _varstack, _env)
                 }).collect(),
-                |_, _| Ok(Status::ok(Cow::Borrowed(&to_eval))),
+                |_, _| ok!(Cow::Borrowed(&to_eval)),
                 |_varstack, _env| analytic_directional_derivative(
                     vars,
                     inner,
@@ -805,7 +824,7 @@ pub fn analytic_directional_derivative(
                     env
                 )?.unpack_into(&mut warnings);
                 Ok(Status {
-                    value: ((hbx * dvb)? - (hax * dva)?)?.unpack_into(&mut warnings),
+                    value: hbx.mul(dvb)?.sub(hax.mul(dva)?)?.unpack_into(&mut warnings),
                     warnings
                 })
             } else {
@@ -863,32 +882,42 @@ pub fn numerical_directional_derivative<F: FnMut(&[Object], &[Expression], Optio
         Object::Undefined | Object::Success | Object::LiteralExpression(_) | Object::Tuple(_) => Err(format!("Point can't contain object of type {:?}.", x)),
         Object::Real(x) => Ok(x.abs()),
         Object::Complex(x) => Ok(x.modulus()),
-        Object::Vector(x) => Ok(x.norm(&VectorNorm::P(2.0))),
-        Object::Matrix(x) => x.norm(&MatrixNorm::Frobenius)
+        Object::Vector(x) => Ok(dispatch_vector!(x, v => v.norm(&VectorNorm::P(2.0)))),
+        Object::Matrix(x) => dispatch_matrix!(x, m => m.norm(&MatrixNorm::Frobenius))
     }).collect::<Result<Vec<_>, _>>()?;
-    let h = 1e-6 * (1.0 + min(norm_of_point.into_iter()).unwrap_or(0.0));
+    let h = 1e-6 * (1.0 + utils::min_of(norm_of_point.into_iter()).unwrap_or(0.0));
     for (i, coord) in point.iter_mut().enumerate() {
-        direction[i] = h * &direction[i]; // Spares us another operation later
-        *coord = (&*coord + &direction[i])?.unpack_into(&mut warnings); // point + h*direction
+        direction[i] = h.mul(&direction[i]); // Spares us another operation later
+        *coord = (&*coord).add(&direction[i])?.unpack_into(&mut warnings); // point + h*direction
     }
     let left_res = f(&point, &[], Some((extra_vars, env)))?.unpack_into(&mut warnings);
     for (i, coord) in point.iter_mut().enumerate() {
-        *coord = (&*coord - (2.0 * &direction[i]))?.unpack_into(&mut warnings);
+        *coord = (&*coord).sub((2.0).mul(&direction[i]))?.unpack_into(&mut warnings);
     }
     let right_res = f(&point, &[], Some((extra_vars, env)))?.unpack_into(&mut warnings);
     match (left_res, right_res) {
         (Object::Real(lhs), Object::Real(rhs)) => Ok(Object::Real((lhs - rhs) / (2.0 * h))),
-        (Object::Vector(lhs), Object::Vector(rhs)) => {
-            Ok(Object::Vector(
-                &(&lhs - &rhs).ok_or("Couldn't evaluate f(x+h) - f(x-h). Traceback: Vectors of different sizes returned.")?
-                / (2.0 * h)
-            ))
+        (Object::Vector(lhs_t), Object::Vector(rhs_t)) => {
+            Ok(Object::Vector(dispatch_vector!(lhs_t, lhs => dispatch_vector!(
+                rhs_t, rhs => {
+                    lhs
+                    .sub(rhs)
+                    .ok_or("Couldn't evaluate f(x+h) - f(x-h). Traceback: Vectors of different sizes returned.")?
+                    .div((2.0).mul(h))
+                    .wrap_in_type()
+                }
+            ))))
         }
-        (Object::Matrix(lhs), Object::Matrix(rhs)) => {
-            Ok(Object::Matrix(
-                &(&lhs - &rhs).ok_or("Couldn't evaluate f(x+h) - f(x-h). Traceback: Vectors of different sizes returned.")?
-                / (2.0 * h)
-            ))
+        (Object::Matrix(lhs_t), Object::Matrix(rhs_t)) => {
+            Ok(Object::Matrix(dispatch_matrix!(lhs_t, lhs => dispatch_matrix!(
+                rhs_t, rhs => {
+                    lhs
+                    .sub(rhs)
+                    .ok_or("Couldn't evaluate f(x+h) - f(x-h). Traceback: Matrices of different sizes returned.")?
+                    .div((2.0).mul(h))
+                    .wrap_in_type()
+                }
+            ))))
         }
         _ => Err("Couldn't evaluate f(x+h) - f(x-h). Traceback: Objects have different types.".to_string())
     }

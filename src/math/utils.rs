@@ -1,11 +1,10 @@
 //! Most functions in this module have for sole objective to simplify typing and enhance readability.
 
-use num_traits::NumCast;
-use std::collections::HashSet;
+use num_traits::{Euclid, Float, int::PrimInt, NumCast};
 
-use crate::math::Matrix;
 use crate::math::objects::{Object, try_operation};
 use crate::math::operations::BinaryOperation;
+use crate::math::traits::*;
 use crate::status::{ExtResult, Status};
 
 
@@ -13,54 +12,56 @@ const ABS_TOL: f64 = 1e-12;
 const REL_TOL: f64 = 1e-10;
 
 
-pub trait Quo<Rhs = Self> {
-    type Output;
-    fn quo(self, rhs: Rhs) -> Self::Output;
+pub fn quoi<T: Euclid + PrimInt>(x: T, y: T) -> T {
+    (x - (x.rem_euclid(&y))) / y
 }
-pub trait QuoAssign<Rhs = Self> {
-    fn quo_assign(&mut self, rhs: Rhs);
+pub fn quof<T: Euclid + Float>(x: T, y: T) -> T {
+    ((x - (x.rem_euclid(&y))) / y).round()
 }
-
 
 #[inline]
-pub fn approx_eq(x: f64, y: f64) -> bool {
+pub fn approx_eq<T: Scalar>(x: T, y: T) -> bool {
     // We use the criterion |x-y| <= max(ABS_TOL, REL_TOL * max(|x|, |y|))
-    (x-y).abs() <= ABS_TOL.max(REL_TOL * x.abs().max(y.abs()))
+    (x.sub(y)).abs() <= max(<T as Scalar>::UnderlyingFloat::from_f64(ABS_TOL), <T as Scalar>::UnderlyingFloat::from_f64(REL_TOL).mul(max(x.abs(), y.abs())))
 }
 
-pub fn quo(x: f64, y: f64) -> f64 {
-    ((x - (x.rem_euclid(y))) / y).round()
+pub fn max<T: PartialOrd>(x: T, y: T) -> T {
+    if x >= y {x} else {y}
+}
+pub fn min<T: PartialOrd>(x: T, y: T) -> T {
+    if x <= y {x} else {y}
 }
 
 #[inline]
 /// Returns the maximum of the given iterator. If the iterator is empty, returns `None`.
-pub fn max<T: PartialOrd>(iter: impl Iterator<Item = T>) -> Option<T> {
+pub fn max_of<T: PartialOrd>(iter: impl Iterator<Item = T>) -> Option<T> {
     iter.fold(None, |acc, x| match acc {
         None => Some(x),
         Some(m) => Some(if x > m { x } else { m }),
     })
 }
-
 #[inline]
 /// Returns the minimum of the given iterator. If the iterator is empty, returns `None`.
-pub fn min<T: PartialOrd>(iter: impl Iterator<Item = T>) -> Option<T> {
+pub fn min_of<T: PartialOrd>(iter: impl Iterator<Item = T>) -> Option<T> {
     iter.fold(None, |acc, x| match acc {
         None => Some(x),
-        Some(m) => Some(if x < m { x } else { m }),
+        Some(m) => Some(if m <= x { m } else { x }),
     })
 }
 
 #[inline]
 /// Returns the maximum absolute value of the given iterator of floats. If the iterator is empty, returns 0.0.
-pub fn max_abs<'a>(iter: impl Iterator<Item=&'a f64>) -> f64 {
-    iter.fold(0.0, |acc, x| f64::max(acc, x.abs()))
+pub fn max_abs_of<'a, T: 'a + Scalar>(iter: impl Iterator<Item=&'a T>) -> T::UnderlyingFloat {
+    iter.fold(T::UnderlyingFloat::zero(), |acc, x| {
+        max(acc, x.abs())
+    })
 }
 
 /// Returns the `i`-th row of `v` as slice where `n` is the length of a row.
 /// 
 /// The returned slice therefore has length `n`.
 #[inline]
-pub fn row(v: &[f64], i: usize, n: usize) -> &[f64] {
+pub fn row<T>(v: &[T], i: usize, n: usize) -> &[T] {
     &v[i * n .. (i+1) * n]
 }
 /// Returns the `j`-th column of `v` as iterator where `m` is the number of rows to take
@@ -68,55 +69,8 @@ pub fn row(v: &[f64], i: usize, n: usize) -> &[f64] {
 /// 
 /// The returned iterator therefore iterates over `m` elements.
 #[inline]
-pub fn col(v: &[f64], j: usize, m: usize, n: usize) -> std::iter::Map<std::ops::Range<usize>, impl FnMut(usize) -> f64> {
+pub fn col<T: Copy>(v: &[T], j: usize, m: usize, n: usize) -> std::iter::Map<std::ops::Range<usize>, impl FnMut(usize) -> T> {
     (0..m).map(move |i| v[i * n + j])
-}
-
-/// Returns whether the given permutation has even parity (`true`) or odd parity (`false`).
-/// 
-/// `permutation` must be a permutation of the vector `[0, ..., n-1]` for some `n`.
-pub fn permutation_parity(permutation: &[usize]) -> bool {
-    // Fact: a permutation is odd iff it has an odd number of even-length cycles.
-    let mut remaining: HashSet<usize> = HashSet::from_iter(0..permutation.len());
-    let mut is_even = true;
-    while let Some(&start) = remaining.iter().next() {
-        remaining.remove(&start);
-        let mut i = 1;
-        let mut curr = start;
-        while permutation[curr] != start {
-            i += 1;
-            curr = permutation[curr];
-            remaining.remove(&curr);
-        }
-        if i % 2 == 0 {
-            is_even = !is_even;
-        }
-    }
-    is_even
-}
-
-/// Converts the given permutation to a matrix `P` such that `P*A` permutes the rows of `A` according to the permutation
-/// and `A*P` permutes the columns of `A` according to the permutation.
-#[inline]
-pub fn permutation_to_matrix(permutation: &[usize]) -> Matrix {
-    Matrix::identity(permutation.len()).permute_rows(permutation).unwrap()
-}
-
-/// Returns the inverse permutation of `permutation`.
-pub fn transpose_permutation(permutation: &[usize]) -> Vec<usize> {
-    let mut inv = vec![0; permutation.len()];
-    for i in 0..permutation.len() {
-        inv[permutation[i]] = i;
-    }
-    inv
-}
-
-/// Acts like `format!("{:.decimals}", x)` but cuts off trailing zeros.
-pub fn format_trimmed(x: f64, decimals: usize) -> String {
-    let s = format!("{:.prec$}", x, prec = decimals);
-    let s = s.trim_end_matches('0');
-    let s = s.trim_end_matches('.');
-    s.to_string()
 }
 
 /// Splits the interval `[a, b]` into `n` uniformly spread points, the first of which equals `a` and the last of which equals `b`.
@@ -147,7 +101,7 @@ pub fn fold_res_obj_iter(mut iter: impl Iterator<Item=Result<Object, String>>, b
 pub fn expect_int<T: NumCast + Copy>(f: f64) -> Option<T> {
     let i = f.round();
     if approx_eq(f, i) {
-        Some(T::from(i).unwrap())
+        T::from(i)
     } else {
         None
     }
@@ -177,4 +131,42 @@ pub fn try_expect_exactly_one<T, E>(mut it: impl Iterator<Item=Result<T, E>>) ->
     } else {
         Ok(None)
     }
+}
+
+pub fn all_res<T, E, F: FnMut(T) -> Result<bool, E>>(it: impl Iterator<Item=T>, mut f: F) -> Result<bool, E> {
+    for t in it {
+        if !f(t)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+pub fn any_res<T, E, F: FnMut(T) -> Result<bool, E>>(it: impl Iterator<Item=T>, mut f: F) -> Result<bool, E> {
+    for t in it {
+        if f(t)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Contiguous slice dot product. Does not check if the dimensions of `a, b` match.
+#[inline]
+pub fn unchecked_dot<T, U, V>(a: &[T], b: &[U]) -> V
+where
+    T: Copy + Mul<U, Output=V>,
+    U: Copy,
+    V: std::iter::Sum<V>
+{
+    a.iter().zip(b.iter()).map(|(&x, &y)| x.mul(y)).sum()
+}
+/// Contiguous slice dot product. Does not check if the dimensions of `a, b` match.
+#[inline]
+pub fn unchecked_dot_iter<T, U, V>(a: std::iter::Map<std::ops::Range<usize>, impl FnMut(usize) -> T>, b: &[U]) -> V
+where
+    T: Mul<U, Output=V>,
+    U: Copy,
+    V: std::iter::Sum<V>
+{
+    a.zip(b.iter()).map(|(x, &y)| x.mul(y)).sum()
 }

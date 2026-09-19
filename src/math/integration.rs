@@ -1,14 +1,14 @@
-use num_traits::float::Float;
+use num_traits::Zero;
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::ops::{Add, AddAssign, Div, Mul, Neg};
 
-use crate::{expr_binop, expr_square, expr_unary_op};
+use crate::{expr_binop, expr_square, expr_unary_op, ok};
 use crate::lang::eval;
 use crate::math::{Env, Expression, Object, VarStack, VarStackLookup};
 use crate::math::differentiation;
 use crate::math::operations::{BinaryOperation, FoldedOperation, UnaryOperation};
 use crate::math::operations::folded_operations::FOLDED_OP_WARNING_CAP;
+use crate::math::traits::*;
 use crate::status::{ExtResult, Status};
 
 /// Approximates the integral `\int_a^b f(x) dx` by splitting `[a, b]` into
@@ -22,55 +22,68 @@ use crate::status::{ExtResult, Status};
 /// enough n, the error would be at most O(jump_height * (b-a) / n).
 /// 
 /// If `b < a`, return `-simpson_rule(f, b, a, n)`.
+/// 
+/// Returns `None` iff `usize` can't be converted to `T`.
 pub fn simpson_rule<F, T, U>(f: F, a: T, b: T, n: usize) -> U
-where F: Fn(T) -> U,
-      T: Float + AddAssign<T> + Div<f64, Output=T>,
-      U: AddAssign<U> + Mul<f64, Output=U> + Neg<Output=U> + Mul<T, Output=U> + Default {
+where
+    F: Fn(T) -> U,
+    T: Scalar + PartialOrd,
+    U: // Idea: `U` is an `Object` (float, vector, matrix, ...)
+        AddAssign<U>
+        + Neg<Output=U>
+        + Mul<T, Output=U>
+        + Div<T, Output=U>
+        + Zero
+{
     if n == 0 {
         // There is no return value that makes sense here, but we don't want to panic and this should never happen anyway (so `Option` would be unnecessary overhead).
-        return U::default();
+        return U::zero();
     }
-    if b < a {return -simpson_rule(f, b, a, n);}
-    let h: T = (b - a) / T::from(2 * n).unwrap(); // Safe: Float (f32/f64) can always represent any usize, possibly with precision loss
+    if b < a {return simpson_rule(f, b, a, n).neg();}
+    let h = b.sub(a).div(T::from_usize(2 * n));
     let mut x = a;
     let mut res = f(a);
     for _ in 0..(n-1) {
-        x += h;
-        res += f(x) * 4.;
-        x += h;
-        res += f(x) * 2.0;
+        x.add_assign(h);
+        res.add_assign(f(x).mul(T::from_usize(4)));
+        x.add_assign(h);
+        res.add_assign(f(x).mul(T::from_usize(2)));
     }
-    x += h;
-    res += f(x) * 4.0;
-    x += h;
-    res += f(x);
-    res * (h / 3.0)
+    x.add_assign(h);
+    res.add_assign(f(x).mul(T::from_usize(4)));
+    x.add_assign(h);
+    res.add_assign(f(x));
+    res.mul(h).div(T::from_usize(3))
 }
 /// Variant of `simpson_rule` where `f` outputs `Result` which is passed down on error.
 pub fn simpson_rule_result_variant<F, T, U>(mut f: F, a: T, b: T, n: usize) -> Result<Status<U>, String>
 where
     F: FnMut(T) -> Result<Status<U>, String>,
-    T: Float + AddAssign<T> + Div<f64, Output=T>,
-    U: Add<U, Output=Result<Status<U>, String>> + Mul<f64, Output=U> + Neg<Output=Result<U, String>> + Mul<T, Output=U>
+    T: Scalar + PartialOrd,
+    U:
+        Add<U, Output=Result<Status<U>, String>>
+        + Neg<Output=Result<U, String>>
+        + Mul<T, Output=U>
+        + Div<T, Output=U>
 {
     if b < a {
-        return simpson_rule_result_variant(f, b, a, n)?.neg(); // Type inference problem => use `.neg()` instead of `-`
+        return simpson_rule_result_variant(f, b, a, n).and_then(|s| s.try_map(|u| u.neg()));
     }
     let mut warnings = Vec::<String>::new();
-    let h: T = (b - a) / T::from(2 * n).unwrap(); // Safe: Float (f32/f64) can always represent any usize, possibly with precision loss
+    let h = b.sub(a).div(T::from_usize(2 * n));
     let mut x = a;
-    let mut res = f(a)?.unpack_into_with_cap(&mut warnings, 5);
+    let mut res = f(a)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP);
     for _ in 0..(n-1) {
-        x += h;
-        res = (res + (f(x)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP) * 4.0))?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP);
-        x += h;
-        res = (res + (f(x)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP) * 2.0))?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP);
+        x.add_assign(h);
+        res = (res.add(f(x)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP).mul(T::from_usize(4))))?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP);
+        x.add_assign(h);
+        res = (res.add(f(x)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP).mul(T::from_usize(2))))?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP);
     }
-    x += h;
-    res = (res + (f(x)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP) * 4.0))?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP);
-    x += h;
-    res = (res + f(x)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP))?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP);
-    Ok(Status{value: res * (h / 3.0), warnings})
+    x.add_assign(h);
+    res = (res.add(f(x)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP).mul(T::from_usize(4))))?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP);
+    x.add_assign(h);
+    res = (res.add(f(x)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP)))?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP);
+    Ok(Status{value: res.mul(h).div(T::from_usize(3)), warnings})
 }
 
 
@@ -87,7 +100,7 @@ where
 /// If `a = -∞` or `b = ∞`, we use a substitution trick to reduce to a finite interval.
 pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &VarStack, env: &mut Env) -> ExtResult {
     if a == f64::INFINITY || b == -f64::INFINITY {
-        return Ok(Status::ok(Object::Real(0.0)));
+        return ok!(Object::Real(0.0));
     }
     if a.is_finite() && b == f64::INFINITY {
         // Substitute φ(t) = t/(1-ct) for c:=1 if a!=-1 and c:=2 otherwise, leading to
@@ -204,30 +217,25 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
     }
 
     match expr {
-        Expression::None => Ok(Status::ok(Object::Undefined)),
+        Expression::None => ok!(Object::Undefined),
         Expression::Identifier(ident) => {
             if ident == wrt {
                 // Having to compute \int_a^b x dx doesn't tell us what the type of x is supposed to be, so we treat it as a real number.
-                Ok(Status::ok(Object::Real((b.powi(2) - a.powi(2)) / 2.0)))
+                ok!(Object::Real((b.powi(2) - a.powi(2)) / 2.0))
             } else {
-                Ok(Status::ok((b-a) * (extra_vars.lookup(ident).or_else(|| env.constants.get(ident)).ok_or(format!("No such variable `{}`.", ident))?)))
+                ok!((b-a).mul(extra_vars.lookup(ident).or_else(|| env.constants.get(ident)).ok_or(format!("No such variable `{}`.", ident))?))
             }
         }
-        Expression::Number(x) => Ok(Status::ok(Object::Real((b-a) * x))),
+        Expression::Number(x) => ok!(Object::Real((b-a) * x)),
         Expression::Vector(v) => {
             Status::from_iter(
                 v.iter(),
                 |e|
                 integrate(e, a, b, wrt, extra_vars, env)
-                .and_then(
-                    |s| s.and_then(
-                        |o| o.expect_float()
-                    )
-                )
             )
-            .map(
-                |s| s.map(
-                    |values| Object::Vector(crate::math::Vector{values})
+            .and_then(
+                |s| s.try_map(
+                    |values| Object::expect_scalar_vector(values.into_iter().map(Ok))
                 )
             )
         }
@@ -236,24 +244,19 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
                 v.iter(),
                 |e|
                 integrate(e, a, b, wrt, extra_vars, env)
-                .and_then(
-                    |s| s.and_then(
-                        |o| o.expect_float()
-                    )
-                )
             )
-            .map(
-                |s| s.map(
-                    |values| Object::Matrix(crate::math::Matrix::from(*m, *n, values))
+            .and_then(
+                |s| s.try_map(
+                    |values| Object::expect_scalar_matrix(*m, *n, values.into_iter().map(Ok))
                 )
             )
         }
         Expression::UnaryOperation(UnaryOperation::Neg, e) => integrate(e, a, b, wrt, extra_vars, env)?.neg(),
         Expression::BinaryOperation(lhs, BinaryOperation::Add, rhs) => {
-            integrate(lhs, a, b, wrt, extra_vars, env)? + integrate(rhs, a, b, wrt, extra_vars, env)?
+            integrate(lhs, a, b, wrt, extra_vars, env)?.add(integrate(rhs, a, b, wrt, extra_vars, env)?)
         }
         Expression::BinaryOperation(lhs, BinaryOperation::Sub, rhs) => {
-            integrate(lhs, a, b, wrt, extra_vars, env)? - integrate(rhs, a, b, wrt, extra_vars, env)?
+            integrate(lhs, a, b, wrt, extra_vars, env)?.sub(integrate(rhs, a, b, wrt, extra_vars, env)?)
         }
         // Only consider sums if all bounds do not include the integration variable (i.e. `w.r.t.`).
         Expression::FoldedOperation(FoldedOperation::Sum, index_var, from, conditions, to, inner)
@@ -309,7 +312,7 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
                 // Use `\int_a^b d/dx f(x) dx = f(b) - f(a)`
                 (
                     eval(inner, &extra_vars.with(wrt, Cow::Owned(Object::Real(b))), env)?
-                    - eval(inner, &extra_vars.with(wrt, Cow::Owned(Object::Real(a))), env)?
+                    .sub(eval(inner, &extra_vars.with(wrt, Cow::Owned(Object::Real(a))), env)?)
                 ).map(|s| Status{value: s.unpack_into(&mut warnings), warnings})
             } else {
                 // Use `\int_a^b d^n/dx^n f(x) dx = (d^{n-1}/dx^{n-1} f(x)|_b) - (d^{n-1}/dx^{n-1} f(x)|_a)`
@@ -323,7 +326,7 @@ pub fn integrate(expr: &Expression, a: f64, b: f64, wrt: &String, extra_vars: &V
                 Ok(Status {
                     value: (
                         eval(&new_inner, &extra_vars.with(wrt, Cow::Owned(Object::Real(b))), env)?
-                        - eval(&new_inner, &extra_vars.with(wrt, Cow::Owned(Object::Real(a))), env)?
+                        .sub(eval(&new_inner, &extra_vars.with(wrt, Cow::Owned(Object::Real(a))), env)?)
                     )?.unpack_into(&mut warnings),
                     warnings
                 })

@@ -3,15 +3,18 @@
 
 use rayon::prelude::*;
 
-use crate::math::{Matrix};
 use crate::math::BLOCK_SIZE;
+use crate::math::traits::Scalar;
+use super::Matrix;
+
 
 /// Somewhat arbitrary constant, no benchmarks done yet to fine-tune it.
 const PARALLELIZATION_THRESHOLD: usize = 16;
 
-impl Matrix {
+
+impl<T: Scalar> Matrix<T> {
     /// Transposes `self` using parallelization if `self` is large.
-    pub fn transpose(&self) -> Matrix {
+    pub fn transpose(&self) -> Matrix<T> {
         if self.m == 0 || self.n == 0 {
             Matrix::from(0, 0, vec![])
         } else if self.m.max(self.n) >= PARALLELIZATION_THRESHOLD {
@@ -24,9 +27,9 @@ impl Matrix {
     /// Computes `self^T` using simple blocking.
     /// 
     /// We use this method for smaller matrices.
-    fn transpose_simple(&self) -> Matrix {
+    fn transpose_simple(&self) -> Matrix<T> {
         let (m, n) = (self.m, self.n);
-        let mut out = vec![0.0f64; self.values.len()];
+        let mut out = vec![T::zero(); self.values.len()];
         for ib_start in (0..m).step_by(BLOCK_SIZE) {
             let i_end = (ib_start + BLOCK_SIZE).min(m);
             for jb_start in (0..n).step_by(BLOCK_SIZE) {
@@ -43,8 +46,8 @@ impl Matrix {
     /// Each chunk is a disjoint mutable slice, so no `unsafe` is needed.
     /// 
     /// We use this method for larger matrices.
-    fn transpose_parallel(&self) -> Matrix {
-        let mut out = vec![0.0f64; self.values.len()];
+    fn transpose_parallel(&self) -> Matrix<T> {
+        let mut out = vec![T::zero(); self.values.len()];
         out.par_chunks_mut(BLOCK_SIZE * self.m)
             .enumerate()
             .for_each(|(chunk_idx, out_chunk)| {
@@ -59,7 +62,7 @@ impl Matrix {
     /// which should represent rows `[j_start, j_end)` of the output packed contiguously.
     fn transpose_row_range_into_chunk(
         &self,
-        out_chunk: &mut [f64],
+        out_chunk: &mut [T],
         j_start: usize,
         j_end: usize,
     ) {
@@ -83,7 +86,7 @@ impl Matrix {
     /// tile small enough to stay resident in L1 while it's being written.
     fn transpose_tile(
         &self,
-        out: &mut [f64],
+        out: &mut [T],
         ib_start: usize,
         ib_end: usize,
         jb_start: usize,
@@ -103,7 +106,7 @@ impl Matrix {
     /// rows starting at `j_offset` (so row `j` lives at local row `j - j_offset`).
     fn transpose_tile_into_chunk(
         &self,
-        out_chunk: &mut [f64],
+        out_chunk: &mut [T],
         ib_start: usize,
         i_end: usize,
         jb_start: usize,

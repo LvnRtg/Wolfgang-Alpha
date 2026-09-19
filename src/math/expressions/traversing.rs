@@ -485,7 +485,7 @@ impl Expression {
                 .max(check_id(name)),
             Expression::PartialDerivative(wrt, expr) =>
                 expr.get_new_free_identifier_recursive(prefix, i)
-                .max(utils::max(wrt.iter().map(|(id, _)| check_id(id))).unwrap_or(0)),
+                .max(utils::max_of(wrt.iter().map(|(id, _)| check_id(id))).unwrap_or(0)),
             Expression::DirectionalDerivative(vars, expr, point, direction) =>
                 expr.get_new_free_identifier_recursive(prefix, i)
                 .max(point.iter().map(|v| v.get_new_free_identifier_recursive(prefix, i)).max().unwrap_or(i))
