@@ -107,7 +107,7 @@ impl<T: Scalar> Matrix<T> {
 
         for i in 0..n {
             // Find the pivot, i.e. the `r, c` corresponding to the largest `|a[r][c]|` in the trailing submatrix
-            let mut max_abs = T::UnderlyingFloat::zero();
+            let mut max_abs = T::UnderlyingReal::zero();
             let mut pivot_row = i;
             let mut pivot_col = i;
             for r in i..n {
@@ -120,7 +120,7 @@ impl<T: Scalar> Matrix<T> {
                     }
                 }
             }
-            if max_abs == T::UnderlyingFloat::zero() {
+            if max_abs == T::UnderlyingReal::zero() {
                 break; // Remaining submatrix is zero; decomposition is complete
             }
 

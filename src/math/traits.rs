@@ -62,11 +62,11 @@ pub trait Neg {
 }
 
 
-pub trait Float: Scalar<UnderlyingFloat=Self> + PartialOrd {}
+pub trait Real: Scalar<UnderlyingReal=Self> + PartialOrd {}
 
 /// Currently, this corresponds to a float (`f32` or `f64`) or `Complex`.
 /// 
-/// I did not simply use `num_traits::Float` because there are several added functions and "Float" doesn't
+/// I did not simply use `num_traits::Real` because there are several added functions and "Real" doesn't
 /// really correspond to complex values.
 /// 
 /// There are some methods included that are specifially required for the UI, not mathematical computations (e.g. `format_trimmed`).
@@ -84,26 +84,26 @@ pub trait Scalar:
     + MulAssign<Self>
     + DivAssign<Self>
     + Neg<Output=Self>
-    + Mul<Self::UnderlyingFloat, Output=Self>
-    + Div<Self::UnderlyingFloat, Output=Self>
-    + Rem<Self::UnderlyingFloat, Output=Self>
-    + Quo<Self::UnderlyingFloat, Output=Self>
-    + Pow<Self::UnderlyingFloat, Output=Self>
-    + MulAssign<Self::UnderlyingFloat>
-    + DivAssign<Self::UnderlyingFloat>
-    + RemAssign<Self::UnderlyingFloat>
-    + QuoAssign<Self::UnderlyingFloat>
-    + PowAssign<Self::UnderlyingFloat>
+    + Mul<Self::UnderlyingReal, Output=Self>
+    + Div<Self::UnderlyingReal, Output=Self>
+    + Rem<Self::UnderlyingReal, Output=Self>
+    + Quo<Self::UnderlyingReal, Output=Self>
+    + Pow<Self::UnderlyingReal, Output=Self>
+    + MulAssign<Self::UnderlyingReal>
+    + DivAssign<Self::UnderlyingReal>
+    + RemAssign<Self::UnderlyingReal>
+    + QuoAssign<Self::UnderlyingReal>
+    + PowAssign<Self::UnderlyingReal>
     + std::iter::Sum<Self>
 {
     /// `f32` or `f64`. E.g. for `Complex<f32>`, this would be `f32`.
-    type UnderlyingFloat: Float;
+    type UnderlyingReal: Real;
     
     fn from_f64(x: f64) -> Self;
     fn from_i32(x: i32) -> Self;
     fn from_usize(x: usize) -> Self;
 
-    fn to_complex(&self) -> Complex<Self::UnderlyingFloat>;
+    fn to_complex(&self) -> Complex<Self::UnderlyingReal>;
 
     fn min_positive() -> Self;
 
@@ -111,7 +111,7 @@ pub trait Scalar:
     fn is_zero(&self) -> bool;
     fn one() -> Self;
 
-    fn abs(&self) -> Self::UnderlyingFloat;
+    fn abs(&self) -> Self::UnderlyingReal;
     fn powi(&self, pow: i32) -> Self;
 
     /// Returns `self.abs() / self` (but generally, this can be computed in a more efficient way).

@@ -32,14 +32,14 @@ impl VectorNorm {
 
 impl<T: Scalar> Vector<T> {
     /// Returns the norm of this vector (w.r.t. the given norm).
-    pub fn norm(&self, norm_type: &VectorNorm) -> T::UnderlyingFloat {
+    pub fn norm(&self, norm_type: &VectorNorm) -> T::UnderlyingReal {
         match norm_type {
             VectorNorm::P(f64::INFINITY) => utils::max_abs_of(self.values.iter()),
             VectorNorm::P(p) => self.values.iter().map(
-                |x| x.abs().pow(T::UnderlyingFloat::from_f64(*p))
+                |x| x.abs().pow(T::UnderlyingReal::from_f64(*p))
             )
-            .sum::<T::UnderlyingFloat>()
-            .pow(T::UnderlyingFloat::from_f64(1.0 / *p)),
+            .sum::<T::UnderlyingReal>()
+            .pow(T::UnderlyingReal::from_f64(1.0 / *p)),
         }
     }
 
@@ -57,7 +57,7 @@ impl<T: Scalar> Vector<T> {
     
         let n = self.len();
         let supnorm = self.norm(&VectorNorm::P(f64::INFINITY));
-        if supnorm == T::UnderlyingFloat::zero() {
+        if supnorm == T::UnderlyingReal::zero() {
             return Ok(self.clone());
         }
     
@@ -69,7 +69,7 @@ impl<T: Scalar> Vector<T> {
         } else if p == f64::INFINITY {
             // Then, `q = 1`, so the dual is simply the unit vector pointing in direction `argmax_i |self[i]|`.
             // Generally, this "direction" is just `x / |x|`
-            let mut i: usize = 0; let mut highest_abs = T::UnderlyingFloat::zero();
+            let mut i: usize = 0; let mut highest_abs = T::UnderlyingReal::zero();
             for (j, x) in self.values.iter().enumerate() {
                 let abs = x.abs();
                 if abs > highest_abs {
@@ -84,7 +84,7 @@ impl<T: Scalar> Vector<T> {
             let q = 1.0 / (1.0 - (1.0 / p));
             let mut dual = Vector {
                 values: self.values.iter().map(
-                    |x| x.normalized().mul(x.div(supnorm).abs().pow(T::UnderlyingFloat::from_f64(p - 1.0)))
+                    |x| x.normalized().mul(x.div(supnorm).abs().pow(T::UnderlyingReal::from_f64(p - 1.0)))
                 ).collect()
             };
             let dual_norm = dual.norm(&VectorNorm::P(q));

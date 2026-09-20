@@ -22,7 +22,7 @@ pub fn quof<T: Euclid + Float>(x: T, y: T) -> T {
 #[inline]
 pub fn approx_eq<T: Scalar>(x: T, y: T) -> bool {
     // We use the criterion |x-y| <= max(ABS_TOL, REL_TOL * max(|x|, |y|))
-    (x.sub(y)).abs() <= max(<T as Scalar>::UnderlyingFloat::from_f64(ABS_TOL), <T as Scalar>::UnderlyingFloat::from_f64(REL_TOL).mul(max(x.abs(), y.abs())))
+    (x.sub(y)).abs() <= max(<T as Scalar>::UnderlyingReal::from_f64(ABS_TOL), <T as Scalar>::UnderlyingReal::from_f64(REL_TOL).mul(max(x.abs(), y.abs())))
 }
 
 pub fn max<T: PartialOrd>(x: T, y: T) -> T {
@@ -51,8 +51,8 @@ pub fn min_of<T: PartialOrd>(iter: impl Iterator<Item = T>) -> Option<T> {
 
 #[inline]
 /// Returns the maximum absolute value of the given iterator of floats. If the iterator is empty, returns 0.0.
-pub fn max_abs_of<'a, T: 'a + Scalar>(iter: impl Iterator<Item=&'a T>) -> T::UnderlyingFloat {
-    iter.fold(T::UnderlyingFloat::zero(), |acc, x| {
+pub fn max_abs_of<'a, T: 'a + Scalar>(iter: impl Iterator<Item=&'a T>) -> T::UnderlyingReal {
+    iter.fold(T::UnderlyingReal::zero(), |acc, x| {
         max(acc, x.abs())
     })
 }

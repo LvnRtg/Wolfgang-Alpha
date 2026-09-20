@@ -51,7 +51,7 @@ impl<T: Scalar> Matrix<T> {
     /// `p` must be at least one and may be `f64::INFINITY`. The matrix `self` does not have any constraints. `tolerance` is recommended to be `1e-10`.
     /// 
     /// This method does not treat the cases `p=1.0`, `p=2.0` and `p=f64::INFINITY` separately. For those, call `self.norm`.
-    fn pnorm(&self, p: f64, tolerance: f64) -> Result<T::UnderlyingFloat, String> {
+    fn pnorm(&self, p: f64, tolerance: f64) -> Result<T::UnderlyingReal, String> {
         // All `unwrap`s below are safe because the dimensions of the operands fit.
         let q = if p == 1.0 {
             f64::INFINITY
@@ -68,7 +68,7 @@ impl<T: Scalar> Matrix<T> {
             let (c, s) = if k == 0 {
                 (T::one(), T::zero())
             } else {
-                let mut best_f = T::UnderlyingFloat::zero();
+                let mut best_f = T::UnderlyingReal::zero();
                 let mut best_c = T::one();
                 let mut best_s = T::zero();
                 for i in 0..samples {
@@ -106,7 +106,7 @@ impl<T: Scalar> Matrix<T> {
             let dv_y = y.dual(p)?;
             let z = self.transpose().mul(&dv_y).unwrap();
             let z_q_norm = z.norm(&VectorNorm::P(q));
-            if iter > 1 && (z_q_norm < (&z).mul(x).unwrap().abs() || est.sub(eo).abs() <= <T::UnderlyingFloat as Scalar>::UnderlyingFloat::from_f64(tolerance).mul(est)) {
+            if iter > 1 && (z_q_norm < (&z).mul(x).unwrap().abs() || est.sub(eo).abs() <= <T::UnderlyingReal as Scalar>::UnderlyingReal::from_f64(tolerance).mul(est)) {
                 break;
             }
             x = z.dual(q)?;
@@ -115,21 +115,21 @@ impl<T: Scalar> Matrix<T> {
     }
     
     /// Returns the norm of the given matrix. The norm of a 0x0 matrix is set to be zero.
-    pub fn norm(&self, norm_type: &MatrixNorm) -> Result<T::UnderlyingFloat, String> {
+    pub fn norm(&self, norm_type: &MatrixNorm) -> Result<T::UnderlyingReal, String> {
         match norm_type {
             // The sup-norm is simply the highest row sum, i.e. \max_i \sum_{j=1}^n |a_{i,j}|
             MatrixNorm::P(f64::INFINITY) => Ok(utils::max_of(
                 (0..self.m).map(
                     |i| self.row_slice(i).iter().map(|x| x.abs()).sum()
                 )
-            ).unwrap_or(T::UnderlyingFloat::zero())),
+            ).unwrap_or(T::UnderlyingReal::zero())),
             // The 1-norm is the highest column sum. We take a different approach than above to improve cache locality.
             MatrixNorm::P(1.0) => {
-                let mut sums = vec![T::UnderlyingFloat::zero(); self.n];
+                let mut sums = vec![T::UnderlyingReal::zero(); self.n];
                 for i in 0..self.m {
                     sums.iter_mut().enumerate().for_each(|(j, x)| x.add_assign(self.get(i, j).abs()));
                 }
-                Ok(utils::max_of(sums.into_iter()).unwrap_or(T::UnderlyingFloat::zero()))
+                Ok(utils::max_of(sums.into_iter()).unwrap_or(T::UnderlyingReal::zero()))
             }
             MatrixNorm::P(2.0) => {
                 match self.gram_matrix().eigenvalues() {
@@ -139,7 +139,7 @@ impl<T: Scalar> Matrix<T> {
                                 |x| x.modulus()
                             )
                         )
-                        .unwrap_or(T::UnderlyingFloat::zero())
+                        .unwrap_or(T::UnderlyingReal::zero())
                         .sqrt()
                     ),
                     // `None` means the matrix isn't square.
@@ -150,7 +150,7 @@ impl<T: Scalar> Matrix<T> {
                 self.pnorm(*p, 1e-10)
             }
             MatrixNorm::P(other) => Err(format!("Parameter `p` must be at least 1 (got {:?}).", other)),
-            MatrixNorm::Frobenius => Ok(self.values.iter().map(|x| x.abs().pow(T::UnderlyingFloat::from_usize(2))).sum::<T::UnderlyingFloat>().sqrt())
+            MatrixNorm::Frobenius => Ok(self.values.iter().map(|x| x.abs().pow(T::UnderlyingReal::from_usize(2))).sum::<T::UnderlyingReal>().sqrt())
         }
     }
 }

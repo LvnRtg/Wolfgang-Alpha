@@ -8,29 +8,29 @@ mod ops;
 
 
 #[derive(Copy, Clone, PartialEq)]
-pub struct Complex<T: Float> {
+pub struct Complex<T: Real> {
     pub real: T,
     pub imag: T
 }
 
-impl<T: Float + Display> Display for Complex<T> {
+impl<T: Real + Display> Display for Complex<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} + {}*i", self.real, self.imag)
     }
 }
-impl<T: Float + Debug> Debug for Complex<T> {
+impl<T: Real + Debug> Debug for Complex<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "({:?}) + ({:?})*i", self.real, self.imag)
     }
 }
 
-impl<T: Float> std::default::Default for Complex<T> {
+impl<T: Real> std::default::Default for Complex<T> {
     fn default() -> Self {
         Complex::<T>::zero()
     }
 }
 
-impl<T: Float> Complex<T> {
+impl<T: Real> Complex<T> {
     pub fn i() -> Complex<T> {
         Complex { real: T::zero(), imag: T::one() }
     }
@@ -136,7 +136,7 @@ impl<T: Float> Complex<T> {
         )
         .ln()
         .div(
-            Complex::i().mul(T::from_usize(2))
+            Complex::<T>::i().mul(T::from_usize(2))
         )
     }
     pub fn acosh(&self) -> Complex<T> {

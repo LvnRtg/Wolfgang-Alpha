@@ -22,13 +22,13 @@ macro_rules! pull_complex_functions_inside {
 macro_rules! impl_scalar_for_float {
     ($f:ty) => { paste! {
         impl Scalar for $f {
-            type UnderlyingFloat = $f;
+            type UnderlyingReal = $f;
 
             fn from_f64(x: f64) -> Self { x as $f }
             fn from_i32(x: i32) -> Self { x as $f }
             fn from_usize(x: usize) -> Self { x as $f }
 
-            fn to_complex(&self) -> Complex<Self::UnderlyingFloat> {
+            fn to_complex(&self) -> Complex<Self::UnderlyingReal> {
                 Complex{real: *self, imag: Self::zero()}
             }
 
@@ -38,7 +38,7 @@ macro_rules! impl_scalar_for_float {
             fn is_zero(&self) -> bool {*self == 0.0}
             fn one() -> Self {[<1_ $f>]}
 
-            fn abs(&self) -> Self::UnderlyingFloat {<$f>::abs(*self)}
+            fn abs(&self) -> Self::UnderlyingReal {<$f>::abs(*self)}
             fn powi(&self, pow: i32) -> Self {<$f>::powi(*self, pow)}
             fn abs_div_by_self(&self) -> Self {<$f>::signum(*self)}
 
@@ -70,8 +70,8 @@ impl_scalar_for_float!(f64);
 // Note: below implementation technically allows for `Complex<Complex<f64>>`, which of course is useless
 // since it should be just `Complex<f64>` instead. However, keep in mind that as these are just traits,
 // one could always implement `Complex<U>` for a garbage type `U`; `Complex<f64>` is just one such `U`.
-impl<T: Float> Scalar for Complex<T> {
-    type UnderlyingFloat = T;
+impl<T: Real> Scalar for Complex<T> {
+    type UnderlyingReal = T;
 
     fn from_f64(x: f64) -> Self {
         Complex::<T>{real: T::from_f64(x), imag: T::zero()}
@@ -83,7 +83,7 @@ impl<T: Float> Scalar for Complex<T> {
         Complex::<T>{real: T::from_usize(x), imag: T::zero()}
     }
 
-    fn to_complex(&self) -> Complex<Self::UnderlyingFloat> {*self}
+    fn to_complex(&self) -> Complex<Self::UnderlyingReal> {*self}
 
     fn min_positive() -> Self {
         Complex { real: T::min_positive(), imag: T::min_positive() }
@@ -93,7 +93,7 @@ impl<T: Float> Scalar for Complex<T> {
     fn is_zero(&self) -> bool {self.real.is_zero() && self.imag.is_zero()}
     fn one() -> Self {Complex::<T>{real: T::one(), imag: T::zero()}}
 
-    fn abs(&self) -> Self::UnderlyingFloat {self.modulus()}
+    fn abs(&self) -> Self::UnderlyingReal {self.modulus()}
     fn powi(&self, pow: i32) -> Self {self.pow(Complex::from_i32(pow))}
     fn abs_div_by_self(&self) -> Self {
         self.conjugate().div(self.abs())

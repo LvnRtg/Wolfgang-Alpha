@@ -588,7 +588,7 @@ fn compare_reals(x: f64, y: f64, comp: Comparison) -> bool {
     }
 }
 /// Returns Object::Real(1) if the comparison succeeds, Object::Real(0) if it doesn't, Object::Undefined if e.g. trying `z_1 < z_2`.
-fn compare_complex<T: Float>(x: Complex<T>, y: Complex<T>, comp: Comparison) -> Result<bool, String> {
+fn compare_complex<T: Real>(x: Complex<T>, y: Complex<T>, comp: Comparison) -> Result<bool, String> {
     match comp {
         Comparison::Eq => Ok(approx_eq(x.real, y.real) && approx_eq(x.imag, y.imag)),
         Comparison::Neq => Ok(!approx_eq(x.real, y.real) || !approx_eq(x.imag, y.imag)),
