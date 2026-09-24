@@ -354,7 +354,7 @@ impl Expression {
                                 if n == _m {
                                     Ok((
                                         Expression::Matrix(m, _n, {
-                                            (0..m).map(|_| 0.._n).multi_cartesian_product().map(
+                                            [0..m, 0.._n].into_iter().multi_cartesian_product().map(
                                                 |__v| {
                                                     // `.clone()` below is necessary since the same row of `v` / column of `w` is reused multiple times.
                                                     expr_binop!(
@@ -424,7 +424,7 @@ impl Expression {
                                     Ok((
                                         Expression::Matrix(
                                             n, n,
-                                            (0..n).map(|_| 0..n).multi_cartesian_product().map(
+                                            [0..n, 0..n].into_iter().multi_cartesian_product().map(
                                                 |__v| Expression::Function(
                                                     "___helper_matrix_prod".to_string(),
                                                     vec![
@@ -501,7 +501,7 @@ impl Expression {
                                 Ok((
                                     Expression::Matrix(
                                         n, n,
-                                        (0..n).map(|_| 0..n).multi_cartesian_product().map(
+                                        [0..n, 0..n].into_iter().multi_cartesian_product().map(
                                             |__v| {
                                                 let mut args = vec![
                                                     Expression::Number(__v[0] as f64), // k_a
@@ -755,7 +755,7 @@ pub fn make_default_fn_type_top_level(
                 let self_values = match evaluated_arg_exprs.into_iter().next().unwrap() {Expression::Matrix(.., v) => v, _ => unreachable!()};
                 Expression::Matrix(
                     *n, *n,
-                    (0..*n).map(|_| 0..*n).multi_cartesian_product().map(
+                    [0..*n, 0..*n].into_iter().multi_cartesian_product().map(
                         |__v| {
                             let (j, i) = (__v[0], __v[1]);
                             let mut submatrix_values = Vec::with_capacity((*n-1) * (*n-1));
