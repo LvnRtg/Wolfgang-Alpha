@@ -8,6 +8,7 @@ use crate::{dispatch_matrix, expr_1arg_func, expr_binop, expr_compare, expr_if_e
 use crate::lang::eval;
 use crate::math::differentiation;
 use crate::math::expressions;
+use crate::math::expressions::type_checking::MakeTypeTopLevelError;
 use crate::math::objects::{MatrixType, VectorType};
 use crate::math::operations::folded_operations;
 use crate::math::traits::*;
@@ -175,7 +176,41 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, u
         }
         else { Err("Wrong type for second argument (base) of function 'log' (expected float).".to_string()) }
     }),
-    scalar_1_function!(sqrt),
+    (
+        Box::new(|evaluated_args, unevaluated_args, _| {
+            let warnings = if unevaluated_args.is_empty() {
+                vec![]
+            } else {
+                vec![format!(
+                    "Provided {} unevaluated arguments although none are expected.",
+                    unevaluated_args.len()
+                )]
+            };
+            if evaluated_args.len() != 1 {
+                Err(format!(
+                    "Wrong number of evaluated arguments provided for function 'sqrt' (expected 1, got {}).",
+                    evaluated_args.len()
+                ))
+            } else {
+                match &evaluated_args[0] {
+                    Object::Real(x) => Ok(Status{value: Object::Real(x.sqrt()), warnings}),
+                    Object::Complex(z) => Ok(Status{value: Object::Complex(z.sqrt()), warnings}),
+                    Object::Matrix(MatrixType::Real(m)) => m.sqrt().map(
+                        |res| Status {
+                            value: Object::Matrix(res.try_to_real()),
+                            warnings
+                        }
+                    ),
+                    other => Err(format!(
+                        "Wrong type of argument provided for function '{}' (expected scalar, got {}).",
+                        stringify!($name),
+                        other.get_type()
+                    )),
+                }
+            }
+        }),
+        (1, 0, 1)
+    ),
 
     // Trigonometric functions
     scalar_1_function!(cos), scalar_1_function!(cosh), scalar_1_function!(acos), scalar_1_function!(acosh),
@@ -451,7 +486,16 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, u
                 return Err(format!("Wrong number of arguments provided for function 'show_components' (expected 0 evaluated and 1 unevaluated, got {}, {} respectively).", evaluated_args.len(), unevaluated_args.len()))
             }
             let (extra_vars, env) = context.ok_or("Function 'show_components' needs `VarStack` and `Env`.".to_string())?;
-            unevaluated_args[0].make_type_top_level(true, extra_vars, env).map(|(e, _)| Status::ok(Object::LiteralExpression(e)))
+            match unevaluated_args[0].make_type_top_level(true, extra_vars, env) {
+                Ok((e, _)) => crate::ok!(Object::LiteralExpression(e)),
+                Err(MakeTypeTopLevelError::GoToNumeric) => Err(
+                    "Showing components isn't fully implemented for this expression.\n\
+                    HELP: Typically, this error is caused by expressions for which no simple \
+                    closed form expression exists, e.g. the square root of matrices."
+                    .to_string()
+                ),
+                Err(MakeTypeTopLevelError::Err(e)) => Err(e)
+            }
         }),
         (0, 1, 1)
     )

@@ -203,7 +203,9 @@ impl<T: Real> Matrix<T> {
         let mut i = 0;
         while i + 1 < n {
             let c = h_real.get(i + 1, i);
-            if c == T::zero() {
+            let scale = h_real.get(i, i).abs().add(h_real.get(i+1, i+1).abs());
+            let threshold = T::EPSILON.mul(if scale.is_zero() { T::one() } else { scale });
+            if c.abs() <= threshold {
                 i += 1;
                 continue;
             }

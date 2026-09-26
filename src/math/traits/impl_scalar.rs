@@ -37,6 +37,7 @@ macro_rules! impl_scalar_for_float {
             fn zero() -> Self {[<0_ $f>]}
             fn is_zero(&self) -> bool {*self == 0.0}
             fn one() -> Self {[<1_ $f>]}
+            fn is_one(&self) -> bool {*self == 1.0}
 
             fn abs(&self) -> Self::UnderlyingReal {<$f>::abs(*self)}
             fn powi(&self, pow: i32) -> Self {<$f>::powi(*self, pow)}
@@ -49,6 +50,14 @@ macro_rules! impl_scalar_for_float {
                 cos, sin, tan, acos, asin, atan,
                 cosh, sinh, tanh, acosh, asinh, atanh
             );
+
+            fn checked_sqrt(&self) -> Option<Self> {
+                if *self >= <$f>::zero() {
+                    Some(<$f>::sqrt(*self))
+                } else {
+                    None
+                }
+            }
 
             fn atan2(&self, other: Self) -> Self {<$f>::atan2(*self, other)}
 
@@ -92,6 +101,7 @@ impl<T: Real> Scalar for Complex<T> {
     fn zero() -> Self {Complex::<T>{real: T::zero(), imag: T::zero()}}
     fn is_zero(&self) -> bool {self.real.is_zero() && self.imag.is_zero()}
     fn one() -> Self {Complex::<T>{real: T::one(), imag: T::zero()}}
+    fn is_one(&self) -> bool {self.real.is_one() && self.imag.is_zero()}
 
     fn abs(&self) -> Self::UnderlyingReal {self.modulus()}
     fn powi(&self, pow: i32) -> Self {self.pow(Complex::from_i32(pow))}
@@ -114,6 +124,10 @@ impl<T: Real> Scalar for Complex<T> {
         cos, sin, tan, acos, asin, atan,
         cosh, sinh, tanh, acosh, asinh, atanh
     );
+
+    fn checked_sqrt(&self) -> Option<Self> {
+        Some(Complex::sqrt(self))
+    }
     
     fn atan2(&self, other: Self) -> Self {Complex::atan2(self, other)}
 

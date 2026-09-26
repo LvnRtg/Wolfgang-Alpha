@@ -14,9 +14,10 @@ use num_traits::{One, Zero};
 use std::fmt;
 use std::fmt::{Debug, Display};
 
+use crate::math::{Complex, Vector};
+use crate::math::objects::MatrixType;
 use crate::math::traits::*;
-use super::utils;
-use super::vectors::Vector;
+use crate::math::utils;
 
 mod adj;
 mod lu;
@@ -25,9 +26,16 @@ mod norms;
 mod ops;
 mod qr;
 mod schur;
+mod square_root;
+mod sylvester;
+mod tests;
 mod transposition;
+mod views;
 
+pub use matmul::mul_views_into;
 pub use norms::MatrixNorm;
+pub use views::{MatrixView, MatrixViewMut};
+
 
 pub struct Matrix<T> {
     m: usize,
@@ -122,6 +130,7 @@ impl<T: Copy> Matrix<T> {
     }
 
     /// Maps every component `x` of `self` to `f(x)`, returning a new matrix.
+    #[inline]
     pub fn transform<U, F>(&self, f: F) -> Matrix<U> where F: Fn(T) -> U {
         Matrix{m: self.m, n: self.n, values: self.values.iter().map(|x| f(*x)).collect()}
     }
@@ -148,6 +157,19 @@ impl<T: Copy + std::iter::Sum<T>> Matrix<T> {
             return Err("Can't compute the trace of a non-square matrix.".to_string());
         }
         Ok((0..self.m).map(|i| self.get(i, i)).sum())
+    }
+}
+
+impl<T: Real> Matrix<T> {
+    #[inline]
+    pub fn to_complex(self) -> Matrix<Complex<T>> {
+        self.transform(|x| x.to_complex())
+    }
+}
+
+impl<T: Real> Matrix<Complex<T>> {
+    pub fn conjugate(self) -> Matrix<Complex<T>> {
+        self.transform(|z| z.conjugate())
     }
 }
 
@@ -182,6 +204,10 @@ impl<T: Scalar> Matrix<T> {
         }
         Matrix{m: n, n, values}
     }
+
+    pub fn approx_eq(&self, other: &Matrix<T>) -> bool {
+        self.m == other.m && self.n == other.n && self.iter().zip(other.iter()).all(|(&x, &y)| utils::approx_eq(x, y))
+    }
     
     /// Returns the inverse of `self` in O(n^3). Returns `None` if the inverse doesn't exist.
     pub fn inv(&self) -> Option<Matrix<T>> {
@@ -196,7 +222,7 @@ impl<T: Scalar> Matrix<T> {
     /// If `self` is singular or non-square, returns `None`.
     pub fn inv_for_upper_triangular(&self) -> Option<Matrix<T>> {
         let n = self.n;
-        if self.m != n || (0..n).any(|i| self.get(i, i) == T::zero()) {return None;}
+        if self.m != n || (0..n).any(|i| self.get(i, i).is_zero()) {return None;}
         // For cache locality, we build the transposed inverse first
         let mut inv_t = vec![T::zero(); n*n];
         for j in 0..n {
@@ -215,7 +241,7 @@ impl<T: Scalar> Matrix<T> {
     /// If `self` is singular or non-square, returns `None`.
     pub fn inv_for_lower_triangular(&self) -> Option<Matrix<T>> {
         let n = self.n;
-        if self.m != n || (0..n).any(|i| self.get(i, i) == T::zero()) {return None;}
+        if self.m != n || (0..n).any(|i| self.get(i, i).is_zero()) {return None;}
         // For cache locality, we build the transposed inverse first
         let mut inv_t = Vec::<T>::with_capacity(n * n);
         for j in 0..n {
@@ -287,5 +313,19 @@ where T:
             }
         }
         Some(d[self.n])
+    }
+}
+
+impl Matrix<Complex<f64>> {
+    pub fn try_to_real(self) -> MatrixType {
+        let mut reals = Vec::new();
+        for z in self.values.iter() {
+            if utils::approx_eq(z.imag, 0.0) {
+                reals.push(z.real);
+            } else {
+                return MatrixType::Complex(self)
+            }
+        }
+        MatrixType::Real(Matrix::from(self.m, self.n, reals))
     }
 }

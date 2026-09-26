@@ -9,6 +9,11 @@ use crate::math::operations::{BinaryOperation, FoldedOperation, UnaryOperation};
 use crate::math::{Env, FunctionRepr, Object, ObjType, VarStack, VarStackLookup};
 use super::Expression;
 
+pub enum MakeTypeTopLevelError {
+    GoToNumeric,
+    Err(String)
+}
+
 impl Expression {
     /// Recursively determines what type this expression should output for the given context.
     /// 
@@ -196,12 +201,14 @@ impl Expression {
     ///   operations into folded operations (e.g. `A * v`) in order to make the distinct components apparent.
     ///   This causes the loss of strategies like parallelization and tiling.
     /// - This function does _not_ necessarily expand expressions like `x * (y + z)`.
-    pub fn make_type_top_level(&self, substitute_constants: bool, extra_vars: &VarStack, env: &Env) -> Result<(Expression, ObjType), String> {
+    pub fn make_type_top_level(&self, substitute_constants: bool, extra_vars: &VarStack, env: &Env) -> Result<(Expression, ObjType), MakeTypeTopLevelError> {
         // This implementation is more or less an extended version of `get_type()`.
         match self {
             // In quite a few cases, we can simply leave the expression as is if we know that it will be a real number anyway (e.g. `||f(x)||`).
-            Expression::None | Expression::Number(_) | Expression::Tuple(_) | Expression::Vector(_) | Expression::Matrix(..)
-                => self.get_type(extra_vars, env).map(|t| (self.clone(), t)),
+            Expression::None | Expression::Number(_) | Expression::Tuple(_) | Expression::Vector(_) | Expression::Matrix(..) => match self.get_type(extra_vars, env) {
+                Ok(t) => Ok((self.clone(), t)),
+                Err(e) => Err(MakeTypeTopLevelError::Err(e))
+            },
             Expression::Identifier(x) => {
                 if let Some(obj) = extra_vars.lookup(x).or_else(|| env.constants.get(x)) {
                     Ok((
@@ -213,23 +220,23 @@ impl Expression {
                         obj.get_type()
                     ))
                 } else {
-                    Err(format!("Unknown identifier: {:?}", x))
+                    Err(MakeTypeTopLevelError::Err(format!("Unknown identifier: {:?}", x)))
                 }
                 
             }
             Expression::UnaryOperation(UnaryOperation::Abs, inner) | Expression::UnaryOperation(UnaryOperation::Factorial, inner) => {
                 // No need to call `make_type_top_level`, since if `inner` is a scalar, `Abs` will return a scalar anyway.
-                if matches!(inner.get_type(extra_vars, env)?, ObjType::Scalar | ObjType::LiteralExpression) {
+                if matches!(inner.get_type(extra_vars, env).map_err(MakeTypeTopLevelError::Err)?, ObjType::Scalar | ObjType::LiteralExpression) {
                     Ok((Expression::UnaryOperation(UnaryOperation::Abs, inner.clone()), ObjType::Scalar))
                 } else {
-                    Err(format!("Operation 'Abs' invalid for operand {:?}.", inner))
+                    Err(MakeTypeTopLevelError::Err(format!("Operation 'Abs' invalid for operand {:?}.", inner)))
                 }
             }
             Expression::UnaryOperation(UnaryOperation::Norm(_), inner) => {
-                if matches!(inner.get_type(extra_vars, env)?, ObjType::Scalar | ObjType::Vector(_) | ObjType::Matrix(..) | ObjType::LiteralExpression) {
+                if matches!(inner.get_type(extra_vars, env).map_err(MakeTypeTopLevelError::Err)?, ObjType::Scalar | ObjType::Vector(_) | ObjType::Matrix(..) | ObjType::LiteralExpression) {
                     Ok((Expression::UnaryOperation(UnaryOperation::Abs, inner.clone()), ObjType::Scalar))
                 } else {
-                    Err(format!("Operation 'Abs' invalid for operand {:?}.", inner))
+                    Err(MakeTypeTopLevelError::Err(format!("Operation 'Abs' invalid for operand {:?}.", inner)))
                 }
             }
             // Unary operations that are evaluated componentswise
@@ -251,7 +258,7 @@ impl Expression {
             Expression::BinaryOperation(l, op, r) => {
                 let (lexpr, ltype) = l.make_type_top_level(substitute_constants, extra_vars, env)?;
                 let (rexpr, rtype) = r.make_type_top_level(substitute_constants, extra_vars, env)?;
-                let err = || Err(format!("Operation '{}' invalid for operands {} and {}.", op, l, r));
+                let err = || Err(MakeTypeTopLevelError::Err(format!("Operation '{}' invalid for operands {} and {}.", op, l, r)));
                 if matches!(ltype, ObjType::NonObject | ObjType::Tuple) || matches!(rtype, ObjType::NonObject | ObjType::Tuple) {
                     return err();
                 }
@@ -463,7 +470,7 @@ impl Expression {
                     env
                 )?;
                 if matches!(itype, ObjType::NonObject | ObjType::Tuple) {
-                    Err(format!("Operation 'Sum' invalid for operand {:?}.", iexpr))
+                    Err(MakeTypeTopLevelError::Err(format!("Operation 'Sum' invalid for operand {:?}.", iexpr)))
                 } else {
                     Ok((
                         match iexpr {
@@ -493,7 +500,7 @@ impl Expression {
                     env
                 )?;
                 if matches!(itype, ObjType::NonObject | ObjType::Tuple | ObjType::Vector(_)) {
-                    Err(format!("Operation 'Product' invalid for operand {:?}.", iexpr))
+                    Err(MakeTypeTopLevelError::Err(format!("Operation 'Product' invalid for operand {:?}.", iexpr)))
                 } else {
                     match iexpr {
                         Expression::Matrix(m, n, v) => {
@@ -522,7 +529,7 @@ impl Expression {
                                     ObjType::Matrix(n, n)
                                 ))
                             } else {
-                                Err(format!("Operation 'FoldedOperation::Product' invalid for non-square matrix (got {}x{}).", m, n))
+                                Err(MakeTypeTopLevelError::Err(format!("Operation 'FoldedOperation::Product' invalid for non-square matrix (got {}x{}).", m, n)))
                             }
                         }
                         other => Ok((
@@ -546,7 +553,8 @@ impl Expression {
                                 vars: Cow::Owned(
                                     varnames.iter().zip(args)
                                     .map(|(v, a)| a.get_type(extra_vars, env).map(|t| (v, Cow::Owned(t.representative()))))
-                                    .collect::<Result<HashMap<_, _>, _>>()?
+                                    .collect::<Result<HashMap<_, _>, _>>()
+                                    .map_err(MakeTypeTopLevelError::Err)?
                                 ),
                                 parent: extra_vars
                             },
@@ -560,7 +568,7 @@ impl Expression {
                     Some(FunctionRepr::Direct(_, (m, n, k))) => {
                         // Accordingly with the mask, obtain the type of some arguments and leave others unchanged.
                         if args.len() < m + n {
-                            return Err(format!("Wrong number of arguments provided for function '{}' (expected at least {}).", name, m + n));
+                            return Err(MakeTypeTopLevelError::Err(format!("Wrong number of arguments provided for function '{}' (expected at least {}).", name, m + n)));
                         }
                         let mut evaluated_arg_types = args[..*m].iter().map(|a| a.make_type_top_level(substitute_constants, extra_vars, env)).collect::<Result<Vec<_>, _>>()?;
                         evaluated_arg_types.extend(
@@ -574,7 +582,7 @@ impl Expression {
                             &args[*m .. m + n + if *k == 0 {0} else {(args.len() - m - n) / k}]
                         )
                     }
-                    None => Err(format!("No such function: \"{name}\"."))
+                    None => Err(MakeTypeTopLevelError::Err(format!("No such function: \"{name}\".")))
                 }
             }
             Expression::Assignment(lhs, rhs) => {
@@ -594,7 +602,7 @@ impl Expression {
                     env
                 )?;
                 if matches!(itype, ObjType::NonObject | ObjType::Tuple) {
-                    Err(format!("Operation 'PartialDerivative' invalid for operand {:?}.", iexpr))
+                    Err(MakeTypeTopLevelError::Err(format!("Operation 'PartialDerivative' invalid for operand {:?}.", iexpr)))
                 } else {
                     Ok((
                         match iexpr {
@@ -615,13 +623,14 @@ impl Expression {
                     vars: Cow::Owned(
                         vars.iter().zip(point)
                         .map(|(v, a)| a.get_type(extra_vars, env).map(|t| (v, Cow::Owned(t.representative()))))
-                        .collect::<Result<HashMap<_, _>, _>>()?
+                        .collect::<Result<HashMap<_, _>, _>>()
+                        .map_err(MakeTypeTopLevelError::Err)?
                     ),
                     parent: extra_vars
                 };
                 let (iexpr, itype) = inner.make_type_top_level(substitute_constants, &varstack, env)?;
                 if matches!(itype, ObjType::NonObject | ObjType::Tuple) {
-                    Err(format!("Operation 'DirectionalDerivative' invalid for operand {:?}.", iexpr))
+                    Err(MakeTypeTopLevelError::Err(format!("Operation 'DirectionalDerivative' invalid for operand {:?}.", iexpr)))
                 } else {
                     Ok((
                         match iexpr {
@@ -644,7 +653,7 @@ impl Expression {
                     env
                 )?;
                 if matches!(itype, ObjType::NonObject | ObjType::Tuple) {
-                    Err(format!("Operation 'Integral' invalid for operand {:?}.", iexpr))
+                    Err(MakeTypeTopLevelError::Err(format!("Operation 'Integral' invalid for operand {:?}.", iexpr)))
                 } else {
                     Ok((
                         match iexpr {
@@ -679,7 +688,7 @@ impl Expression {
                         (tother, fother) => crate::expr_if_else!(*condition.clone(), tother, fother)
                     }, ttype))
                 } else {
-                    Err(format!("`if` arms have incompatible types: {:?}, {:?}.", ttype, ftype))
+                    Err(MakeTypeTopLevelError::Err(format!("`if` arms have incompatible types: {:?}, {:?}.", ttype, ftype)))
                 }
             }
         }
@@ -702,6 +711,7 @@ pub fn get_default_fn_type(
         // Matrix functions
         ("eig", [ObjType::Matrix(m, n)]) if m == n => Ok(ObjType::Tuple),
         ("det", [ObjType::Matrix(m, n)]) | ("tr", [ObjType::Matrix(m, n)]) if m == n => Ok(ObjType::Scalar),
+        ("sqrt", [ObjType::Matrix(m, n)]) if m == n => Ok(ObjType::Matrix(*m, *n)), // sqrt might still not exist, but this can't be known at this point
         ("adj", [ObjType::Matrix(m, n)]) if m == n => Ok(ObjType::Matrix(*n, *n)),
         ("transpose", [ObjType::Matrix(m, n)]) => Ok(ObjType::Matrix(*n, *m)),
         ("LU", [ObjType::Matrix(m, n)]) if m == n => Ok(ObjType::Tuple),
@@ -725,7 +735,7 @@ pub fn make_default_fn_type_top_level(
     name: &str,
     evaluated_args: Vec<(Expression, ObjType)>,
     unevaluated_args: &[Expression]
-) -> Result<(Expression, ObjType), String> {
+) -> Result<(Expression, ObjType), MakeTypeTopLevelError> {
     let (evaluated_arg_exprs, evaluated_arg_types): (Vec<_>, Vec<_>) = evaluated_args.into_iter().unzip();
     match (name, &evaluated_arg_types[..]) {
         // Scalar functions
@@ -742,10 +752,13 @@ pub fn make_default_fn_type_top_level(
             Expression::Function(name.to_string(), evaluated_arg_exprs),
             ObjType::Tuple
         )),
-        ("det", [ObjType::Matrix(m, n)]) | ("tr", [ObjType::Matrix(m, n)]) if m == n => Ok((
+        ("det" | "tr", [ObjType::Matrix(m, n)]) if m == n => Ok((
             Expression::Function(name.to_string(), evaluated_arg_exprs),
             ObjType::Scalar
         )),
+        // sqrt of a matrix is totally valid, but there is no good closed form expression for each
+        // component to my knowledge, so defaulting to numeric differentiation is simpler.
+        ("sqrt", [ObjType::Matrix(m, n)]) if m == n => Err(MakeTypeTopLevelError::GoToNumeric),
         ("adj", [ObjType::Matrix(m, n)]) if m == n => Ok((
             {
                 // Computing the adjugate entry by entry is a more inefficient algorithm than what is implemented in `adj.rs`.
@@ -808,11 +821,11 @@ pub fn make_default_fn_type_top_level(
         }
         // Meta functions
         ("del", _) => Ok((Expression::Function("del".to_string(), unevaluated_args.to_vec()), ObjType::NonObject)),
-        _ => Err(format!(
-            "No function \"{}\" accepting evaluated arguments of type {:?} and unevaluated arguments {:?}.",
+        _ => Err(MakeTypeTopLevelError::Err(format!(
+            "No function \"{}\" accepting evaluated arguments of type {:?} and unevaluated arguments {:?} for which the components are explicitly known.",
             name,
             evaluated_arg_types,
             unevaluated_args
-        ))
+        )))
     }
 }

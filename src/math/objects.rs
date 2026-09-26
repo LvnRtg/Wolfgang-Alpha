@@ -551,31 +551,6 @@ impl fmt::Debug for FunctionRepr {
 }
 
 
-// TODO rm
-/// Simplifies notation in 'try_operation'. LHS and RHS should be a float on one side and a vector/matrix on the other side.
-// fn _op_mv_float<T, U, V>(lhs: T, rhs: U, op: &BinaryOperation) -> Result<V, String>
-// where T: std::Mul<U, Output=V> + std::Div<U, Output=V> + std::Rem<U, Output=V> + Quo<U, Output=V> + fmt::Display, U: fmt::Display {
-//     match op {
-//         BinaryOperation::Mul => Ok(lhs * rhs),
-//         BinaryOperation::Div => Ok(lhs / rhs),
-//         BinaryOperation::Rem => Ok(lhs % rhs),
-//         BinaryOperation::Quo => Ok(Quo::quo(lhs, rhs)),
-//         // All other operations are not possible (again, I write them out explicitely to be forced to review this snippet if I add new operations)
-//         BinaryOperation::Add | BinaryOperation::Sub | BinaryOperation::Pow(_) | BinaryOperation::And | BinaryOperation::Or | BinaryOperation::Comp(..)
-//             => Err(format!("Operation '{}' invalid for operands {} and {}.", op, lhs, rhs))
-//     }
-// }
-// fn _op_mv_scalar<T, U, V>(lhs: T, rhs: U, op: &BinaryOperation) -> Result<V, String>
-// where T: std::Mul<U, Output=V> + std::Div<U, Output=V> + fmt::Display, U: fmt::Display {
-//     match op {
-//         BinaryOperation::Mul => Ok(lhs * rhs),
-//         BinaryOperation::Div => Ok(lhs / rhs),
-//         // All other operations are not possible (again, I write them out explicitely to be forced to review this snippet if I add new operations)
-//         BinaryOperation::Add | BinaryOperation::Sub | BinaryOperation::Pow(_) | BinaryOperation::Rem | BinaryOperation::Quo | BinaryOperation::And | BinaryOperation::Or | BinaryOperation::Comp(..)
-//             => Err(format!("Operation '{}' invalid for operands {} and {}.", op, lhs, rhs))
-//     }
-// }
-
 /// Returns 1 if the comparison succeeds, 0 otherwise
 fn compare_reals(x: f64, y: f64, comp: Comparison) -> bool {
     match comp {

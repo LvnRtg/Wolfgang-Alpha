@@ -52,5 +52,9 @@ macro_rules! impl_neg {
 impl_neg!(f32, f64);
 
 
-impl Real for f32 {}
-impl Real for f64 {}
+impl Real for f32 {
+    const EPSILON: Self = f32::EPSILON;
+}
+impl Real for f64 {
+    const EPSILON: Self = f64::EPSILON;
+}

@@ -5,73 +5,108 @@ use rayon::prelude::*;
 
 use crate::math::{BLOCK_SIZE, utils};
 use crate::math::traits::{Mul, Scalar};
-use super::Matrix;
+use super::*;
 
 
 /// Tiling will only be used if the dimension exceeds this threshold, i.e. `max(m, n) >= TILING_THRESHOLD`.
 const TILING_THRESHOLD: usize = 256;
 
 
+/// Computes `self * rhs` in the natural way using parallelization.
+/// 
+/// This method is used when matrices are small enough that pairs `self.row(i), rhs.row(i)`
+/// fit comfortably in the cache without explicit blocking.
+fn mul_simple_parallel<T, U, V>(
+    a: MatrixView<T>, b_t: MatrixView<U>, mut out: MatrixViewMut<V>,
+) where
+    T: Copy + Sync + Mul<U, Output = V>,
+    U: Copy + Sync,
+    V: Send + std::iter::Sum<V>,
+{
+    out.par_rows_mut().enumerate().for_each(|(i, out_row)| {
+        let a_row = a.row_slice(i);
+        for (j, o) in out_row.iter_mut().enumerate() {
+            *o = utils::unchecked_dot(a_row, b_t.row_slice(j));
+        }
+    });
+}
+
+/// Computes `self * rhs` using parallelization and tiling: the output is
+/// processed in tiles so that the working set of `self` rows and `rhs_t`
+/// rows involved in a tile stays resident in cache across the inner iterations,
+/// cutting down on repeated DRAM traffic for `rhs_t`.
+/// 
+/// This method is used for large matrices.
+fn mul_tiled_parallel<T, U, V>(
+    a: MatrixView<T>, b_t: MatrixView<U>, mut out: MatrixViewMut<V>,
+) where
+    T: Copy + Sync + Mul<U, Output = V>,
+    U: Copy + Sync,
+    V: Send + Sync + std::iter::Sum<V>,
+{
+    let cols = out.cols();
+    let block_rows = BLOCK_SIZE.min(a.rows()).max(1);
+    out.par_rows_mut()
+    .chunks(block_rows)
+    .enumerate()
+    .for_each(|(blk, mut out_rows)| {
+        let i_start = blk * block_rows;
+        let rows_in_block = out_rows.len();
+        for jj in (0..cols).step_by(BLOCK_SIZE) {
+            let j_end = (jj + BLOCK_SIZE).min(cols);
+            for bi in 0..rows_in_block {
+                let a_row = a.row_slice(i_start + bi);
+                let out_row = &mut out_rows[bi];
+                for j in jj..j_end {
+                    out_row[j] = utils::unchecked_dot(a_row, b_t.row_slice(j));
+                }
+            }
+        }
+    });
+}
+
 /// Returns None in case the dimensions mismatch.
-impl<T, U, V> Mul<&Matrix<U>> for &Matrix<T>
+pub fn mul_views_into<T, U, V>(a: MatrixView<T>, b: MatrixView<U>, out: MatrixViewMut<V>) -> Option<()>
 where
-    T: Scalar + Mul<U, Output=V>,
+    T: Scalar + Mul<U, Output = V>,
+    U: Scalar,
+    V: Scalar
+{
+    if a.cols() != b.rows() || out.rows() != a.rows() || out.cols() != b.cols() { return None; }
+    if a.rows() == 0 || a.cols() == 0 || b.cols() == 0 { return Some(()); }
+    let b_t = b.transpose();
+    let bt = b_t.view();
+    if a.rows().max(a.cols()).max(b.cols()) >= TILING_THRESHOLD {
+        mul_tiled_parallel(a, bt, out);
+    } else {
+        mul_simple_parallel(a, bt, out);
+    }
+    Some(())
+}
+/// Returns None in case the dimensions mismatch.
+impl<'a, 'b, T, U, V> Mul<MatrixView<'a, U>> for MatrixView<'b, T>
+where
+    T: Scalar + Mul<U, Output = V>,
     U: Scalar,
     V: Scalar
 {
     type Output = Option<Matrix<V>>;
-    fn mul(self, rhs: &Matrix<U>) -> Self::Output {
-        if self.n != rhs.m {
-            return None;
-        }
-        if self.m == 0 || self.n == 0 || rhs.n == 0 {
-            return Some(Matrix::from(0, 0, vec![]));
-        }
-        let rhs_t = rhs.transpose(); // Improves cache locality and is only O(n²)
-        let m = self.m;
-        let n = rhs.n;
-        let mut values = vec![V::zero(); m * n];
-        if m.max(n).max(self.n) >= TILING_THRESHOLD {
-            self.mul_tiled_parallel(&rhs_t, &mut values);
+    fn mul(self, rhs: MatrixView<U>) -> Self::Output {
+        if self.cols() != rhs.rows() { return None; }
+        if self.rows() == 0 || self.cols() == 0 || rhs.cols() == 0 { return Some(Matrix::zeros(self.rows(), rhs.cols())); }
+        let rhs_t = rhs.transpose();
+        let rhs_t_view = rhs_t.view();
+        let mut res = Matrix::zeros(self.rows(), rhs.cols());
+        let out = res.view_mut();
+        if self.rows().max(self.cols()).max(rhs.cols()) >= TILING_THRESHOLD {
+            mul_tiled_parallel(self, rhs_t_view, out);
         } else {
-            self.mul_simple_parallel(&rhs_t, &mut values);
+            mul_simple_parallel(self, rhs_t_view, out);
         }
-        Some(Matrix { m, n, values })
+        Some(res)
     }
 }
-impl<T, U, V> Mul<&Matrix<U>> for Matrix<T>
-where
-    T: Scalar + Mul<U, Output=V>,
-    U: Scalar,
-    V: Scalar
-{
-    type Output = Option<Matrix<V>>;
-    fn mul(self, rhs: &Matrix<U>) -> Self::Output {
-        (&self).mul(rhs)
-    }
-}
-impl<T, U, V> Mul<Matrix<U>> for &Matrix<T>
-where
-    T: Scalar + Mul<U, Output=V>,
-    U: Scalar,
-    V: Scalar
-{
-    type Output = Option<Matrix<V>>;
-    fn mul(self, rhs: Matrix<U>) -> Self::Output {
-        self.mul(&rhs)
-    }
-}
-impl<T, U, V> Mul<Matrix<U>> for Matrix<T>
-where
-    T: Scalar + Mul<U, Output=V>,
-    U: Scalar,
-    V: Scalar
-{
-    type Output = Option<Matrix<V>>;
-    fn mul(self, rhs: Matrix<U>) -> Self::Output {
-        (&self).mul(&rhs)
-    }
-}
+
 
 impl<T: Scalar> Matrix<T> {
     /// Returns `self^n`.
@@ -132,56 +167,66 @@ impl<T: Scalar> Matrix<T> {
             })
         }
     }
+}
 
-    /// Computes `self * rhs` in the natural way using parallelization.
-    /// 
-    /// This method is used when matrices are small enough that pairs `self.row(i), rhs.row(i)`
-    /// fit comfortably in the cache without explicit blocking.
-    fn mul_simple_parallel<U, V>(&self, rhs_t: &Matrix<U>, out: &mut [V])
-    where
-        T: Copy + Mul<U, Output=V>,
-        U: Copy + Sync,
-        V: Send + std::iter::Sum<V>
-    {
-        out.par_chunks_mut(rhs_t.m).enumerate().for_each(|(i, out_row)| {
-            let ith_row = self.row_slice(i);
-            out_row.iter_mut().enumerate().for_each(
-                |(j, out_elem)|
-                *out_elem = utils::unchecked_dot(ith_row, rhs_t.row_slice(j))
-            );
-        });
+
+impl<T, U, V> Mul<&Matrix<U>> for &Matrix<T>
+where
+    T: Scalar + Mul<U, Output=V>,
+    U: Scalar,
+    V: Scalar
+{
+    type Output = Option<Matrix<V>>;
+    fn mul(self, rhs: &Matrix<U>) -> Self::Output {
+        let (m, n) = (self.m, rhs.n);
+        if self.n != rhs.m { return None; }
+        let mut out = Matrix::zeros(m, n);
+        mul_views_into(self.view(), rhs.view(), out.view_mut())?;
+        Some(out)
     }
-
-    /// Computes `self * rhs` using parallelization and tiling: the output is
-    /// processed in tiles so that the working set of `self` rows and `rhs_t`
-    /// rows involved in a tile stays resident in cache across the inner iterations,
-    /// cutting down on repeated DRAM traffic for `rhs_t`.
-    /// 
-    /// This method is used for large matrices.
-    fn mul_tiled_parallel<U, V>(&self, rhs_t: &Matrix<U>, out: &mut [V])
-    where
-        T: Copy + Mul<U, Output=V>,
-        U: Copy + Sync,
-        V: Send + std::iter::Sum<V>
-    {
-        let l = rhs_t.m;
-        out.par_chunks_mut(l * BLOCK_SIZE.min(self.m).max(1))
-            .enumerate()
-            .for_each(|(block_idx, out_block)| {
-                let i_start = block_idx * BLOCK_SIZE.min(self.m).max(1);
-                let rows_in_block = out_block.len() / l;
-                for jj in (0..l).step_by(BLOCK_SIZE) {
-                    let j_end = (jj + BLOCK_SIZE).min(l);
-                    for bi in 0..rows_in_block {
-                        let i = i_start + bi;
-                        let a_row = self.row_slice(i);
-                        let out_row = &mut out_block[bi * l..(bi + 1) * l];
-                        out_row[jj..j_end].iter_mut().enumerate().for_each(
-                            |(j, out_elem)|
-                            *out_elem = utils::unchecked_dot(a_row, rhs_t.row_slice(jj + j))
-                        );
-                    }
-                }
-            });
+}
+impl<T, U, V> Mul<&Matrix<U>> for Matrix<T>
+where
+    T: Scalar + Mul<U, Output=V>,
+    U: Scalar,
+    V: Scalar
+{
+    type Output = Option<Matrix<V>>;
+    fn mul(self, rhs: &Matrix<U>) -> Self::Output {
+        let (m, n) = (self.m, rhs.n);
+        if self.n != rhs.m { return None; }
+        let mut out = Matrix::zeros(m, n);
+        mul_views_into(self.view(), rhs.view(), out.view_mut())?;
+        Some(out)
+    }
+}
+impl<T, U, V> Mul<Matrix<U>> for &Matrix<T>
+where
+    T: Scalar + Mul<U, Output=V>,
+    U: Scalar,
+    V: Scalar
+{
+    type Output = Option<Matrix<V>>;
+    fn mul(self, rhs: Matrix<U>) -> Self::Output {
+        let (m, n) = (self.m, rhs.n);
+        if self.n != rhs.m { return None; }
+        let mut out = Matrix::zeros(m, n);
+        mul_views_into(self.view(), rhs.view(), out.view_mut())?;
+        Some(out)
+    }
+}
+impl<T, U, V> Mul<Matrix<U>> for Matrix<T>
+where
+    T: Scalar + Mul<U, Output=V>,
+    U: Scalar,
+    V: Scalar
+{
+    type Output = Option<Matrix<V>>;
+    fn mul(self, rhs: Matrix<U>) -> Self::Output {
+        let (m, n) = (self.m, rhs.n);
+        if self.n != rhs.m { return None; }
+        let mut out = Matrix::zeros(m, n);
+        mul_views_into(self.view(), rhs.view(), out.view_mut())?;
+        Some(out)
     }
 }

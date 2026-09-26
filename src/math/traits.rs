@@ -62,7 +62,9 @@ pub trait Neg {
 }
 
 
-pub trait Real: Scalar<UnderlyingReal=Self> + PartialOrd {}
+pub trait Real: Scalar<UnderlyingReal=Self> + PartialOrd {
+    const EPSILON: Self;
+}
 
 /// Currently, this corresponds to a float (`f32` or `f64`) or `Complex`.
 /// 
@@ -110,6 +112,7 @@ pub trait Scalar:
     fn zero() -> Self;
     fn is_zero(&self) -> bool;
     fn one() -> Self;
+    fn is_one(&self) -> bool;
 
     fn abs(&self) -> Self::UnderlyingReal;
     fn powi(&self, pow: i32) -> Self;
@@ -131,6 +134,7 @@ pub trait Scalar:
 
     /// Returns the square root of `self` with non-negative real part.
     fn sqrt(&self) -> Self;
+    fn checked_sqrt(&self) -> Option<Self>;
     // I only put the functions I actually use here.
     fn exp(&self) -> Self;
     fn ln(&self) -> Self;

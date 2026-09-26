@@ -17,7 +17,7 @@ pub struct GivensRotation<T: Scalar> {
 impl<T: Scalar> GivensRotation<T> {
     #[inline]
     fn is_identity(&self) -> bool {
-        self.c == T::one() && self.s == T::zero()
+        self.c.is_one() && self.s.is_zero()
     }
 }
 

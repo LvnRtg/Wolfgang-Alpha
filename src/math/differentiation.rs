@@ -6,6 +6,7 @@ use crate::lang::eval;
 use crate::math::{Env, Expression, FunctionRepr, integration, Object, ObjType, VarStack};
 use crate::math::expressions::Repeat;
 use crate::math::expressions::simplification::*;
+use crate::math::expressions::type_checking::MakeTypeTopLevelError;
 use crate::math::matrices::MatrixNorm;
 use crate::math::operations::{BinaryOperation, Comparison, FoldedOperation, UnaryOperation};
 use crate::math::operations::folded_operations::{compute_folded_operation, compute_product_derivative_helper};
@@ -148,31 +149,50 @@ pub fn analytic_partial_derivative(
             )
         )),
         Expression::UnaryOperation(UnaryOperation::Norm(opt), rhs) => {
-            let (rhs_toplevel, rhs_type) = rhs.make_type_top_level(
+            match rhs.make_type_top_level(
                 false,
                 &extra_vars.with(wrt, Cow::Owned(Object::Real(1.0))),
                 env
-            )?;
-            match rhs_toplevel {
-                Expression::Vector(components) => apd_of_norm_for_vector(wrt, opt, &components, extra_vars, env),
-                Expression::Matrix(m, n, components) => apd_of_norm_for_matrix(wrt, opt, &components, m, n, extra_vars, env),
-                _ if matches!(rhs_type, ObjType::Tuple | ObjType::NonObject) => Err(format!("Operation 'Norm' invalid for operand {:?}.", rhs_toplevel)),
-                other if rhs_type == ObjType::LiteralExpression => ok!(Expression::UnaryOperation(UnaryOperation::Norm(opt.clone()), Box::new(other))),
-                other => { // Scalar type
-                    // In this case, the norm should simply be an absolute value, regardless of `opt`.
-                    analytic_partial_derivative(&other, wrt, extra_vars, env)
-                    .map(|s| s.map(
-                        |diff_r| expr_if_else!(
-                            expr_compare!(other.clone(), Gt, Expression::Number(0.0)),
-                            diff_r.clone(),
-                            expr_if_else!(
-                                expr_compare!(other, Lt, Expression::Number(0.0)),
-                                expr_unary_op!(Neg, diff_r),
-                                Expression::None
+            ) {
+                Ok((rhs_toplevel, rhs_type)) => match rhs_toplevel {
+                    Expression::Vector(components) => apd_of_norm_for_vector(wrt, opt, &components, extra_vars, env),
+                    Expression::Matrix(m, n, components) => apd_of_norm_for_matrix(wrt, opt, &components, m, n, extra_vars, env),
+                    _ if matches!(rhs_type, ObjType::Tuple | ObjType::NonObject) => Err(format!("Operation 'Norm' invalid for operand {:?}.", rhs_toplevel)),
+                    other if rhs_type == ObjType::LiteralExpression => ok!(Expression::UnaryOperation(UnaryOperation::Norm(opt.clone()), Box::new(other))),
+                    other => { // Scalar type
+                        // In this case, the norm should simply be an absolute value, regardless of `opt`.
+                        analytic_partial_derivative(&other, wrt, extra_vars, env)
+                        .map(|s| s.map(
+                            |diff_r| expr_if_else!(
+                                expr_compare!(other.clone(), Gt, Expression::Number(0.0)),
+                                diff_r.clone(),
+                                expr_if_else!(
+                                    expr_compare!(other, Lt, Expression::Number(0.0)),
+                                    expr_unary_op!(Neg, diff_r),
+                                    Expression::None
+                                )
                             )
-                        )
-                    ))
+                        ))
+                    }
+                },
+                Err(MakeTypeTopLevelError::GoToNumeric) => {
+                    Ok(Status {
+                        value: Expression::Function(
+                            "___diff_num".to_string(),
+                            vec![
+                                Expression::UnaryOperation(UnaryOperation::Norm(opt.clone()), rhs.clone()),
+                                Expression::Identifier(wrt.clone()),
+                                Expression::Identifier(wrt.clone()),
+                                Expression::Number(1.0)
+                            ]
+                        ),
+                        warnings: vec![format!(
+                            "Couldn't reveal the components of the expression `{}`; defaulting to numeric derivative.",
+                            &**rhs
+                        )]
+                    })
                 }
+                Err(MakeTypeTopLevelError::Err(e)) => Err(e)
             }
             
         }

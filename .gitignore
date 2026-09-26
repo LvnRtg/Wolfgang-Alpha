@@ -9,3 +9,4 @@
 # Personal files irrelevant to the project
 notes.md
 Cargo.lock
+testing.rs
