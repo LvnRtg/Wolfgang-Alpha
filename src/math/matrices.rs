@@ -167,7 +167,7 @@ impl<T: Real> Matrix<T> {
 }
 
 impl<T: Scalar> Matrix<T> {
-    pub fn conjugate(self) -> Matrix<T> {
+    pub fn conjugate(&self) -> Matrix<T> {
         self.transform(|z| z.conjugate())
     }
 }
@@ -202,6 +202,58 @@ impl<T: Scalar> Matrix<T> {
             values.push(*v);
         }
         Matrix{m: n, n, values}
+    }
+    /// Constructs an upper bidiagonal `m`x`n` matrix with values `main_diag` on the
+    /// main diagonal and values `upper_diag` on the diagonal above the main one.
+    /// 
+    /// Returns `None` if the lengths of `main_diag` and `upper_diag` mismatch.
+    pub fn upper_bidiag(m: usize, n: usize, main_diag: &[T], upper_diag: &[T]) -> Option<Matrix<T>> {
+        let k = m.min(n);
+        if k == 0 {
+            Some(Matrix::zeros(m, n))
+        } else if upper_diag.len() != k - 1 || main_diag.len() != k {
+            None
+        } else {
+            let mut values = Vec::with_capacity(m * n);
+            values.push(main_diag[0]);
+            for (x, y) in main_diag.iter().skip(1).zip(upper_diag) {
+                values.push(*y);
+                values.extend(std::iter::repeat_n(T::zero(), n - 1));
+                values.push(*x);
+            }
+            if k < m {
+                values.extend(std::iter::repeat_n(T::zero(), (m-k) * n));
+            } else {
+                values.extend(std::iter::repeat_n(T::zero(), n - m))
+            }
+            Some(Matrix::from(m, n, values))
+        }
+    }
+    /// Constructs a lower bidiagonal `m`x`n` matrix with values `main_diag` on the
+    /// main diagonal and values `lower_diag` on the diagonal below the main one.
+    /// 
+    /// Returns `None` if the lengths of `main_diag` and `lower_diag` mismatch.
+    pub fn lower_bidiag(m: usize, n: usize, main_diag: &[T], lower_diag: &[T]) -> Option<Matrix<T>> {
+        let k = m.min(n);
+        if k == 0 {
+            Some(Matrix::zeros(m, n))
+        } else if lower_diag.len() != k - 1 || main_diag.len() != k {
+            None
+        } else {
+            let mut values = Vec::with_capacity(m * n);
+            values.push(main_diag[0]);
+            for (x, y) in main_diag.iter().skip(1).zip(lower_diag) {
+                values.extend(std::iter::repeat_n(T::zero(), n - 1));
+                values.push(*y);
+                values.push(*x);
+            }
+            if k < m {
+                values.extend(std::iter::repeat_n(T::zero(), (m-k) * n));
+            } else {
+                values.extend(std::iter::repeat_n(T::zero(), n - m))
+            }
+            Some(Matrix::from(m, n, values))
+        }
     }
 
     pub fn approx_eq(&self, other: &Matrix<T>) -> bool {

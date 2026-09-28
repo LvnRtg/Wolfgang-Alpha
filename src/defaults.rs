@@ -157,7 +157,7 @@ macro_rules! apply_matrix_to_matrix_fn {
 /// 
 /// Note that the user can't create new direct functions, so this approach works.
 #[allow(clippy::type_complexity)]
-pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, usize)); 33]> = LazyLock::new(|| [
+pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, usize)); 34]> = LazyLock::new(|| [
     // Standard scalar functions
     expect_n_objs!(sign, 1, args => match &args[0] {
         Object::Real(x) => Ok(Object::Real(if *x >= 0.0 {1.0} else {-1.0})),
@@ -327,6 +327,28 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, u
                 Object::Matrix(v.wrap_in_type())
             ]))
         )
+    }),
+    expect_1_matrix!(bidiag, mtype => {
+        dispatch_matrix!(mtype, mat => {
+            if mat.m() >= mat.n() {
+                let (u, d, e, v) = mat.clone().bidiagonalize().unwrap();
+                Ok(Object::Tuple(vec![
+                    Object::Matrix(u.wrap_in_type()),
+                    Object::Matrix(MatrixType::Real(Matrix::upper_bidiag(mat.n(), mat.n(), &d, &e).unwrap())),
+                    Object::Matrix(v.wrap_in_type())
+                ]))
+            } else {
+                // A^T = U * upper_bidiag(d, e) * V^H
+                // => A = (V^H)^T * lower_bidiag(d, e) * U^T
+                // => SVD(A) = (conj(V), lower_bidiag(d, e), conj(U))
+                let (u, d, e, v) = mat.transpose().bidiagonalize().unwrap();
+                Ok(Object::Tuple(vec![
+                    Object::Matrix(v.conjugate().wrap_in_type()),
+                    Object::Matrix(MatrixType::Real(Matrix::lower_bidiag(mat.m(), mat.m(), &d, &e).unwrap())),
+                    Object::Matrix(u.conjugate().wrap_in_type())
+                ]))
+            }
+        })
     }),
 
     // ___helper_matrix_prod
@@ -523,7 +545,7 @@ pub fn default_functions() -> HashMap<String, FunctionRepr> {
         "eig", "det", "adj", "tr", "transpose",
         "LU", "PLU", "FPLU",
         "real_schur", "complex_schur", "schur",
-        "SVD",
+        "SVD", "bidiag",
         "___helper_matrix_prod", "___diff_num",
         "del", "show_components"
     ].into_iter().enumerate().map(
