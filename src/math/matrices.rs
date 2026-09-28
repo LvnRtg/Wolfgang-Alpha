@@ -20,6 +20,8 @@ use crate::math::traits::*;
 use crate::math::utils;
 
 mod adj;
+mod det;
+mod inv;
 mod lu;
 mod matmul;
 mod norms;
@@ -108,11 +110,6 @@ impl<T> Matrix<T> {
     /// Returns `self.values.iter()`. Encapsulated in order to keep the field `values` private.
     pub fn iter(&self) -> impl Iterator<Item=&T> {
         self.values.iter()
-    }
-
-    /// Creates a new matrix by applying f to every element of `self` while consuming `self`.
-    pub fn into_new<U, F>(self, f: F) -> Matrix<U> where F: Fn(T) -> U {
-        Matrix{m: self.m, n: self.n, values: self.values.into_iter().map(f).collect()}
     }
 
     #[inline]
@@ -207,112 +204,6 @@ impl<T: Scalar> Matrix<T> {
 
     pub fn approx_eq(&self, other: &Matrix<T>) -> bool {
         self.m == other.m && self.n == other.n && self.iter().zip(other.iter()).all(|(&x, &y)| utils::approx_eq(x, y))
-    }
-    
-    /// Returns the inverse of `self` in O(n^3). Returns `None` if the inverse doesn't exist.
-    pub fn inv(&self) -> Option<Matrix<T>> {
-        self.plu_decomposition().and_then(
-            |(p, l, u)|
-            p.apply_to_matrix_columns(&(u.inv_for_upper_triangular()?.mul(l.inv_for_lower_triangular()?))?)
-        )
-    }
-
-    /// Returns the inverse of `self` assuming that `self` is an upper triangular matrix.
-    /// 
-    /// If `self` is singular or non-square, returns `None`.
-    pub fn inv_for_upper_triangular(&self) -> Option<Matrix<T>> {
-        let n = self.n;
-        if self.m != n || (0..n).any(|i| self.get(i, i).is_zero()) {return None;}
-        // For cache locality, we build the transposed inverse first
-        let mut inv_t = vec![T::zero(); n*n];
-        for j in 0..n {
-            inv_t[j*n + j] = T::one().div(self.get(j, j));
-            for i in (0..j).rev() {
-                inv_t[j*n + i] = utils::unchecked_dot(&self.values[i*n + i+1 .. i*n + j+1], &inv_t[j*n + i+1 .. j*n + j+1]).neg().div(self.get(i, i));
-                //             = -sum_{k=i+1}^{n-1} self[i, k] * inv_t[j, k]                                                   / self[i, i]
-                //             = -sum_{k=i+1}^j self[i, k] * inv_t[j, k]                                                       / self[i, i]
-                //               since inv_t[j, k] = 0 for k > j
-            }
-        }
-        Some(Matrix::from(n, n, inv_t).transpose())
-    }
-    /// Returns the inverse of `self` assuming that `self` is a lower triangular matrix.
-    /// 
-    /// If `self` is singular or non-square, returns `None`.
-    pub fn inv_for_lower_triangular(&self) -> Option<Matrix<T>> {
-        let n = self.n;
-        if self.m != n || (0..n).any(|i| self.get(i, i).is_zero()) {return None;}
-        // For cache locality, we build the transposed inverse first
-        let mut inv_t = Vec::<T>::with_capacity(n * n);
-        for j in 0..n {
-            inv_t.extend(std::iter::repeat_n(T::zero(), j));
-            inv_t.push(T::one().div(self.get(j, j)));
-            for i in j+1..n {
-                inv_t.push(utils::unchecked_dot(&self.values[i*n + j .. i*n + i], &inv_t[j*n + j..]).neg().div(self.get(i, i)));
-                //       = -sum_{k=0}^{i-1} self[i, k] * inv_t[j, k]                                        / self[i, i]
-                //       = -sum_{k=j}^{i-1} self[i, k] * inv_t[j, k]                                        / self[i, i]
-                //         since inv_t[j, k] = 0 for k < j
-            }
-        }
-        Some(Matrix::from(n, n, inv_t).transpose())
-    }
-    
-    /// Returns the product of all diagonal entries of `self`.
-    fn diag_product(&self) -> T {
-        (0..self.m).fold(T::one(), |acc, i| acc.mul(self.get(i, i)))
-    }
-    
-    /// Returns the determinant of `self` via a full-pivot LU-decomposition.
-    /// 
-    /// Runs in 2/3 * n^3 + O(n^2).
-    pub fn det(&self) -> Option<T> {
-        self.lu_decomposition_full_pivot().map(
-            |(l, u, p, q)|
-            // We now have `self = p^T * L * U * q^T` so
-            // det(self) = det(p) det(L) det(U) det(q)
-            if p.parity() {T::one()} else {T::one().neg()}
-            .mul(if q.parity() {T::one()} else {T::one().neg()})
-            .mul(l.diag_product())
-            .mul(u.diag_product())
-        )
-    }
-}
-
-impl<T> Matrix<T>
-where T:
-    Copy
-    + One
-    + Zero
-    + Neg<Output=T>
-    + AddAssign<T>
-    + MulAssign<T>
-{
-    /// Returns the determinant of `self` requiring that `self` is an `nxn` Hessenberg matrix (`None` if `self` isn't square).
-    /// 
-    /// This algorithm is based on the fact that (indexing from 1) with `d_k := det(H_{1:k, 1:k}` and `d_0 := 1`,
-    /// we have the recursive formula `d_k = \sum_{r=0}^k (-1)^{k-r} H_{r,k} (\prod_{t=r}^{k-1} H_{t+1,t}) d_{r-1}`.
-    /// 
-    /// Runs in O(n^2).
-    pub fn det_for_hessenberg_matrix(&self) -> Option<T> {
-        if self.m != self.n { return None; }
-        let mut d = vec![T::zero(); self.n+1];
-        d[0] = T::one();
-        for k in 1..=self.n {
-            let mut chain = T::one();
-            for r in (1..=k).rev() {
-                let local_storage = d[r-1];
-                d[k].add_assign(
-                    if (k-r) % 2 == 0 {T::one()} else {T::one().neg()}
-                    .mul(self.get(r-1, k-1))
-                    .mul(chain)
-                    .mul(local_storage)
-                );
-                if r > 1 {
-                    chain.mul_assign(self.get(r-1, r-2));
-                }
-            }
-        }
-        Some(d[self.n])
     }
 }
 
