@@ -92,6 +92,8 @@ A range of standard functions for matrices and vectors are pre-defined:
 - `LU` returns the LU decomposition of a square matrix as tuple `(L, U)`, provided it exists.
 - `PLU` returns the PLU decomposition of an invertible matrix as tuple `(P, L, U)`, that is, a permutation matrix `P`, a lower triangular matrix `L` and an upper triangular matrix `U` such that `A = P*L*U`.
 - `FPLU` returns the full-pivot LU decomposition of a square matrix as tuple `(P, Q, L, U)`, that is, permutation matrices `P`, `Q`, a lower triangular matrix `L` and an upper triangular matrix `U` such that `A = P*L*U*Q`.
+- `SVD` returns a tuple `(U, S, V)` where `U`, `V` are orthogonal/unitary and `S` is diagonal with non-negative diagonal entries sorted in descending order such that `A = U * S * V^*`. Works on matrices of any dimension. Theoretically, the error "iteration does not converge" could appear, but I have never encountered this yet.
+- `bidiag` returns a tuple `(U, B, V)` where `U`, `V` are orthogonal/unitary and `B` is bidiagonal such that `A = U * B * V^*`. Works on any matrix.
 
 ### Tuples
 - Tuples can be initialized by typing `(1, 2, 3)`.
