@@ -730,18 +730,26 @@ pub fn try_operation(lhs: &Object, rhs: &Object, op: &BinaryOperation, context: 
         (Object::Matrix(y), Object::Real(x), BinaryOperation::Rem) => ok!(Object::Matrix(map_mv!((y, Matrix) -> MatrixType {m => m.rem(*x)}))),
         (Object::Matrix(y), Object::Real(x), BinaryOperation::Quo) => ok!(Object::Matrix(map_mv!((y, Matrix) -> MatrixType {m => m.quo(*x)}))),
         (Object::Matrix(x), Object::Real(y), BinaryOperation::Pow(_))
-        if dispatch_matrix!(x, m => m.m() == m.n()) && let Some(exponent) = expect_int::<i64>(*y) => ok!(Object::Matrix(
-            map_mv!((x, Matrix) -> MatrixType {
-                m => {
-                    if exponent >= 0 {
-                        m.pow(exponent as u64).unwrap() // Safe because if-guard protects us from non-square matrices
-                    } else {
-                        let inv = m.inv().ok_or(format!("Matrix is not invertible: {:?}", m))?;
-                        inv.pow((-exponent) as u64).unwrap()
-                    }
-                }
-            })
-        )),
+        if dispatch_matrix!(x, m => m.m() == m.n()) => {
+            if let Some(exponent) = expect_int::<i64>(*y) {
+                ok!(Object::Matrix(
+                    map_mv!((x, Matrix) -> MatrixType {
+                        m => {
+                            if exponent >= 0 {
+                                m.pow(exponent as u64).unwrap() // Safe because if-guard protects us from non-square matrices
+                            } else {
+                                let inv = m.inv().ok_or(format!("Matrix is not invertible: {:?}", m))?;
+                                inv.pow((-exponent) as u64).unwrap()
+                            }
+                        }
+                    })
+                ))
+            } else if approx_eq(*y, 0.5) && let MatrixType::Real(m) = x {
+                m.sqrt().map(|res| Status::ok(Object::Matrix(res.try_to_real())))
+            } else {
+                Err(format!("Valid matrix powers are integers and 1/2 in case the matrix is real; got power {}.", y))
+            }
+        }
         // Between complex and matrix
         (Object::Complex(x), Object::Matrix(y), BinaryOperation::Mul) => ok!(Object::Matrix(MatrixType::Complex(dispatch_matrix!(y, v => x.mul(v))))),
         (Object::Complex(x), Object::Matrix(y), BinaryOperation::Div) => dispatch_matrix!(
