@@ -50,7 +50,7 @@ pub fn min_of<T: PartialOrd>(iter: impl Iterator<Item = T>) -> Option<T> {
 }
 
 #[inline]
-/// Returns the maximum absolute value of the given iterator of floats. If the iterator is empty, returns 0.0.
+/// Returns the maximum absolute value of the given iterator of scalars. If the iterator is empty, returns 0.0.
 pub fn max_abs_of<'a, T: 'a + Scalar>(iter: impl Iterator<Item=&'a T>) -> T::UnderlyingReal {
     iter.fold(T::UnderlyingReal::zero(), |acc, x| {
         max(acc, x.abs())

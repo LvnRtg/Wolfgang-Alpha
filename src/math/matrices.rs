@@ -29,6 +29,7 @@ mod ops;
 mod qr;
 mod schur;
 mod square_root;
+mod svd;
 mod sylvester;
 mod tests;
 mod transposition;
@@ -36,6 +37,7 @@ mod views;
 
 pub use matmul::mul_views_into;
 pub use norms::MatrixNorm;
+pub use svd::Svd;
 pub use views::{MatrixView, MatrixViewMut};
 
 
@@ -164,8 +166,8 @@ impl<T: Real> Matrix<T> {
     }
 }
 
-impl<T: Real> Matrix<Complex<T>> {
-    pub fn conjugate(self) -> Matrix<Complex<T>> {
+impl<T: Scalar> Matrix<T> {
+    pub fn conjugate(self) -> Matrix<T> {
         self.transform(|z| z.conjugate())
     }
 }

@@ -52,7 +52,7 @@ macro_rules! impl_componentwise_op_trait {
                     Complex::<V> {real: self.real.[<$op:lower>](rhs), imag: self.imag.[<$op:lower>](rhs) }
                 }
             }
-            // We can't implement this one generally too because of infinite recursion
+            // We can't implement this generally because of infinite recursion
             $(
                 impl<U: Real, V: Real> $op<Complex<U>> for $t where $t: $op<U, Output=V> {
                     type Output = Complex<V>;

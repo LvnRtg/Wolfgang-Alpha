@@ -541,6 +541,7 @@ fn apd_of_norm_for_vector(
 
 /// Computes the analytic partial derivative of `||*components||_{normtype_opt}` w.r.t. `wrt`,
 /// where `components` forms a matrix of size `m`x`n`.
+#[allow(unused_variables)]
 fn apd_of_norm_for_matrix(
     wrt: &String,
     normtype_opt: &Option<Box<Expression>>,

@@ -97,7 +97,7 @@ impl<T: Real> Matrix<T> {
             .ok_or("Matrix does not possess a square root (singularity detected).")?;
         let res = (&q)
             .mul(t_sqrt).unwrap()
-            .mul(q.transpose().transform(|x| x.conjugate())).unwrap();
+            .mul(q.transpose_conjugate()).unwrap();
         Ok(res)
     }
 }

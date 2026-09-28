@@ -27,10 +27,15 @@ macro_rules! impl_scalar_for_float {
             fn from_f64(x: f64) -> Self { x as $f }
             fn from_i32(x: i32) -> Self { x as $f }
             fn from_usize(x: usize) -> Self { x as $f }
+            fn from_real(x: Self::UnderlyingReal) -> Self { x }
 
+            fn to_real(&self) -> Option<Self::UnderlyingReal> {Some(*self)}
             fn to_complex(&self) -> Complex<Self::UnderlyingReal> {
                 Complex{real: *self, imag: Self::zero()}
             }
+            fn conjugate(&self) -> Self {*self}
+            fn real(&self) -> Self::UnderlyingReal {*self}
+            fn imag(&self) -> Self::UnderlyingReal {Self::UnderlyingReal::zero()}
 
             fn min_positive() -> Self {<$f>::MIN_POSITIVE}
 
@@ -91,8 +96,23 @@ impl<T: Real> Scalar for Complex<T> {
     fn from_usize(x: usize) -> Self {
         Complex::<T>{real: T::from_usize(x), imag: T::zero()}
     }
+    fn from_real(x: Self::UnderlyingReal) -> Self {
+        Complex::<T> { real: x, imag: T::zero() }
+    }
 
+    fn to_real(&self) -> Option<Self::UnderlyingReal> {
+        if self.imag.is_zero() {
+            Some(self.real)
+        } else {
+            None
+        }
+    }
     fn to_complex(&self) -> Complex<Self::UnderlyingReal> {*self}
+    fn conjugate(&self) -> Self {
+        Complex::conjugate(self)
+    }
+    fn real(&self) -> Self::UnderlyingReal { self.real }
+    fn imag(&self) -> Self::UnderlyingReal { self.imag }
 
     fn min_positive() -> Self {
         Complex { real: T::min_positive(), imag: T::min_positive() }

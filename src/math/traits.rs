@@ -104,8 +104,14 @@ pub trait Scalar:
     fn from_f64(x: f64) -> Self;
     fn from_i32(x: i32) -> Self;
     fn from_usize(x: usize) -> Self;
+    fn from_real(x: Self::UnderlyingReal) -> Self;
 
+    /// Returns `Some(self)` if `self` is purely real, otherwise `None`.
+    fn to_real(&self) -> Option<Self::UnderlyingReal>;
     fn to_complex(&self) -> Complex<Self::UnderlyingReal>;
+    fn conjugate(&self) -> Self;
+    fn real(&self) -> Self::UnderlyingReal;
+    fn imag(&self) -> Self::UnderlyingReal;
 
     fn min_positive() -> Self;
 
@@ -134,6 +140,10 @@ pub trait Scalar:
 
     /// Returns the square root of `self` with non-negative real part.
     fn sqrt(&self) -> Self;
+    #[inline]
+    fn squared(&self) -> Self {
+        self.mul(*self)
+    }
     fn checked_sqrt(&self) -> Option<Self>;
     // I only put the functions I actually use here.
     fn exp(&self) -> Self;

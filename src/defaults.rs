@@ -12,7 +12,7 @@ use crate::math::expressions::type_checking::MakeTypeTopLevelError;
 use crate::math::objects::{MatrixType, VectorType};
 use crate::math::operations::folded_operations;
 use crate::math::traits::*;
-use crate::math::{Complex, DirectFunction, Env, Expression, FunctionRepr, Matrix, Object, VarStack, Vector};
+use crate::math::{Complex, DirectFunction, Env, Expression, FunctionRepr, matrices, Matrix, Object, VarStack, Vector};
 use crate::status::Status;
 
 /// Wrapped in a function because const hashmaps aren't available yet.
@@ -157,7 +157,7 @@ macro_rules! apply_matrix_to_matrix_fn {
 /// 
 /// Note that the user can't create new direct functions, so this approach works.
 #[allow(clippy::type_complexity)]
-pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, usize)); 32]> = LazyLock::new(|| [
+pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, usize)); 33]> = LazyLock::new(|| [
     // Standard scalar functions
     expect_n_objs!(sign, 1, args => match &args[0] {
         Object::Real(x) => Ok(Object::Real(if *x >= 0.0 {1.0} else {-1.0})),
@@ -316,6 +316,17 @@ pub static DEFAULT_DIRECT_FUNCTIONS: LazyLock<[(DirectFunction, (usize, usize, u
                 Object::Matrix(MatrixType::Complex(t))
             ])),
         MatrixType::Complex(_) => Err("The complex Schur decomposition is only implemented for real matrices.".to_string())
+    }),
+    expect_1_matrix!(SVD, mtype => {
+        dispatch_matrix!(mtype, mat => 
+            mat.svd()
+            .ok_or("Iteration failed to converge.".to_string())
+            .map(|matrices::Svd{u, s, v}| Object::Tuple(vec![
+                Object::Matrix(u.wrap_in_type()),
+                Object::Matrix(MatrixType::Real(Matrix::diag(&s))),
+                Object::Matrix(v.wrap_in_type())
+            ]))
+        )
     }),
 
     // ___helper_matrix_prod
@@ -512,6 +523,7 @@ pub fn default_functions() -> HashMap<String, FunctionRepr> {
         "eig", "det", "adj", "tr", "transpose",
         "LU", "PLU", "FPLU",
         "real_schur", "complex_schur", "schur",
+        "SVD",
         "___helper_matrix_prod", "___diff_num",
         "del", "show_components"
     ].into_iter().enumerate().map(

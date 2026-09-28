@@ -281,7 +281,7 @@ mod complex_schur_decomposition_tests {
         let (q, t) = m.complex_schur_decomposition().unwrap();
         assert!(is_unitary(&q));
         assert!(is_upper_triangular_c(&t));
-        let reconstructed = (&q).mul(&t).unwrap().mul(q.transpose().transform(|z| z.conjugate())).unwrap();
+        let reconstructed = (&q).mul(&t).unwrap().mul(q.transpose_conjugate()).unwrap();
         assert!(reconstructed.approx_eq(&m.to_complex()));
         assert!((t.get(0, 0).real - 7.0).abs() < TOL && t.get(0, 0).imag.abs() < TOL);
     }
@@ -292,7 +292,7 @@ mod complex_schur_decomposition_tests {
         let (q, t) = m.complex_schur_decomposition().unwrap();
         assert!(is_unitary(&q));
         assert!(is_upper_triangular_c(&t));
-        let reconstructed = (&q).mul(&t).unwrap().mul(q.transpose().transform(|z| z.conjugate())).unwrap();
+        let reconstructed = (&q).mul(&t).unwrap().mul(q.transpose_conjugate()).unwrap();
         assert!(reconstructed.approx_eq(&m.to_complex()));
     }
 
@@ -302,7 +302,7 @@ mod complex_schur_decomposition_tests {
         let (q, t) = m.complex_schur_decomposition().unwrap();
         assert!(is_unitary(&q));
         assert!(is_upper_triangular_c(&t));
-        let reconstructed = (&q).mul(&t).unwrap().mul(q.transpose().transform(|z| z.conjugate())).unwrap();
+        let reconstructed = (&q).mul(&t).unwrap().mul(q.transpose_conjugate()).unwrap();
         assert!(reconstructed.approx_eq(&m.to_complex()));
 
         let mut eigs = diag_c(&t);
@@ -320,7 +320,7 @@ mod complex_schur_decomposition_tests {
         let (q, t) = m.complex_schur_decomposition().unwrap();
         assert!(is_unitary(&q));
         assert!(is_upper_triangular_c(&t));
-        let reconstructed = (&q).mul(&t).unwrap().mul(q.transpose().transform(|z| z.conjugate())).unwrap();
+        let reconstructed = (&q).mul(&t).unwrap().mul(q.transpose_conjugate()).unwrap();
         assert!(reconstructed.approx_eq(&m.to_complex()));
 
         let eigs = diag_c(&t);
@@ -340,7 +340,7 @@ mod complex_schur_decomposition_tests {
         let (q, t) = m.complex_schur_decomposition().unwrap();
         assert!(is_unitary(&q));
         assert!(is_upper_triangular_c(&t));
-        let reconstructed = (&q).mul(&t).unwrap().mul(q.transpose().transform(|z| z.conjugate())).unwrap();
+        let reconstructed = (&q).mul(&t).unwrap().mul(q.transpose_conjugate()).unwrap();
         assert!(reconstructed.approx_eq(&m.to_complex()));
 
         let trace_t: f64 = diag_c(&t).iter().map(|z| z.real).sum();
@@ -364,7 +364,7 @@ mod complex_schur_decomposition_tests {
         let (q, t) = m.complex_schur_decomposition().unwrap();
         assert!(is_unitary(&q));
         assert!(is_upper_triangular_c(&t));
-        let reconstructed = (&q).mul(&t).unwrap().mul(q.transpose().transform(|z| z.conjugate())).unwrap();
+        let reconstructed = (&q).mul(&t).unwrap().mul(q.transpose_conjugate()).unwrap();
         assert!(reconstructed.approx_eq(&m.to_complex()));
 
         let eigs = diag_c(&t);
