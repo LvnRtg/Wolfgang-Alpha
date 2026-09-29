@@ -7,10 +7,11 @@ use itertools::Itertools;
 
 use crate::ok;
 use crate::math;
-use crate::math::{Env, Expression, FunctionRepr, Object, VarStack, VarStackLookup};
-use crate::math::objects::try_operation;
+use crate::math::{Env, Expression, FunctionRepr, Object, Matrix, VarStack, VarStackLookup};
+use crate::math::objects::{try_operation, MatrixType};
 use crate::math::operations::{BinaryOperation, Comparison, UnaryOperation};
 use crate::math::operations::folded_operations::FOLDED_OP_WARNING_CAP;
+use crate::math::traits::*;
 use crate::math::utils::{approx_eq, linspace_as_objects};
 use crate::status::{ExtResult, Status};
 
@@ -560,12 +561,50 @@ pub fn eval_binop(
     env: &mut Env
 ) -> ExtResult {
     let Status{value: lhs_eval, mut warnings} = eval(lhs, extra_vars, env)?;
-    // If the LHS is evaluated to zero and `op` is `*` or `&&`, we can skip evaluating the RHS.
-    // Furthermore, we actually SHOULD skip it, since this enables us to use indicator functions smartly.
-    if let Object::Real(x) = &lhs_eval && x.is_finite() && approx_eq(*x, 0.0) && (*op == BinaryOperation::Mul || *op == BinaryOperation::And) {
-        Ok(Status{value: rhs.get_type(extra_vars, env).map(|t| t.zero())?, warnings})
-    } else {
-        Ok(Status {
+    // There are a few special cases to be treated.
+    match (&lhs_eval, op) {
+        // If the LHS is evaluated to zero and `op` is `*` or `&&`, we can skip evaluating the RHS.
+        // Furthermore, we actually SHOULD skip it, since this enables us to use indicator functions smartly.
+        (Object::Real(x), BinaryOperation::And | BinaryOperation::Mul)
+        if x.is_finite() && approx_eq(*x, 0.0) => Ok(Status {
+            value: rhs.get_type(extra_vars, env).map(|t| t.zero())?,
+            warnings
+        }),
+        // Check for the syntax `A^T`
+        (Object::Vector(vtype), BinaryOperation::Pow(_))
+        if rhs == &Expression::Identifier("T".to_string())
+        && !env.constants.contains_key("T")
+        && extra_vars.lookup(&"T".to_string()).is_none() => Ok(Status {
+            value: Object::Matrix(crate::map_mv!((vtype, Vector) -> MatrixType {
+                v => Matrix::from(1, v.len(), v.values.clone())
+            })),
+            warnings
+        }),
+        (Object::Matrix(mtype), BinaryOperation::Pow(_))
+        if rhs == &Expression::Identifier("T".to_string())
+        && !env.constants.contains_key("T")
+        && extra_vars.lookup(&"T".to_string()).is_none() => Ok(Status {
+            value: Object::Matrix(crate::map_mv!((mtype, Matrix) -> MatrixType {m => m.transpose()})),
+            warnings
+        }),
+        // Check for the syntax `A^H`
+        (Object::Vector(vtype), BinaryOperation::Pow(_))
+        if rhs == &Expression::Identifier("H".to_string())
+        && !env.constants.contains_key("H")
+        && extra_vars.lookup(&"H".to_string()).is_none() => Ok(Status {
+            value: Object::Matrix(crate::map_mv!((vtype, Vector) -> MatrixType {
+                v => Matrix::from(1, v.len(), v.values.iter().map(|x| x.conjugate()).collect())
+            })),
+            warnings
+        }),
+        (Object::Matrix(mtype), BinaryOperation::Pow(_))
+        if rhs == &Expression::Identifier("H".to_string())
+        && !env.constants.contains_key("H")
+        && extra_vars.lookup(&"H".to_string()).is_none() => Ok(Status {
+            value: Object::Matrix(crate::map_mv!((mtype, Matrix) -> MatrixType {m => m.transpose_conjugate()})),
+            warnings
+        }),
+        _ => Ok(Status {
             value: try_operation(
                 &lhs_eval,
                 &eval(rhs, extra_vars, env)?.unpack_into(&mut warnings),
