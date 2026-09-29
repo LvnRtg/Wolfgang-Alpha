@@ -13,9 +13,24 @@ pub struct Complex<T: Real> {
     pub imag: T
 }
 
-impl<T: Real + Display> Display for Complex<T> {
+impl<T: Real> Display for Complex<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} + {}*i", self.real, self.imag)
+        fn fmt_imag<T: Real>(imag: T) -> String {
+            if approx_eq(imag, T::one()) {
+                "i".to_string()
+            } else {
+                format!("{}i", imag)
+            }
+        }
+        if approx_eq(self.imag, T::zero()) {
+            write!(f, "{}", self.real)
+        } else if approx_eq(self.real, T::zero()) {
+            write!(f, "{}", fmt_imag(self.imag))
+        } else if self.imag < T::zero() {
+            write!(f, "{} - {}", self.real, fmt_imag(self.imag.neg()))
+        } else {
+            write!(f, "{} + {}", self.real, fmt_imag(self.imag))
+        }
     }
 }
 impl<T: Real + Debug> Debug for Complex<T> {

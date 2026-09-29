@@ -76,6 +76,7 @@ pub trait Scalar:
     Copy
     + Send + Sync // Required for parallelization
     + PartialEq
+    + std::fmt::Display
     + std::fmt::Debug
     + Add<Self, Output=Self>
     + Sub<Self, Output=Self>

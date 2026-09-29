@@ -1,6 +1,7 @@
 use paste::paste;
 
 use crate::math::{Complex, Expression};
+use crate::math::utils::approx_eq;
 use super::*;
 
 macro_rules! pull_float_functions_inside {
@@ -152,7 +153,22 @@ impl<T: Real> Scalar for Complex<T> {
     fn atan2(&self, other: Self) -> Self {Complex::atan2(self, other)}
 
     fn format_trimmed(&self, decimals: usize) -> String {
-        format!("{} + {}*i", self.real.format_trimmed(decimals), self.imag.format_trimmed(decimals))
+        fn fmt_imag<T: Real>(imag: T, decimals: usize) -> String {
+            if approx_eq(imag, T::one()) {
+                "i".to_string()
+            } else {
+                format!("{}i", imag.format_trimmed(decimals))
+            }
+        }
+        if approx_eq(self.imag, T::zero()) {
+            format!("{}", self.real.format_trimmed(decimals))
+        } else if approx_eq(self.real, T::zero()) {
+            format!("{}", fmt_imag(self.imag, decimals))
+        } else if self.imag < T::zero() {
+            format!("{} - {}", self.real.format_trimmed(decimals), fmt_imag(self.imag.neg(), decimals))
+        } else {
+            format!("{} + {}", self.real.format_trimmed(decimals), fmt_imag(self.imag, decimals))
+        }
     }
     fn to_expression(&self) -> Expression {
         crate::expr_binop!(self.real.to_expression(), Add, crate::expr_binop!(self.imag.to_expression(), Mul, Expression::Identifier("i".to_string())))
