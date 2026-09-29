@@ -86,7 +86,8 @@ Norms of vectors/matrices can be computed by typing `||x||_{type}`. The availabl
 A range of standard functions for matrices and vectors are pre-defined:
 - `det` computes the determinant of a square matrix.
 - `tr` computes the trace of a square matrix.
-- `tranpose` transposes the given matrix.
+- `A^T` returns the transposition of `A`. Alternative syntax: `tranpose(A)`.
+- `A^H` returns the Hermitian transposition of `A`, i.e. a transposed _and_ conjugated version of `A`.
 - `eig` returns all eigenvalues (both real and complex) of a square matrix as tuple. Uses a QR-algorithm.
 - `adj` returns the adjugate of a square matrix in $\mathcal{O}(n^3)$.
 - `LU` returns the LU decomposition of a square matrix as tuple `(L, U)`, provided it exists.
