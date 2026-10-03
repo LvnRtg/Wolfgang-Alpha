@@ -190,7 +190,11 @@ impl<T: Real> Complex<T> {
         // Formula: sqrt(a + ib) = ±(sqrt((z+a)/2) + i * sign(b) * sqrt((z-a)/2))
         Complex {
             real: z.add(self.real).div(T::from_usize(2)).sqrt(),
-            imag: self.imag.normalized().mul(z.sub(self.real).div(T::from_usize(2)).sqrt())
+            imag: if self.imag >= T::zero() {
+                z.sub(self.real).div(T::from_usize(2)).sqrt()
+            } else {
+                z.sub(self.real).div(T::from_usize(2)).sqrt().neg()
+            }
         }
     }
 }
