@@ -142,6 +142,7 @@ Partially differentiate an expression by typing e.g. `d/dx (x^3 + 2x + 1)`. This
 - Beware that by mathematical convention, the operator `d/dx` binds very strongly. Hence, `d/dx x^2` will be interpreted as `(d/dx x)^2`.
 - The resulting expression can be stored in a function by typing `f(x) := d/dx g(x)`. Then, the partial derivative will be evaluated _before defining `f`_, that is, the defining expression of `f(x)` will the result of the partial derivative, not the unmodified expression `d/dx g(x)`. For instance, typing `f(x) := d/dx (x^2)` will effectively define `f(x) := 2x`.
 - Differentiating a function with a matrix/vector as output will differentiate component-wise and return the corresponding matrix/vector-valued function.
+- Derivatives are simplified automatically after being computed.
 
 #### Higher order partial derivatives
 For higher derivatives, use the natural notation, for example `d^2/(dx dy) f(x, y)` or `d^3/(dx^2 dy) f(x, y)`. This will also return an expression.

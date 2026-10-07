@@ -170,3 +170,19 @@ where
 {
     a.zip(b.iter()).map(|(x, &y)| x.mul(y)).sum()
 }
+
+/// Returns whether `v` is a permutation of `w`.
+pub fn is_permutation_of<T: PartialEq>(v: &[T], w: &[T]) -> bool {
+    if v.len() != w.len() {
+        return false;
+    }
+    let mut matched = vec![false; w.len()];
+    for t in v {
+        if let Some((i, _)) = w.iter().enumerate().find(|(i, _t)| t == *_t && !matched[*i]) {
+            matched[i] = true;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}

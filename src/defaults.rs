@@ -1,30 +1,44 @@
 use itertools::Itertools;
+use paste::paste;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::f64::consts;
 use std::sync::LazyLock;
 
-use crate::{dispatch_matrix, expr_1arg_func, expr_binop, expr_compare, expr_if_else, expr_square, expr_unary_op, map_mv, try_map_mv};
+use crate::{dispatch_matrix, expr_1arg_func, map_mv, try_map_mv};
 use crate::lang::eval;
 use crate::math::differentiation;
-use crate::math::expressions;
+use crate::math::expressions::simplification::*;
 use crate::math::expressions::type_checking::MakeTypeTopLevelError;
 use crate::math::objects::{MatrixType, VectorType};
-use crate::math::operations::folded_operations;
+use crate::math::operations::{BinaryOperation, Comparison, folded_operations};
 use crate::math::traits::*;
 use crate::math::{Complex, DirectFunction, Env, Expression, FunctionRepr, matrices, Matrix, Object, VarStack, Vector};
 use crate::status::Status;
 
+pub const DEFAULT_CONSTANTS: [(&str, (f64, f64)); 6] = [
+    ("e", (consts::E, 0.0)),
+    ("pi", (consts::PI, 0.0)),
+    ("π", (consts::PI, 0.0)),
+    ("i", (0.0, 1.0)),
+    ("inf", (f64::INFINITY, 0.0)),
+    ("∞", (f64::INFINITY, 0.0))
+];
+
 /// Wrapped in a function because const hashmaps aren't available yet.
 pub fn default_constants() -> HashMap<String, Object> {
-    HashMap::<String, Object>::from([
-        ("e".to_string(), Object::Real(consts::E)),
-        ("pi".to_string(), Object::Real(consts::PI)),
-        ("π".to_string(), Object::Real(consts::PI)),
-        ("i".to_string(), Object::Complex(Complex { real: 0.0, imag: 1.0 })),
-        ("inf".to_string(), Object::Real(f64::INFINITY)),
-        ("∞".to_string(), Object::Real(f64::INFINITY))
-    ])
+    DEFAULT_CONSTANTS.iter()
+    .map(
+        |(s, (real, imag))| (
+            s.to_string(),
+            if *imag == 0.0 {
+                Object::Real(*real)
+            } else {
+                Object::Complex(Complex {real: *real, imag: *imag})
+            }
+        )
+    )
+    .collect()
 }
 
 /// Takes a function name `name`, e.g. `exp`, and returns a `FunctionRepr::Direct` (along with its mask) which expects
@@ -554,10 +568,10 @@ pub fn default_functions() -> HashMap<String, FunctionRepr> {
     ).collect();
     res.insert("1".to_string(), FunctionRepr::ByExpression(
         vec!["___tmp_x".to_string()],
-        expr_if_else!(
-            Expression::Identifier("___tmp_x".to_string()),
-            Expression::Number(1.0),
-            Expression::Number(0.0)
+        Expression::IfElse(
+            Box::new(Expression::Identifier("___tmp_x".to_string())),
+            Box::new(Expression::Number(1.0)),
+            Box::new(Expression::Number(0.0))
         )
     ));
     res
@@ -597,12 +611,14 @@ macro_rules! assert_length {
 /// Example: `(exp, point) => Ok(Expression::Function("exp", point[0].clone()))` if `point` and `direction` both have length 1, otherwise `Err`.
 macro_rules! apply_to_first_arg {
     ($name:ident, $point:expr, $direction:expr) => {
-        assert_length!(1, $name, $point, $direction,
-            expressions::simplification::simplify_mul(Expression::Function(
-                stringify!($name).to_string(),
-                vec![$point[0].clone()]
-            ), $direction[0].clone())
-        )
+        paste! {
+            assert_length!(1, $name, $point, $direction,
+                simplify_mul(
+                    [<simplify_ $name>](simplify($point[0].clone())),
+                    simplify($direction[0].clone())
+                )
+            )
+        }
     };
 }
 
@@ -615,190 +631,174 @@ macro_rules! apply_to_first_arg {
 /// Note: we return an expression and not e.g. a `FunctionRepr` for the sake of simplicity in the application.
 pub fn get_default_derivative(function_name: &str, point: &[Expression], direction: &[Expression]) -> Result<Expression, String> {
     match function_name {
-        "exp" => apply_to_first_arg!(exp, point, direction),
-        "ln" => assert_length!(1, ln, point, direction,
-            expr_if_else!(
-                expr_compare!(point[0].clone(), Gt, Expression::Number(0.0)),
-                expr_binop!(direction[0].clone(), Div, point[0].clone()),
-                Expression::None
+        "exp" => apply_to_first_arg!(exp, point, direction).map(|r| r.to_expr()),
+        "ln" => assert_length!(1, ln, point, direction, {
+            let p0 = simplify(point[0].clone());
+            simplify_if_else(
+                simplify_gt_zero(p0.clone()),
+                simplify_div(simplify(direction[0].clone()), p0),
+                Decomposed::from(Expression::None)
             )
-        ),
-        "log" => assert_length!(2, log, point, direction,
-            // D log(x, b)[s, t] = s \partial_x log(x, b) + t \partial_b log(x, b) = s/(x*ln(y)) - (t*ln(x))/(b*ln(b)²)     for x, b > 0expr_if_else!(
-            expr_if_else!(
-                expr_binop!(
-                    expr_compare!(point[0].clone(), Gt, Expression::Number(0.0)),
-                    And,
-                    expr_compare!(point[1].clone(), Gt, Expression::Number(0.0))
+            .to_expr()
+        }),
+        "log" => assert_length!(2, log, point, direction, {
+            // D log(x, b)[s, t] = s \partial_x log(x, b) + t \partial_b log(x, b) = s/(x*ln(y)) - (t*ln(x))/(b*ln(b)²)     for x, b > 0
+            let (p0, p1) = (simplify(point[0].clone()), simplify(point[1].clone()));
+            simplify_if_else(
+                simplify_and(
+                    simplify_gt_zero(p0.clone()),
+                    simplify_gt_zero(p1.clone())
                 ),
-                expr_binop!(
-                    expr_binop!(
-                        direction[0].clone(),
-                        Div,
-                        expr_binop!(
-                            point[0].clone(),
-                            Mul,
-                            expr_1arg_func!("ln", point[1].clone())
+                simplify_sub(
+                    simplify_div(
+                        simplify(direction[0].clone()),
+                        simplify_mul(
+                            p0.clone(),
+                            simplify_ln(p1.clone())
                         )
                     ),
-                    Sub,
-                    expr_binop!(
-                        expr_binop!(
-                            direction[1].clone(),
-                            Mul,
-                            expr_1arg_func!("ln", point[0].clone())
+                    simplify_div(
+                        simplify_mul(
+                            simplify(direction[1].clone()),
+                            simplify_ln(p0)
                         ),
-                        Div,
-                        expr_binop!(
-                            point[1].clone(),
-                            Mul,
-                            expr_square!(expr_1arg_func!("ln", point[1].clone()))
+                        simplify_mul(
+                            p1.clone(),
+                            simplify_pow(simplify_ln(p1), Decomposed::from_f64(2.0))
                         )
                     )
                 ),
-                Expression::None
+                Decomposed::from(Expression::None)
             )
-        ),
+            .to_expr()
+        }),
         "sign" => assert_length!(1, sign, point, direction,
-            expr_if_else!(
-                expr_compare!(point[0].clone(), Eq, Expression::Number(0.0)),
-                Expression::None,
-                Expression::Number(0.0)
+            simplify_if_else(
+                simplify_eq_zero(simplify(point[0].clone())),
+                Decomposed::from(Expression::None),
+                Decomposed::from_f64(0.0)
             )
+            .to_expr()
         ),
         "sqrt" => assert_length!(1, sqrt, point, direction,
-            expr_if_else!(
-                expr_compare!(point[0].clone(), Gt, Expression::Number(0.0)),
-                expr_binop!(
-                    direction[0].clone(),
-                    Div,
-                    expr_binop!(Expression::Number(2.0), Mul, expr_1arg_func!("sqrt", point[0].clone()))
-                ),
-                Expression::None
+            simplify_div(
+                simplify(direction[0].clone()),
+                simplify_mul(Decomposed::from_f64(2.0), simplify_sqrt(simplify(point[0].clone())))
             )
+            .to_expr()
         ),
         "cos" => assert_length!(1, cos, point, direction,
-            expr_unary_op!(Neg, apply_to_first_arg!(sin, point, direction)?)
+            simplify_neg(apply_to_first_arg!(sin, point, direction)?)
+            .to_expr()
         ),
         "sin" => assert_length!(1, sin, point, direction,
-            apply_to_first_arg!(cos, point, direction)?
+            apply_to_first_arg!(cos, point, direction)?.to_expr()
         ),
         "tan" => assert_length!(1, tan, point, direction,
-            expr_binop!(
-                direction[0].clone(),
-                Div,
-                expr_square!(Expression::Function(
-                    "cos".to_string(),
-                    vec![point[0].clone()]
-                ))
+            simplify_div(
+                simplify(direction[0].clone()),
+                simplify_pow(
+                    simplify_cos(simplify(point[0].clone())),
+                    Decomposed::from_f64(2.0)
+                )
             )
+            .to_expr()
         ),
         "acos" => assert_length!(1, acos, point, direction,
-            expr_binop!(
-                expr_unary_op!(Neg, direction[0].clone()),
-                Div,
-                expr_1arg_func!(
-                    "sqrt",
-                    expr_binop!(
-                        Expression::Number(1.0),
-                        Sub,
-                        expr_square!(point[0].clone())
+            simplify_div(
+                simplify_neg(simplify(direction[0].clone())),
+                simplify_sqrt(
+                    simplify_sub(
+                        Decomposed::from_f64(1.0),
+                        simplify_pow(simplify(point[0].clone()), Decomposed::from_f64(2.0))
                     )
                 )
             )
+            .to_expr()
         ),
         "asin" => assert_length!(1, asin, point, direction,
-            expr_binop!(
-                direction[0].clone(),
-                Div,
-                expr_1arg_func!(
-                    "sqrt",
-                    expr_binop!(
-                        Expression::Number(1.0),
-                        Sub,
-                        expr_square!(point[0].clone())
+            simplify_div(
+                simplify(direction[0].clone()),
+                simplify_sqrt(
+                    simplify_sub(
+                        Decomposed::from_f64(1.0),
+                        simplify_pow(simplify(point[0].clone()), Decomposed::from_f64(2.0))
                     )
                 )
             )
+            .to_expr()
         ),
         "atan" => assert_length!(1, atan, point, direction,
-            expr_binop!(
-                direction[0].clone(),
-                Div,
-                expr_binop!(
-                    Expression::Number(1.0),
-                    Add,
-                    expr_square!(point[0].clone())
+            simplify_div(
+                simplify(direction[0].clone()),
+                simplify_add(
+                    Decomposed::from_f64(1.0),
+                    simplify_pow(simplify(point[0].clone()), Decomposed::from_f64(2.0))
                 )
             )
+            .to_expr()
         ),
-        "cosh" => apply_to_first_arg!(sinh, point, direction),
-        "sinh" => apply_to_first_arg!(cosh, point, direction),
+        "cosh" => apply_to_first_arg!(sinh, point, direction).map(|r| r.to_expr()),
+        "sinh" => apply_to_first_arg!(cosh, point, direction).map(|r| r.to_expr()),
         "tanh" => assert_length!(1, tanh, point, direction,
-            expr_binop!(
-                direction[0].clone(),
-                Mul,
-                expr_binop!(
-                    Expression::Number(1.0),
-                    Sub,
-                    expr_square!(
-                        Expression::Function(
-                            "tanh".to_string(),
-                            vec![point[0].clone()]
-                        )
+            simplify_mul(
+                simplify(direction[0].clone()),
+                simplify_sub(
+                    Decomposed::from_f64(1.0),
+                    simplify_pow(
+                        simplify_tanh(simplify(point[0].clone())),
+                        Decomposed::from_f64(2.0)
                     )
                 )
             )
+            .to_expr()
         ),
         "acosh" => assert_length!(1, acosh, point, direction,
-            expr_binop!(
-                direction[0].clone(),
-                Div,
-                expr_1arg_func!(
-                    "sqrt",
-                    expr_binop!(
-                        expr_square!(point[0].clone()),
-                        Sub,
-                        Expression::Number(1.0)
+            simplify_div(
+                simplify(direction[0].clone()),
+                simplify_sqrt(
+                    simplify_sub(
+                        simplify_pow(simplify(point[0].clone()), Decomposed::from_f64(2.0)),
+                        Decomposed::from_f64(1.0)
                     )
                 )
             )
+            .to_expr()
         ),
         "asinh" => assert_length!(1, asinh, point, direction,
-            expr_binop!(
-                direction[0].clone(),
-                Div,
-                expr_1arg_func!(
-                    "sqrt",
-                    expr_binop!(
-                        expr_square!(point[0].clone()),
-                        Add,
-                        Expression::Number(1.0)
+            simplify_div(
+                simplify(direction[0].clone()),
+                simplify_sqrt(
+                    simplify_add(
+                        simplify_pow(simplify(point[0].clone()), Decomposed::from_f64(2.0)),
+                        Decomposed::from_f64(1.0)
                     )
                 )
             )
+            .to_expr()
         ),
         "atanh" => assert_length!(1, atanh, point, direction,
-            expr_binop!(
-                direction[0].clone(),
-                Div,
-                expr_binop!(
-                    Expression::Number(1.0),
-                    Sub,
-                    expr_square!(point[0].clone())
+            simplify_div(
+                simplify(direction[0].clone()),
+                simplify_sub(
+                    Decomposed::from_f64(1.0),
+                    simplify_pow(simplify(point[0].clone()), Decomposed::from_f64(2.0))
                 )
             )
+            .to_expr()
         ),
         // Jacobi's formula states `d/dt det A(t) = tr(adj(A(t)) * d/dt A(t))`.
         // Here, `A(t) = point[0]` and `d/dt A(t) = direction[0]`.
         "det" => assert_length!(1, det, point, direction,
             expr_1arg_func!(
                 "tr",
-                expr_binop!(
-                    Expression::Function("adj".to_string(), vec![point[0].clone()]),
-                    Mul,
-                    direction[0].clone()
+                simplify_mul(
+                    Decomposed::from_indecomposable(
+                        expr_1arg_func!("adj", simplify(point[0].clone()).to_expr())
+                    ),
+                    Decomposed::from_indecomposable(direction[0].clone())
                 )
+                .to_expr()
             )
         ),
         // `tr` is linear and thus commutes with the derivative.
@@ -839,10 +839,14 @@ pub fn get_default_derivative(function_name: &str, point: &[Expression], directi
                         point[2].clone(), // a
                         point[3].clone(), // b
                         point[4].clone(), // i
-                        expr_if_else!(
-                            expr_compare!(point[4].clone(), Eq, Expression::Identifier(outer_sum_index_var.clone())), // i == j
-                            direction[5].clone(), // d/dx f(i)   (no need to replace i by j because here, i == j anyway)
-                            point[5].clone() // f(i)(point)
+                        Expression::IfElse(
+                            Box::new(Expression::BinaryOperation( // i == j
+                                Box::new(point[4].clone()),
+                                BinaryOperation::Comp(Comparison::Eq, None),
+                                Box::new(Expression::Identifier(outer_sum_index_var.clone()))
+                            )),
+                            Box::new(simplify(direction[5].clone()).to_expr()), // d/dx f(i)   (no need to replace i by j because here, i == j anyway)
+                            Box::new(simplify(point[5].clone()).to_expr()) // f(i)(point)
                         )
                     ]
                 ))

@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use crate::{defaults, dispatch_matrix, dispatch_vector, expr_1arg_func, expr_binop, expr_compare, expr_if_else, expr_unary_op, ok};
+use crate::{defaults, dispatch_matrix, dispatch_vector, expr_binop, ok};
 use crate::lang::eval;
 use crate::math::{Env, Expression, FunctionRepr, integration, Object, ObjType, VarStack};
 use crate::math::expressions::Repeat;
@@ -115,7 +115,7 @@ pub fn analytic_partial_derivative(
         ).map(|s| s.map(|val| Expression::Matrix(*m, *n, val))),
         Expression::UnaryOperation(UnaryOperation::Neg, rhs) => analytic_partial_derivative(rhs, wrt, extra_vars, env).map(
             |s| s.map(
-                |e| expr_unary_op!(Neg, e)
+                |e| simplify_neg(Decomposed::from(e)).to_expr()
             )
         ),
         Expression::UnaryOperation(UnaryOperation::Not, _) => Err("Cannot differentiate the operation `Not`.".to_string()),
@@ -125,12 +125,19 @@ pub fn analytic_partial_derivative(
             //      => d/dx f(x)! = f'(x) * \int_0^\infty e^{-t} t^{f(x)} ln(t) dt
             let wrt = inner.get_new_free_identifier("t");
             ok!(Expression::Integral(
-                Box::new(expr_binop!(
-                    expr_1arg_func!("exp", expr_unary_op!(Neg, Expression::Identifier(wrt.clone()))),
-                    Mul,
-                    expr_1arg_func!("ln", Expression::Identifier(wrt.clone())),
-                    expr_binop!(Expression::Identifier(wrt.clone()), Pow(true), *inner.clone())
-                )),
+                Box::new(
+                    simplify_mul(
+                        simplify_exp(simplify_neg(Decomposed::from(Expression::Identifier(wrt.clone())))),
+                        simplify_mul(
+                            simplify_ln(Decomposed::from(Expression::Identifier(wrt.clone()))),
+                            simplify_pow(
+                                Decomposed::from(Expression::Identifier(wrt.clone())),
+                                simplify(*inner.clone())
+                            )
+                        )
+                    )
+                    .to_expr()
+                ),
                 Box::new(Expression::Number(0.0)),
                 Box::new(Expression::Identifier("inf".to_string())),
                 wrt
@@ -138,15 +145,22 @@ pub fn analytic_partial_derivative(
         }
         Expression::UnaryOperation(UnaryOperation::Abs, rhs) => analytic_partial_derivative(rhs, wrt, extra_vars, env)
         .map(|s| s.map(
-            |diff_r| expr_if_else!(
-                expr_compare!(*rhs.clone(), Gt, Expression::Number(0.0)),
-                diff_r.clone(),
-                expr_if_else!(
-                    expr_compare!(*rhs.clone(), Lt, Expression::Number(0.0)),
-                    expr_unary_op!(Neg, diff_r.clone()),
-                    Expression::None
+            |diff_r| {
+                let rhs = simplify(*rhs.clone());
+                // Notice that `diff_r` is already simplified, so it suffices to wrap it in
+                // `Decomposed` instead of simplifying the whole thing again.
+                let diff_r = Decomposed::from(diff_r);
+                simplify_if_else(
+                    simplify_gt_zero(rhs.clone()),
+                    diff_r.clone(),
+                    simplify_if_else(
+                        simplify_lt_zero(rhs),
+                        simplify_neg(diff_r),
+                        Decomposed::from(Expression::None)
+                    )
                 )
-            )
+                .to_expr()
+            }
         )),
         Expression::UnaryOperation(UnaryOperation::Norm(opt), rhs) => {
             match rhs.make_type_top_level(
@@ -163,15 +177,20 @@ pub fn analytic_partial_derivative(
                         // In this case, the norm should simply be an absolute value, regardless of `opt`.
                         analytic_partial_derivative(&other, wrt, extra_vars, env)
                         .map(|s| s.map(
-                            |diff_r| expr_if_else!(
-                                expr_compare!(other.clone(), Gt, Expression::Number(0.0)),
-                                diff_r.clone(),
-                                expr_if_else!(
-                                    expr_compare!(other, Lt, Expression::Number(0.0)),
-                                    expr_unary_op!(Neg, diff_r),
-                                    Expression::None
+                            |diff_r| {
+                                let other = simplify(other);
+                                let diff_r = Decomposed::from(diff_r);
+                                simplify_if_else(
+                                    simplify_gt_zero(other.clone()),
+                                    diff_r.clone(),
+                                    simplify_if_else(
+                                        simplify_lt_zero(other),
+                                        simplify_neg(diff_r),
+                                        Decomposed::from(Expression::None)
+                                    )
                                 )
-                            )
+                                .to_expr()
+                            }
                         ))
                     }
                 },
@@ -194,41 +213,91 @@ pub fn analytic_partial_derivative(
                 }
                 Err(MakeTypeTopLevelError::Err(e)) => Err(e)
             }
-            
         }
         Expression::BinaryOperation(lhs, op, rhs) => Status::combine(
             analytic_partial_derivative(lhs, wrt, extra_vars, env)?,
             analytic_partial_derivative(rhs, wrt, extra_vars, env)?,
-            |diff_l, diff_r| match op {
-                BinaryOperation::Add => Ok(simplify_add(diff_l, diff_r)),
-                BinaryOperation::Sub => Ok(simplify_sub(diff_l, diff_r)),
-                BinaryOperation::Quo | BinaryOperation::Rem | BinaryOperation::And | BinaryOperation::Or
-                    => Err(format!("Cannot differentiate the operation `{op}`.")),
-                BinaryOperation::Mul => Ok(simplify_add(
-                    simplify_mul(diff_l, *rhs.clone()), // f'(x) * g(x)
-                    simplify_mul(*lhs.clone(), diff_r)  // f(x) * g'(x)
-                )),
-                BinaryOperation::Div => Ok(simplify_div( // d/dx (f(x) / g(x)) = (f'(x)g(x) - f(x)g'(x)) / g(x)²
-                    simplify_sub(
-                        simplify_mul(diff_l, *rhs.clone()),
-                        simplify_mul(*lhs.clone(), diff_r)
-                    ),
-                    simplify_pow(*rhs.clone(), Expression::Number(2.0))
-                )),
-                BinaryOperation::Pow(_) => Ok(simplify_mul( // d/dx (f(x) ^ g(x)) = f(x)^(g(x)-1) * (f'(x)g(x) + f(x)g'(x)ln(f(x)))
-                    simplify_pow(
-                        *lhs.clone(),
-                        simplify_sub(*rhs.clone(), Expression::Number(1.0))
-                    ),
-                    simplify_add(
-                        simplify_mul(diff_l, *rhs.clone()),
-                        simplify_mul(
-                            simplify_mul(*lhs.clone(), diff_r),
-                            Expression::Function("ln".to_string(), vec![*lhs.clone()])
+            |diff_l, diff_r| {
+                macro_rules! simplify_if {
+                    ($x:expr, $cond:expr) => {
+                        if $cond {
+                            simplify(*$x.clone())
+                        } else {
+                            Decomposed::from_indecomposable(*$x.clone())
+                        }
+                    }
+                }
+                let l_is_scalar = matches!(lhs.get_type(&extra_vars.with(wrt, Cow::Owned(Object::Real(42.0))), env), Ok(ObjType::Scalar));
+                let r_is_scalar = matches!(rhs.get_type(&extra_vars.with(wrt, Cow::Owned(Object::Real(42.0))), env), Ok(ObjType::Scalar));
+                let merge_inbetween = !l_is_scalar || !r_is_scalar;
+                let diff_l = if l_is_scalar {
+                    Decomposed::from(diff_l)
+                } else {
+                    Decomposed::from_indecomposable(diff_l)
+                };
+                let diff_r = if r_is_scalar {
+                    Decomposed::from(diff_r)
+                } else {
+                    Decomposed::from_indecomposable(diff_r)
+                };
+                match op {
+                    BinaryOperation::Add => Ok(simplify_add(diff_l, diff_r).to_expr()),
+                    BinaryOperation::Sub => Ok(simplify_sub(diff_l, diff_r).to_expr()),
+                    BinaryOperation::Quo | BinaryOperation::Rem | BinaryOperation::And | BinaryOperation::Or
+                        => Err(format!("Cannot differentiate the operation `{op}`.")),
+                    BinaryOperation::Mul => Ok(
+                        simplify_add(
+                            simplify_mul(diff_l, simplify_if!(rhs, r_is_scalar)) // f'(x) * g(x)
+                            .to_indecomposable_if(merge_inbetween),
+                            simplify_mul(simplify_if!(lhs, l_is_scalar), diff_r)  // f(x) * g'(x)
+                            .to_indecomposable_if(merge_inbetween),
                         )
-                    )
-                )),
-                BinaryOperation::Comp(..) => Err(format!("Cannot differentiate comparison {:?}", expr)),
+                        .to_expr()
+                    ),
+                    BinaryOperation::Div => {
+                        // d/dx (f(x) / g(x)) = (f'(x)g(x) - f(x)g'(x)) / g(x)²
+                        let rhs = simplify_if!(rhs, r_is_scalar);
+                        Ok(
+                            simplify_div(
+                                simplify_sub(
+                                    simplify_mul(diff_l, rhs.clone()).to_indecomposable_if(merge_inbetween),
+                                    simplify_mul(simplify_if!(lhs, l_is_scalar), diff_r).to_indecomposable_if(merge_inbetween)
+                                ).to_indecomposable_if(merge_inbetween),
+                                simplify_pow(rhs, Decomposed::from_f64(2.0))
+                            )
+                            .to_expr()
+                        )
+                    }
+                    BinaryOperation::Pow(_) => {
+                        // d/dx (f(x) ^ g(x)) = f(x)^(g(x)-1) * (f'(x)g(x) + f(x)g'(x)ln(f(x)))
+                        // (provided f(x) > 0)
+                        let (lhs, rhs) = (simplify_if!(lhs, l_is_scalar), simplify_if!(rhs, r_is_scalar));
+                        Ok(
+                            simplify_if_else(
+                                simplify_gt_zero(lhs.clone()),
+                                simplify_mul(
+                                    simplify_pow(
+                                        lhs.clone(),
+                                        simplify_sub(
+                                            rhs.clone(),
+                                            Decomposed::from_f64(1.0)
+                                        )
+                                    ).to_indecomposable_if(merge_inbetween),
+                                    simplify_add(
+                                        simplify_mul(diff_l, rhs).to_indecomposable_if(merge_inbetween),
+                                        simplify_mul(
+                                            simplify_mul(lhs.clone(), diff_r).to_indecomposable_if(merge_inbetween),
+                                            simplify_ln(lhs).to_indecomposable_if(merge_inbetween)
+                                        ).to_indecomposable_if(merge_inbetween)
+                                    ).to_indecomposable_if(merge_inbetween)
+                                ),
+                                Decomposed::Indecomposable(Expression::None)
+                            )
+                            .to_expr()
+                        )
+                    }
+                    BinaryOperation::Comp(..) => Err(format!("Cannot differentiate comparison {:?}", expr)),
+                }
             }
         ),
         Expression::FoldedOperation(FoldedOperation::Sum, varname, from, conditions, to, inner) => {
@@ -299,26 +368,76 @@ pub fn analytic_partial_derivative(
                     from.clone(),
                     conditions.clone(),
                     to.clone(),
-                    Box::new(expr_binop!(
-                        inner_diff,
-                        Mul,
-                        Expression::FoldedOperation(
-                            FoldedOperation::Product,
-                            new_index_var.clone(),
-                            from.clone(),
-                            {
-                                let mut cond = conditions.iter().map(|c| c.replace_identifiers(&HashMap::from([(index_var, &Expression::Identifier(new_index_var.clone()))]))).collect::<Vec<_>>();
-                                cond.push(expr_binop!(
-                                    Expression::Identifier(new_index_var.clone()),
-                                    Comp(Comparison::Neq, None),
-                                    Expression::Identifier(index_var.clone())
-                                ));
-                                cond
-                            },
-                            Box::new(to.replace_identifiers(&HashMap::from([(index_var, &Expression::Identifier(new_index_var.clone()))]))),
-                            Box::new(inner.replace_identifiers(&HashMap::from([(index_var, &Expression::Identifier(new_index_var))])))
-                        )
-                    ))
+                    Box::new(
+                        // Checking the type is useful here because if `inner` is anything but a scalar,
+                        // we do not necessarily have commutativity of multiplication and will have to
+                        // write out `prod_{j<i} inner(j) * diff_inner(i) * prod_{j>i} inner(j)`.
+                        // If `inner` is a scalar, this reduces to `diff_inner(i) * prod_{j!=i} inner(j)`.
+                        if let Ok(ObjType::Scalar) = inner.get_type(&extra_vars.with(wrt, Cow::Owned(Object::Real(42.0))), env) {
+                            simplify_mul(
+                                Decomposed::from(inner_diff),
+                                simplify_product(
+                                    new_index_var.clone(),
+                                    simplify(*from.clone()),
+                                    {
+                                        let mut cond = conditions.iter().map(|c| simplify(
+                                            c.replace_identifiers(&HashMap::from([(index_var, &Expression::Identifier(new_index_var.clone()))]))
+                                        )).collect::<Vec<_>>();
+                                        cond.push(Decomposed::from(expr_binop!(
+                                            Expression::Identifier(new_index_var.clone()),
+                                            Comp(Comparison::Neq, None),
+                                            Expression::Identifier(index_var.clone())
+                                        )));
+                                        cond
+                                    },
+                                    simplify(to.replace_identifiers(&HashMap::from([(index_var, &Expression::Identifier(new_index_var.clone()))]))),
+                                    simplify(inner.replace_identifiers(&HashMap::from([(index_var, &Expression::Identifier(new_index_var))])))
+                                )
+                            )
+                            .to_expr()
+                        } else {
+                            expr_binop!(
+                                Expression::FoldedOperation(
+                                    FoldedOperation::Product,
+                                    new_index_var.clone(),
+                                    from.clone(),
+                                    {
+                                        let mut cond = conditions.iter().map(
+                                            |c| c.replace_identifiers(&HashMap::from([(index_var, &Expression::Identifier(new_index_var.clone()))]))
+                                        ).collect::<Vec<_>>();
+                                        cond.push(expr_binop!(
+                                            Expression::Identifier(new_index_var.clone()),
+                                            Comp(Comparison::Lt, None),
+                                            Expression::Identifier(index_var.clone())
+                                        ));
+                                        cond
+                                    },
+                                    Box::new(to.replace_identifiers(&HashMap::from([(index_var, &Expression::Identifier(new_index_var.clone()))]))),
+                                    Box::new(inner.replace_identifiers(&HashMap::from([(index_var, &Expression::Identifier(new_index_var.clone()))])))
+                                ),
+                                Mul,
+                                inner_diff,
+                                Expression::FoldedOperation(
+                                    FoldedOperation::Product,
+                                    new_index_var.clone(),
+                                    from.clone(),
+                                    {
+                                        let mut cond = conditions.iter().map(
+                                            |c| c.replace_identifiers(&HashMap::from([(index_var, &Expression::Identifier(new_index_var.clone()))]))
+                                        ).collect::<Vec<_>>();
+                                        cond.push(expr_binop!(
+                                            Expression::Identifier(new_index_var.clone()),
+                                            Comp(Comparison::Gt, None),
+                                            Expression::Identifier(index_var.clone())
+                                        ));
+                                        cond
+                                    },
+                                    Box::new(to.replace_identifiers(&HashMap::from([(index_var, &Expression::Identifier(new_index_var.clone()))]))),
+                                    Box::new(inner.replace_identifiers(&HashMap::from([(index_var, &Expression::Identifier(new_index_var))])))
+                                )
+                            )
+                        }
+                    )
                 ),
                 warnings
             })
@@ -365,17 +484,35 @@ pub fn analytic_partial_derivative(
                 Status::combine(
                     analytic_partial_derivative(a, wrt, extra_vars, env)?,
                     analytic_partial_derivative(b, wrt, extra_vars, env)?,
-                    |da, db| Ok(expr_binop!(
-                        simplify_mul(
-                            inner.replace_identifiers(&HashMap::from([(int_var, &(**b).clone())])),
-                            db
-                        ),
-                        Sub,
-                        simplify_mul(
-                            inner.replace_identifiers(&HashMap::from([(int_var, &(**a).clone())])),
-                            da
-                        )
-                    ))
+                    |da, db| Ok(
+                        // We can safely assume that `da` and `db` are reals; however, `inner` could be something else.
+                        if let Ok(ObjType::Scalar) = inner.get_type(&extra_vars.with(wrt, Cow::Owned(Object::Real(42.0))), env) {
+                            simplify_sub(
+                                simplify_mul(
+                                    simplify(inner.replace_identifiers(&HashMap::from([(int_var, &(**b).clone())]))),
+                                    Decomposed::from(db)
+                                ),
+                                simplify_mul(
+                                    simplify(inner.replace_identifiers(&HashMap::from([(int_var, &(**a).clone())]))),
+                                    Decomposed::from(da)
+                                )
+                            )
+                            .to_expr()
+                        } else {
+                            simplify_sub(
+                                // N.b.: the call below can't create problematic factors for non-scalar `inner`, so `.to_indecomposable()` after it is unnecessary.
+                                simplify_mul(
+                                    simplify(inner.replace_identifiers(&HashMap::from([(int_var, &(**b).clone())]))).to_indecomposable(),
+                                    Decomposed::from(db)
+                                ), // <--- No `.to_indecomposable()` needed here
+                                simplify_mul(
+                                    simplify(inner.replace_identifiers(&HashMap::from([(int_var, &(**a).clone())]))).to_indecomposable(),
+                                    Decomposed::from(da)
+                                )
+                            )
+                            .to_expr()
+                        }
+                    )
                 )
             } else {
                 ok!(
@@ -394,7 +531,14 @@ pub fn analytic_partial_derivative(
         Expression::IfElse(x, y, z) => Status::combine(
             analytic_partial_derivative(y, wrt, extra_vars, env)?,
             analytic_partial_derivative(z, wrt, extra_vars, env)?,
-            |y, z| Ok(expr_if_else!(*x.clone(), y, z))
+            |y, z| Ok(
+                simplify_if_else(
+                    simplify(*x.clone()),
+                    Decomposed::from(y),
+                    Decomposed::from(z)
+                )
+                .to_expr()
+            )
         )
     }
 }
@@ -510,29 +654,38 @@ fn apd_of_norm_for_vector(
             // Hence, D(f(g(x)))[Dg(x)[1]] = (\partial_j ||y||_p |_{g(x)})_j * (g'_j(x))_j
             //                             = ((|g_j(x)| / ||g(x)||_p)^{p-1} sign(g_j(x)))_j * (g'_j(x))_j
             //                               (vector multiplication)
-            Ok(Status {
-                value: expr_binop!(
-                    Expression::Vector(components.iter().map(|g_j|
-                        expr_binop!(
-                            expr_1arg_func!("sign", g_j.clone()),
-                            Mul,
-                            expr_binop!(
-                                expr_binop!(
-                                    expr_unary_op!(Abs, g_j.clone()),
-                                    Div,
-                                    expr_unary_op!(Norm(normtype_opt.clone()), Expression::Vector(components.clone()))
-                                ),
-                                Pow(true),
-                                expr_binop!(Expression::Number(p), Sub, Expression::Number(1.0))
+            // Simplifications below are fine because all `g_j` are scalars.
+            // We only have to use the non-simplify-version on the outside,
+            // but we still want to take care of the signs, which we thus do explicitly.
+            let simpl_g_j = components.iter().map(|g_j| simplify(g_j.clone())).collect::<Vec<_>>();
+            let left_vec = simplify_vec(
+                simpl_g_j.iter().map(
+                    |g_j| simplify_mul(
+                        simplify_sign(g_j.clone()),
+                        simplify_pow(
+                            simplify_div(
+                                simplify_abs(g_j.clone()),
+                                Decomposed::from(crate::expr_unary_op!(
+                                    Norm(normtype_opt.clone()),
+                                    simplify_vec(simpl_g_j.clone()).to_expr()
+                                ))
+                            ),
+                            simplify_sub(
+                                Decomposed::from_f64(p),
+                                Decomposed::from_f64(1.0)
                             )
                         )
-                    ).collect()),
-                    Mul,
-                    Expression::Vector(Status::from_iter(
-                        components.iter(),
-                        |g_j| analytic_partial_derivative(g_j, wrt, extra_vars, env)
-                    )?.unpack_into(&mut warnings))
-                ),
+                    )
+                )
+                .collect()
+            );
+            let right_vec = simplify_vec(Status::from_iter(
+                components.iter(),
+                |g_j| analytic_partial_derivative(g_j, wrt, extra_vars, env)
+                .map(|s| s.map(Decomposed::from))
+            )?.unpack_into(&mut warnings));
+            Ok(Status {
+                value: simplify_mul(left_vec.to_indecomposable(), right_vec.to_indecomposable()).to_expr(),
                 warnings
             })
         }
@@ -612,12 +765,17 @@ pub fn analytic_directional_derivative(
             Status::combine(
                 analytic_directional_derivative(vars, f_expr, point, direction, extra_vars, env)?,
                 integration::integrate(
-                    &expr_binop!(
-                        expr_1arg_func!("exp", expr_unary_op!(Neg, Expression::Identifier(wrt.clone()))),
-                        Mul,
-                        expr_1arg_func!("ln", Expression::Identifier(wrt.clone())),
-                        expr_binop!(Expression::Identifier(wrt.clone()), Pow(true), *f_expr.clone()) // Notice the power is f(p) and not f(p)-1
-                    ),
+                    &simplify_mul(
+                        simplify_exp(simplify_neg(Decomposed::from(Expression::Identifier(wrt.clone())))),
+                        simplify_mul(
+                            simplify_ln(Decomposed::from(Expression::Identifier(wrt.clone()))),
+                            simplify_pow(
+                                Decomposed::from(Expression::Identifier(wrt.clone())),
+                                simplify(*f_expr.clone()) // Notice the power is f(p) and not f(p)-1
+                            )
+                        )
+                    )
+                    .to_expr(),
                     0.0,
                     f64::INFINITY,
                     &wrt,
