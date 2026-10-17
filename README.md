@@ -43,7 +43,8 @@ The basic syntax is the natural one with usual operator precedence.
 
 ### User-defined constants and functions
 - Definition of constants: type `x := expr`, where `expr` can be any expression that can be evaluated to an object at the time of the definition.
-- Names must start with a character that is either alphabetic, an underscore or among the special characters in the sidebar (e.g. `α`). The following characters may be digits too. Names starting with three underscores (`___`) are forbidden, as they are reserved for internal helper functions and variables.
+- Names must start with a character that is either alphabetic or an underscore. The following characters may be digits too. Alternatively, it can be among the special characters in the sidebar (e.g. `α`), but then, it must have only consist of that character. Names starting with three underscores (`___`) are forbidden, as they are reserved for internal helper functions and variables.
+- Special characters from the sidebar automatically break words. For instance, `αβ` will be parsed as `α * β`.
 - Such an assignment returns the evaluation of `expr`, so one can write e.g. `(x := 2) + 1` to obtain `3` as output and define `x` simultaneously.
 - If `x` was already a defined constant, this will re-define it and permanently suppress the old value.
 - Tuple assignment is supported: write e.g. `(x, y) := rhs` where `rhs` can be evaluated to a tuple of the same size. Function assignment is not allowed in this way.
