@@ -13,6 +13,7 @@ pub mod differentiation;
 pub mod env;
 pub mod expressions;
 pub mod integration;
+pub mod limits;
 pub mod matrices;
 pub mod objects;
 pub mod operations;
@@ -34,3 +35,6 @@ pub use crate::math::vectors::Vector;
 /// 
 /// My L1 Cache is 512 KiB bit, so I set the constant to 128 (256 would theoretically fit, but I want to leave some space for potential other things).
 pub const BLOCK_SIZE: usize = 64;
+
+pub const ABS_TOL: f64 = 1e-12;
+pub const REL_TOL: f64 = 1e-10;

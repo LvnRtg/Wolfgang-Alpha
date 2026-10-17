@@ -805,6 +805,14 @@ macro_rules! simplify_match_statement {
                         wrt
                     )
                 ),
+                Expression::Limit(idx_var, direction, idx_limit, inner) => Decomposed::Indecomposable(
+                    Expression::Limit(
+                        idx_var,
+                        direction,
+                        Box::new(simplify(*idx_limit).to_expr()),
+                        Box::new(simplify(*inner).to_expr())
+                    )
+                ),
                 Expression::IfElse(condition, iftrue, iffalse) => Decomposed::Indecomposable(
                     simplify_if_else(
                         simplify(*condition),

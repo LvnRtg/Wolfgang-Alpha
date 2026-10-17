@@ -121,6 +121,8 @@ pub trait Scalar:
     fn one() -> Self;
     fn is_one(&self) -> bool;
 
+    fn is_infinite(&self) -> bool;
+
     fn abs(&self) -> Self::UnderlyingReal;
     fn powi(&self, pow: i32) -> Self;
 

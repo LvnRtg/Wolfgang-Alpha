@@ -6,8 +6,18 @@ use crate::math::objects::{Object, try_operation};
 use crate::math::operations::BinaryOperation;
 use crate::math::traits::*;
 
+
+/// Maximum amount of warnings emitted by iterations, e.g. folded operations.
+/// 
+/// Reason for having a cap: every iteration could emit at least one warning (in fact, if some iteration emits a warning,
+/// this is very likely), which would saturate the console and consume huge amounts of memory for nothing.
+/// 
+/// This cap isn't enforced automatically, only when calling `unpack_into_with_cap`.
+pub const WARNING_CAP: usize = 10;
+
+
 /// Contains a value of type `T` and a (potentially empty) list of warnings.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Status<T> {
     pub value: T,
     pub warnings: Vec<String>
@@ -18,7 +28,7 @@ pub type ExtResult = Result<Status<Object>, String>;
 #[macro_export]
 macro_rules! ok {
     ($inner:expr) => {
-        Ok(Status::ok($inner))
+        Ok(crate::status::Status::ok($inner))
     }
 }
 

@@ -18,7 +18,13 @@ impl fmt::Display for Expression {
             Expression::Number(x) => write!(f, "{}", x),
             Expression::Tuple(x) => write!(f, "({})", x.iter().map(|y| format!("{}", y)).collect::<Vec<String>>().join(", ")),
             Expression::Vector(x) => write!(f, "[{}]", x.iter().map(|y| format!("{}", y)).collect::<Vec<String>>().join(", ")),
-            Expression::Matrix(m, n, x) => write!(f, "[{}]", (0..*m).map(|i| (0..*n).map(|j| format!("{}", x[i*n+j])).collect::<Vec<String>>().join(", ")).collect::<Vec<String>>().join("; ")),
+            Expression::Matrix(m, n, x) => write!(
+                f,
+                "[{}]",
+                (0..*m).map(
+                    |i| (0..*n).map(|j| format!("{}", x[i*n+j])).collect::<Vec<String>>().join(", ")
+                ).collect::<Vec<String>>().join("; ")
+            ),
             Expression::UnaryOperation(op, r) => {
                 match op {
                     UnaryOperation::Neg => write!(f, "(-({}))", r),
@@ -29,10 +35,23 @@ impl fmt::Display for Expression {
                 }
             },
             Expression::BinaryOperation(l, op, r) => write!(f, "({} {} {})", l, op, r),
-            Expression::FoldedOperation(op, ident, from, conditions, to, inner_operand)
-                => write!(f, "{}_{{{}={}{}{}}}^{{{}}} {}", op, ident, from, if conditions.is_empty() {""} else {", "}, conditions.iter().map(|e| format!("{}", e)).collect::<Vec<_>>().join(", "), to, inner_operand),
-            Expression::Function(name, args)
-                => write!(f, "{}({})", name, args.iter().map(|x| format!("{}", x)).collect::<Vec<String>>().join(", ")),
+            Expression::FoldedOperation(op, ident, from, conditions, to, inner_operand) => write!(
+                f,
+                "{}_{{{}={}{}{}}}^{{{}}} {}",
+                op,
+                ident,
+                from,
+                if conditions.is_empty() {""} else {", "},
+                conditions.iter().map(|e| format!("{}", e)).collect::<Vec<_>>().join(", "),
+                to,
+                inner_operand
+            ),
+            Expression::Function(name, args) => write!(
+                f,
+                "{}({})",
+                name,
+                args.iter().map(|x| format!("{}", x)).collect::<Vec<String>>().join(", ")
+            ),
             Expression::Assignment(lhs, rhs) => write!(f, "{} := {}", lhs, rhs),
             Expression::PartialDerivative(seq, expr) => {
                 let mut denominator_strings_rev = Vec::<String>::with_capacity(seq.len());
@@ -77,12 +96,45 @@ impl fmt::Display for Expression {
                     expr
                 )
             }
-            Expression::DirectionalDerivative(vars, expr, point, direction)
-                => write!(f, "D_{{{}}} ({})({:?})[{:?}]", vars.join(", "), expr, point, direction),
-            Expression::Integral(func, a, b, x)
-                => write!(f, "int_{{{}}}^{{{}}} ({}) d{}", a, b, func, x),
-            Expression::IfElse(condition, iftrue, iffalse)
-                => write!(f, "if ({}) {{{}}} else {{{}}}", condition, iftrue, iffalse),
+            Expression::DirectionalDerivative(vars, expr, point, direction) => write!(
+                f,
+                "D_{{{}}} ({})({:?})[{:?}]",
+                vars.join(", "),
+                expr,
+                point,
+                direction
+            ),
+            Expression::Integral(func, a, b, x) => write!(
+                f,
+                "int_{{{}}}^{{{}}} ({}) d{}",
+                a,
+                b,
+                func,
+                x
+            ),
+            Expression::Limit(idx_name, direction, idx_limit, inner) => write!(
+                f,
+                "lim_{{{} {} {}}} {}",
+                idx_name,
+                if *direction == 2 {
+                    '→'
+                } else if let Expression::Number(x) = &**idx_limit && x.is_infinite() {
+                    '→'
+                } else if *direction == 1 {
+                    '↘'
+                } else {
+                    '↗'
+                },
+                idx_limit,
+                inner
+            ),
+            Expression::IfElse(condition, iftrue, iffalse) => write!(
+                f,
+                "if ({}) {{{}}} else {{{}}}",
+                condition,
+                iftrue,
+                iffalse
+            )
         }
     }
 }
@@ -305,6 +357,42 @@ impl Expression {
                     multlined.iter_mut().for_each(|l| l.insert_str(0, "  "));
                     multlined.insert(0, format!("int_{}^{}", a.to_string_with_braces(), b.to_string_with_braces()));
                     multlined.push(format!(" d{}", x));
+                }
+                multlined
+            }
+            Expression::Limit(idx_name, direction, idx_limit, inner) => {
+                let mut multlined = inner.to_multline();
+                if multlined.len() == 1 {
+                    multlined[0].insert_str(0, format!(
+                        "lim_{{{} {} {}}} ",
+                        idx_name,
+                        if *direction == 2 {
+                            '→'
+                        } else if let Expression::Number(x) = &**idx_limit && x.is_infinite() {
+                            '→'
+                        } else if *direction == 1 {
+                            '↘'
+                        } else {
+                            '↗'
+                        },
+                        idx_limit
+                    ).as_str());
+                } else {
+                    multlined.iter_mut().for_each(|l| l.insert_str(0, "  "));
+                    multlined.insert(0, format!(
+                        "lim_{{{} {} {}}} ",
+                        idx_name,
+                        if *direction == 2 {
+                            '→'
+                        } else if let Expression::Number(x) = &**idx_limit && x.is_infinite() {
+                            '→'
+                        } else if *direction == 1 {
+                            '↘'
+                        } else {
+                            '↗'
+                        },
+                        idx_limit
+                    ));
                 }
                 multlined
             }

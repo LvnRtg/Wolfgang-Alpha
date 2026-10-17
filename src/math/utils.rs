@@ -2,14 +2,11 @@
 
 use num_traits::{Euclid, Float, int::PrimInt, NumCast};
 
+use crate::math::{ABS_TOL, REL_TOL};
 use crate::math::objects::{Object, try_operation};
 use crate::math::operations::BinaryOperation;
 use crate::math::traits::*;
 use crate::status::{ExtResult, Status};
-
-
-const ABS_TOL: f64 = 1e-12;
-const REL_TOL: f64 = 1e-10;
 
 
 pub fn quoi<T: Euclid + PrimInt>(x: T, y: T) -> T {
@@ -32,21 +29,26 @@ pub fn min<T: PartialOrd>(x: T, y: T) -> T {
     if x <= y {x} else {y}
 }
 
-#[inline]
 /// Returns the maximum of the given iterator. If the iterator is empty, returns `None`.
-pub fn max_of<T: PartialOrd>(iter: impl Iterator<Item = T>) -> Option<T> {
-    iter.fold(None, |acc, x| match acc {
-        None => Some(x),
-        Some(m) => Some(if x > m { x } else { m }),
-    })
+pub fn max_of<T: PartialOrd>(mut iter: impl Iterator<Item = T>) -> Option<T> {
+    let mut max = iter.next()?;
+    for x in iter {
+        if x > max {
+            max = x;
+        }
+    }
+    Some(max)
 }
 #[inline]
 /// Returns the minimum of the given iterator. If the iterator is empty, returns `None`.
-pub fn min_of<T: PartialOrd>(iter: impl Iterator<Item = T>) -> Option<T> {
-    iter.fold(None, |acc, x| match acc {
-        None => Some(x),
-        Some(m) => Some(if m <= x { m } else { x }),
-    })
+pub fn min_of<T: PartialOrd>(mut iter: impl Iterator<Item = T>) -> Option<T> {
+    let mut min = iter.next()?;
+    for x in iter {
+        if x < min {
+            min = x;
+        }
+    }
+    Some(min)
 }
 
 #[inline]

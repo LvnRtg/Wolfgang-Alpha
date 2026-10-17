@@ -1,90 +1,20 @@
-use std::mem::MaybeUninit;
+use crate::{dispatch_matrix, dispatch_vector};
+/// Implements an algorithm to attempt to estimate the limit of a sequence
+/// of scalars (real or complex). This generality leads to a slight loss in
+/// performance because one cannot track minimum and maximum in the active
+/// window (cf. struct `Window` below), as there is no canonical `>`-relation
+/// on the complex numbers.
 
-use crate::math::{Object, utils};
+use crate::math::{Object, traits::*};
 use crate::status::{ExtResult, Status, WARNING_CAP};
 
-const WINDOW_SIZE: usize = 10;
+const WINDOW_SIZE: usize = 5;
 const MAX_ITERATIONS: usize = 100000;
 /// When `(sup_n y_n) - first` exceeds this threshold, we assume that `y_n` diverges
 /// to +∞. The same holds for the infimum.
 const INFINITY_THRESHOLD: f64 = 1e8;
 const LOCAL_TOL: f64 = 1e-6;
 const DRIFT_TOL: f64 = 1e-4;
-
-
-struct Window {
-    start: usize,
-    min: f64,
-    max: f64,
-    values: [f64; WINDOW_SIZE]
-}
-impl Window {
-    fn construct<F>(
-        mut y_0: f64,
-        f: &mut F,
-        indices: &mut impl Iterator<Item=f64>,
-        warnings: &mut Vec<String>
-    ) -> Result<Self, String>
-    where
-        F: FnMut(f64, f64) -> Result<Status<f64>, String>
-    {
-        let mut buf = [const { MaybeUninit::uninit() }; WINDOW_SIZE];
-        buf.first_mut().unwrap().write(y_0);
-        let mut max = y_0;
-        let mut min = y_0;
-        for slot in buf.iter_mut().skip(1) {
-            y_0 = f(indices.next().unwrap(), y_0)?.unpack_into_with_cap(warnings, WARNING_CAP);
-            if y_0 > max {
-                max = y_0;
-            } else if y_0 < min {
-                min = y_0;
-            }
-            slot.write(y_0);
-        }
-        Ok(Window {
-            start: 0,
-            min,
-            max,
-            values: unsafe { std::mem::transmute(buf) }
-        })
-    }
-
-    /// Adds the given value at the end of the window, removing the first value of the window.
-    fn add(&mut self, new: f64) {
-        let old = std::mem::replace(&mut self.values[self.start], new);
-        if self.start < WINDOW_SIZE - 1 {
-            self.start += 1;
-        } else {
-            self.start = 0;
-        }
-        // The following computations are made so that if a sequence is monotonic,
-        // as few operations as possible are required.
-        if new >= self.max {
-            self.max = new;
-        } else if old == self.max {
-            self.max = *utils::max_of(self.values.iter()).unwrap();
-        }
-        if new <= self.min {
-            self.min = new;
-        } else if old == self.min {
-            self.min = *utils::min_of(self.values.iter()).unwrap();
-        }
-    }
-
-    /// Returns `max(self) - min(self)`.
-    fn stride(&self) -> f64 {
-        self.max - self.min
-    }
-
-    #[inline]
-    fn get(&self, i: usize) -> f64 {
-        self.values[(self.start + i) % WINDOW_SIZE]
-    }
-    #[inline]
-    fn to_vec(&self) -> Vec<f64> {
-        self.values.to_vec()
-    }
-}
 
 
 /// Attempts to numerically approximate the limit  of the sequence `(f(n))_{n ∈ indices}`,
@@ -101,7 +31,7 @@ pub fn compute_limit_numerically<F>(
     mut indices: impl Iterator<Item=f64>
 ) -> ExtResult
 where
-    F: FnMut(f64) -> Result<Status<f64>, String>
+    F: FnMut(f64) -> ExtResult
 {
     f(indices.next().unwrap())
     .and_then(|s| s.try_map_flatten(
@@ -111,6 +41,33 @@ where
             indices
         )
     ))
+}
+
+fn is_infinite(obj: &Object) -> bool {
+    match obj {
+        Object::Real(x) => x.is_infinite(),
+        Object::Complex(c) => c.is_infinite(),
+        Object::Vector(x) => dispatch_vector!(x, v => v.iter().any(|e| e.is_infinite())),
+        Object::Matrix(x) => dispatch_matrix!(x, v => v.iter().any(|e| e.is_infinite())),
+        _ => false
+    }
+}
+
+/// Returns `max_{x,y ∈ A} |x-y|` for `A := v[..-WINDOW_SIZE]`. There is an asymptotically
+/// more efficient algorithm using convex hulls, but since the
+/// window size is typically small, the overhead would be larger
+/// than the gained performance.
+fn stride(v: &[Object]) -> Result<f64, String> {
+    let mut max = 0.0;
+    for (i, x) in v[v.len() - WINDOW_SIZE..].iter().enumerate() {
+        for y in v[v.len() - WINDOW_SIZE + i + 1..].iter() {
+            let d = x.distance_to(y)?;
+            if d > max {
+                max = d;
+            }
+        }
+    }
+    Ok(max)
 }
 
 /// Attempts to numerically approximate the limit  of the sequence `(y_n)_{n ∈ indices}`
@@ -132,38 +89,47 @@ where
 /// at least `WINDOW_SIZE` terms of the sequence. This is intentional to avoid singularities
 /// and strong variations that may occur at the start of a sequence.
 pub fn compute_recursive_limit_numerically<F>(
-    y_0: f64,
+    y_0: Object,
     mut f: F,
     mut indices: impl Iterator<Item=f64>
 ) -> ExtResult
 where
-    F: FnMut(f64, f64) -> Result<Status<f64>, String>
+    F: FnMut(f64, &Object) -> ExtResult
 {
     let mut warnings = Vec::new();
-    let mut window = Window::construct(y_0, &mut f, &mut indices, &mut warnings)?;
-    // Due to the iteration cap, this won't exceed `8 * MAX_ITERATIONS` bytes in size.
-    let mut sequence = window.to_vec();
-    let mut y_n = window.get(WINDOW_SIZE - 1);
-    let reference = y_n;
+    let mut sequence = Vec::with_capacity(WINDOW_SIZE);
+    sequence.push(y_0);
+    for i in 1..WINDOW_SIZE {
+        sequence.push(f(indices.next().unwrap(), &sequence[i - 1])?.unpack_into_with_cap(&mut warnings, WARNING_CAP));
+    }
+    let reference = sequence[sequence.len() - 1].clone();
+    let ref_as_float = reference.expect_float();
     // If `x₂₀` is infinite, it is reasonable to assume that the limit is infinite too.
-    if reference.is_infinite() {
-        return Ok(Status { value: Object::Real(reference), warnings });
+    if is_infinite(&reference) {
+        return Ok(Status { value: reference, warnings });
     }
     for _ in WINDOW_SIZE..MAX_ITERATIONS {
-        y_n = f(indices.next().unwrap(), y_n)?.unpack_into_with_cap(&mut warnings, WARNING_CAP);
-        window.add(y_n);
-        sequence.push(y_n);
-        if window.stride() < LOCAL_TOL && (y_n - sequence[sequence.len() / 2]).abs() < DRIFT_TOL {
-            return Ok(Status { value: Object::Real(y_n), warnings });
-        } else if y_n - reference >= INFINITY_THRESHOLD {
-            return Ok(Status { value: Object::Real(f64::INFINITY), warnings });
-        } else if reference - y_n >= INFINITY_THRESHOLD {
-            return Ok(Status { value: Object::Real(-f64::INFINITY), warnings });
+        let n = sequence.len() - 1;
+        sequence.push(f(indices.next().unwrap(), &sequence[n])?.unpack_into_with_cap(&mut warnings, WARNING_CAP));
+        // Check for convergence
+        if stride(&sequence)? < LOCAL_TOL && sequence[n].distance_to(&sequence[sequence.len() / 2])? < DRIFT_TOL {
+            return Ok(Status { value: sequence.pop().unwrap(), warnings });
+        }
+        // Check for divergence
+        else if let (Ok(y), Ok(r)) = (&sequence[n].expect_float(), &ref_as_float) {
+            let diff = y - r;
+            if diff >= INFINITY_THRESHOLD {
+                return Ok(Status { value: Object::Real(f64::INFINITY), warnings });
+            } else if diff <= -INFINITY_THRESHOLD {
+                return Ok(Status { value: Object::Real(-f64::INFINITY), warnings });
+            }
+        } else if sequence[n].distance_to(&reference)? >= INFINITY_THRESHOLD {
+            return Err("Complex sequence diverges.".to_string());
         }
     }
-    if window.stride() < 0.1 && (y_n - sequence[sequence.len() / 2]).abs() < 0.1 {
+    if stride(&sequence)? < 0.1 && sequence[sequence.len() - 1].distance_to(&sequence[sequence.len() / 2])? < 0.1 {
         warnings.push("The convergence is uncertain: the error terms exceed the tolerance but are still relatively small.".to_string());
-        Ok(Status { value: Object::Real(y_n), warnings })
+        Ok(Status { value: sequence.pop().unwrap(), warnings })
     } else {
         Err(format!("No convergence detected after {MAX_ITERATIONS} iterations."))
     }

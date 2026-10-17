@@ -40,6 +40,16 @@ pub enum Expression {
     DirectionalDerivative(Vec<String>, Box<Expression>, Vec<Expression>, Vec<Expression>),
     /// E.g. `int_a^b f(x) dx` gives `Integral(f(x), a, b, x)`.
     Integral(Box<Expression>, Box<Expression>, Box<Expression>, String),
+    /// E.g. `lim_{n -> ∞} f(n)` gives `Limit(n, 0, ∞, f(n))`.
+    /// 
+    /// The `u8` is a number signifying from which direction the index's
+    /// limit should be approached.
+    /// - `0` signifies "from below"
+    /// - `1` signifies "from above"
+    /// - `2` signifies "from both sides" (alternates between a
+    ///   value above and a value below the limit)
+    /// The `u8` will be ignored if it is followed by `±∞`.
+    Limit(String, u8, Box<Expression>, Box<Expression>),
     /// `if (FirstArg) { SecondArg } else { ThirdArg }`
     IfElse(Box<Expression>, Box<Expression>, Box<Expression>)
 }

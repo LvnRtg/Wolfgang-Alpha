@@ -7,9 +7,8 @@ use crate::lang::eval;
 use crate::math::{Env, Expression, Object, VarStack, VarStackLookup};
 use crate::math::differentiation;
 use crate::math::operations::{BinaryOperation, FoldedOperation, UnaryOperation};
-use crate::math::operations::folded_operations::FOLDED_OP_WARNING_CAP;
 use crate::math::traits::*;
-use crate::status::{ExtResult, Status};
+use crate::status::{ExtResult, Status, WARNING_CAP};
 
 /// Approximates the integral `\int_a^b f(x) dx` by splitting `[a, b]` into
 /// `n` intervals of equal size and applying the Simpson rule to each one,
@@ -72,17 +71,17 @@ where
     let mut warnings = Vec::<String>::new();
     let h = b.sub(a).div(T::from_usize(2 * n));
     let mut x = a;
-    let mut res = f(a)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP);
+    let mut res = f(a)?.unpack_into_with_cap(&mut warnings, WARNING_CAP);
     for _ in 0..(n-1) {
         x.add_assign(h);
-        res = (res.add(f(x)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP).mul(T::from_usize(4))))?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP);
+        res = (res.add(f(x)?.unpack_into_with_cap(&mut warnings, WARNING_CAP).mul(T::from_usize(4))))?.unpack_into_with_cap(&mut warnings, WARNING_CAP);
         x.add_assign(h);
-        res = (res.add(f(x)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP).mul(T::from_usize(2))))?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP);
+        res = (res.add(f(x)?.unpack_into_with_cap(&mut warnings, WARNING_CAP).mul(T::from_usize(2))))?.unpack_into_with_cap(&mut warnings, WARNING_CAP);
     }
     x.add_assign(h);
-    res = (res.add(f(x)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP).mul(T::from_usize(4))))?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP);
+    res = (res.add(f(x)?.unpack_into_with_cap(&mut warnings, WARNING_CAP).mul(T::from_usize(4))))?.unpack_into_with_cap(&mut warnings, WARNING_CAP);
     x.add_assign(h);
-    res = (res.add(f(x)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP)))?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP);
+    res = (res.add(f(x)?.unpack_into_with_cap(&mut warnings, WARNING_CAP)))?.unpack_into_with_cap(&mut warnings, WARNING_CAP);
     Ok(Status{value: res.mul(h).div(T::from_usize(3)), warnings})
 }
 

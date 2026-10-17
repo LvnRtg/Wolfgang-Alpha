@@ -45,6 +45,8 @@ macro_rules! impl_scalar_for_float {
             fn one() -> Self {[<1_ $f>]}
             fn is_one(&self) -> bool {*self == 1.0}
 
+            fn is_infinite(&self) -> bool {<$f>::is_infinite(*self)}
+
             fn abs(&self) -> Self::UnderlyingReal {<$f>::abs(*self)}
             fn powi(&self, pow: i32) -> Self {<$f>::powi(*self, pow)}
             fn abs_div_by_self(&self) -> Self {<$f>::signum(*self)}
@@ -123,6 +125,10 @@ impl<T: Real> Scalar for Complex<T> {
     fn is_zero(&self) -> bool {self.real.is_zero() && self.imag.is_zero()}
     fn one() -> Self {Complex::<T>{real: T::one(), imag: T::zero()}}
     fn is_one(&self) -> bool {self.real.is_one() && self.imag.is_zero()}
+
+    fn is_infinite(&self) -> bool {
+        self.real.is_infinite() || self.imag.is_infinite()
+    }
 
     fn abs(&self) -> Self::UnderlyingReal {self.modulus()}
     fn powi(&self, pow: i32) -> Self {self.pow(Complex::from_i32(pow))}

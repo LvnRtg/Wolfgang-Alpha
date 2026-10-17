@@ -522,12 +522,21 @@ pub fn analytic_partial_derivative(
                             Expression::Integral(inner.clone(), a.clone(), b.clone(), int_var.clone()),
                             Expression::Identifier(wrt.clone()),
                             Expression::Identifier(wrt.clone()),
-                            Expression::Number(1.0),
+                            Expression::Number(1.0)
                         ]
                     )
                 )
             }
         }
+        Expression::Limit(idx_name, direction, idx_limit, inner) => ok!(Expression::Function(
+            "___diff_num".to_string(),
+            vec![
+                Expression::Limit(idx_name.clone(), *direction, idx_limit.clone(), inner.clone()),
+                Expression::Identifier(idx_name.clone()),
+                Expression::Identifier(idx_name.clone()),
+                Expression::Number(1.0)
+            ]
+        )),
         Expression::IfElse(x, y, z) => Status::combine(
             analytic_partial_derivative(y, wrt, extra_vars, env)?,
             analytic_partial_derivative(z, wrt, extra_vars, env)?,
@@ -1017,6 +1026,20 @@ pub fn analytic_directional_derivative(
                 ), point.to_vec(), direction.to_vec(), extra_vars, env)
             }
         }
+        Expression::Limit(..) => numerical_directional_derivative(
+            &mut (|parsed_args: &[Object], _: &[Expression], context: Option<(&VarStack, &mut Env)>| {
+                let (_varstack, _env) = context.ok_or("[Unreachable] Function needs varstack and environment.".to_string())?;
+                eval(
+                    expr,
+                    &_varstack.with_multiple(vars.iter(), parsed_args.iter()),
+                    _env
+                )}
+            ),
+            point.to_vec(),
+            direction.to_vec(),
+            extra_vars,
+            env
+        ),
         Expression::IfElse(condition, iftrue, iffalse) => {
             // D (if c(x) {a(x)} else {b(x)})(x)[d] = if c(x) {Da(x)[d]} else {Db(x)[d]}
             let varstack = extra_vars.with_multiple(vars.iter(), point.iter());

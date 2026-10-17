@@ -10,10 +10,9 @@ use crate::math;
 use crate::math::{Env, Expression, FunctionRepr, Object, Matrix, VarStack, VarStackLookup};
 use crate::math::objects::{try_operation, MatrixType};
 use crate::math::operations::{BinaryOperation, Comparison, UnaryOperation};
-use crate::math::operations::folded_operations::FOLDED_OP_WARNING_CAP;
 use crate::math::traits::*;
 use crate::math::utils::{approx_eq, linspace_as_objects};
-use crate::status::{ExtResult, Status};
+use crate::status::{ExtResult, Status, WARNING_CAP};
 
 
 const DEFAULT_TESTEQ_REPETITIONS: usize = 20;
@@ -266,12 +265,35 @@ pub fn parse_function_definition(
                 wrt.clone()
             ))
         ),
+        Expression::Limit(idx_name, direction, idx_limit, inner) => Status::combine(
+            parse_function_definition(idx_limit, argument_names, extra_vars, env)?,
+            if let Some(i) = argument_names.iter().position(|n| n == idx_name) {
+                if argument_names.len() >= 2 {
+                    parse_function_definition(
+                        inner,
+                        &argument_names.iter().enumerate().filter(|&(idx, _)| idx != i).map(|(_, x)| x.clone()).collect(),
+                        extra_vars,
+                        env
+                    )?
+                } else {
+                    Status::ok(*inner.clone())
+                }
+            } else {
+                parse_function_definition(inner, argument_names, extra_vars, env)?
+            },
+            |u, v| Ok(Expression::Limit(
+                idx_name.clone(),
+                *direction,
+                Box::new(u),
+                Box::new(v)
+            ))
+        ),
         Expression::IfElse(x, y, z) => Status::combine_three(
             parse_function_definition(x, argument_names, extra_vars, env)?,
             parse_function_definition(y, argument_names, extra_vars, env)?,
             parse_function_definition(z, argument_names, extra_vars, env)?,
             |u, v, w| Ok(crate::expr_if_else!(u, v, w))
-        ),
+        )
     }
 }
 
@@ -528,6 +550,63 @@ pub fn eval(
             eval(b_expr, extra_vars, env)?.try_map(|o| o.expect_float())?,
             |a, b| math::integration::integrate(inner, a, b, wrt, extra_vars, env)
         ),
+        Expression::Limit(idx_name, direction, idx_limit_expr, inner) => {
+            eval(idx_limit_expr, extra_vars, env)?
+            .try_map_flatten(|value| {
+                let idx_limit = value.expect_float()?;
+                // We can't pull the following if statements inside the function call because
+                // two iterators never have the exact same type.
+                if idx_limit == f64::INFINITY {
+                    math::limits::compute_limit_numerically(
+                        |idx_val| eval(
+                            inner,
+                            &extra_vars.with(idx_name, Cow::Owned(Object::Real(idx_val))),
+                            env
+                        ),
+                        (1..).map(|n| n as f64)
+                    )
+                } else if idx_limit == -f64::INFINITY {
+                    math::limits::compute_limit_numerically(
+                        |idx_val| eval(
+                            inner,
+                            &extra_vars.with(idx_name, Cow::Owned(Object::Real(idx_val))),
+                            env
+                        ),
+                        (1..).map(|n| -n as f64)
+                    )
+                } else if *direction == 0 { // From below
+                    math::limits::compute_limit_numerically(
+                        |idx_val| eval(
+                            inner,
+                            &extra_vars.with(idx_name, Cow::Owned(Object::Real(idx_val))),
+                            env
+                        ),
+                        (1..).map(|n| idx_limit - 1.0 / n as f64)
+                    )
+                } else if *direction == 1 { // From above
+                    math::limits::compute_limit_numerically(
+                        |idx_val| eval(
+                            inner,
+                            &extra_vars.with(idx_name, Cow::Owned(Object::Real(idx_val))),
+                            env
+                        ),
+                        (1..).map(|n| idx_limit + 1.0 / n as f64)
+                    )
+                } else { // Oscillate
+                    math::limits::compute_limit_numerically(
+                        |idx_val| eval(
+                            inner,
+                            &extra_vars.with(idx_name, Cow::Owned(Object::Real(idx_val))),
+                            env
+                        ),
+                        (1..).flat_map(|n| {
+                            let frac = 1.0 / n as f64;
+                            [idx_limit - frac, idx_limit + frac]
+                        })
+                    )
+                }
+            })
+        }
         Expression::IfElse(condition, iftrue, iffalse) => {
             eval(condition, extra_vars, env)?
             .try_map_flatten(|o| o.expect_bool().and_then(
@@ -689,11 +768,11 @@ pub fn test_function_equality(
         // In order to avoid massive storage usage, we only allow for a fixed number of warnings emitted.
         // If the objects' comparison yields `false`, return that. If the objects aren't comparable, return the appropriate error. Otherwise, continue.
         match try_operation(
-            &lhs.eval(&new_stack, env)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP),
-            &rhs.eval(&new_stack, env)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP),
+            &lhs.eval(&new_stack, env)?.unpack_into_with_cap(&mut warnings, WARNING_CAP),
+            &rhs.eval(&new_stack, env)?.unpack_into_with_cap(&mut warnings, WARNING_CAP),
             &BinaryOperation::Comp(op, None),
             Some((&new_stack, env))
-        ).map(|s| s.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP)) {
+        ).map(|s| s.unpack_into_with_cap(&mut warnings, WARNING_CAP)) {
             Ok(Object::Real(0.0)) => return Ok(Status{value: Object::Real(0.0), warnings}),
             Err(e) => return Err(format!(
                 "{}\nStack top frame: {:?}",

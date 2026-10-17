@@ -309,7 +309,18 @@ impl Object {
     pub fn expect_float(&self) -> Result<f64, String> {
         match self {
             Object::Real(x) => Ok(*x),
-            other => Err(format!("Expected float, got {other}."))
+            Object::Complex(Complex { real, imag }) if *imag == 0.0 => Ok(*real),
+            other => Err(format!("Expected real, got {other}."))
+        }
+    }
+    /// Returns `Ok(x as Complex)` if `self` is `Object::Real(x)` or `Object::Complex(x)`, otherwise `Err`.
+    /// 
+    /// Works on `&self` because `Complex<f64>` and `f64` are `Copy`.
+    pub fn expect_complex(&self) -> Result<Complex<f64>, String> {
+        match self {
+            Object::Real(x) => Ok(Complex::from_f64(*x)),
+            Object::Complex(c) => Ok(*c),
+            other => Err(format!("Expected real of complex, got {other}."))
         }
     }
 
@@ -418,6 +429,43 @@ impl Object {
             Object::Matrix(x) => dispatch_matrix!(x, m => ObjType::Matrix(m.m(), m.n())),
             Object::Tuple(_) => ObjType::Tuple,
             Object::LiteralExpression(_) => ObjType::LiteralExpression
+        }
+    }
+
+    /// If possible, returns the distance between `self` and `other`.
+    /// 
+    /// For matrices/vectors, uses the Frobenius norm (because it is way
+    /// more efficient to calculate than e.g. the spectral norm but also
+    /// more efficient than the euclidian norm, and all norms are equivalent
+    /// anyway).
+    pub fn distance_to(&self, other: &Object) -> Result<f64, String> {
+        match (self, other) {
+            (Object::Real(x), Object::Real(y)) => Ok((x - y).abs()),
+            (Object::Real(x), Object::Complex(y)) | (Object::Complex(y), Object::Real(x)) => Ok(x.sub(*y).abs()),
+            (Object::Complex(x), Object::Complex(y)) => Ok(x.sub(*y).abs()),
+            (Object::Vector(VectorType::Real(v)), Object::Vector(VectorType::Real(w))) if v.len() == w.len() => Ok(
+                v.iter().zip(w.iter()).map(|(x, y)| (x - y).abs()).sum()
+            ),
+            (Object::Vector(VectorType::Real(v)), Object::Vector(VectorType::Complex(w)))
+            | (Object::Vector(VectorType::Complex(w)), Object::Vector(VectorType::Real(v)))
+            if v.len() == w.len() => Ok(
+                v.iter().zip(w.iter()).map(|(x, y)| x.sub(*y).abs()).sum()
+            ),
+            (Object::Vector(VectorType::Complex(v)), Object::Vector(VectorType::Complex(w))) if v.len() == w.len() => Ok(
+                v.iter().zip(w.iter()).map(|(x, y)| x.sub(*y).abs()).sum()
+            ),
+            (Object::Matrix(MatrixType::Real(v)), Object::Matrix(MatrixType::Real(w))) if v.m() == w.m() && v.n() == w.n() => Ok(
+                v.iter().zip(w.iter()).map(|(x, y)| (x - y).abs()).sum()
+            ),
+            (Object::Matrix(MatrixType::Real(v)), Object::Matrix(MatrixType::Complex(w)))
+            | (Object::Matrix(MatrixType::Complex(w)), Object::Matrix(MatrixType::Real(v)))
+            if v.m() == w.m() && v.n() == w.n() => Ok(
+                v.iter().zip(w.iter()).map(|(x, y)| x.sub(*y).abs()).sum()
+            ),
+            (Object::Matrix(MatrixType::Complex(v)), Object::Matrix(MatrixType::Complex(w))) if v.m() == w.m() && v.n() == w.n() => Ok(
+                v.iter().zip(w.iter()).map(|(x, y)| x.sub(*y).abs()).sum()
+            ),
+            (other_l, other_r) => Err(format!("Cannot determine distance between objects `{other_l}` and `{other_r}`."))
         }
     }
 }

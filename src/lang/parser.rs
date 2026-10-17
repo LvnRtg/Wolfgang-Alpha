@@ -4,6 +4,8 @@ use std::collections::HashSet;
 use std::iter::Peekable;
 use std::vec::IntoIter;
 
+use dioxus::logger::tracing;
+
 use crate::{expr_unary_op, ok};
 use crate::lang::lexer::{Keyword, Token, tokenize};
 use crate::math::operations::{BinaryOperation, Comparison, UnaryOperation, FoldedOperation};
@@ -90,7 +92,8 @@ impl Parser {
             other => Err(format!("Expected '{{', identifier or number; got {:?} instead.", other))
         }
     }
-    /// Expects either `LBrace, ..., RBrace` (then parses `...`, splitting expressions between commas, and returns the result) or `Identifier(...) | Number(...)`
+    /// Expects either `LBrace, ..., RBrace` (then parses `...`, splitting expressions
+    /// between commas, and returns the result) or `Identifier(...) | Number(...)`
     /// (then returns `vec![...]` directly). All other syntaxes return `Err`.
     /// 
     /// For example, you'd call this after encountering `sum_`.
@@ -114,9 +117,9 @@ impl Parser {
         // This is either an identifier, a number or a further expression between parentheses.
         let mut warnings = Vec::new();
         let mut lhs = match self.next()? {
-            Token::Minus => expr_unary_op!(Neg, self.parse_expression(6, None, env)?.unpack_into(&mut warnings)),
+            Token::Minus => expr_unary_op!(Neg, self.parse_expression(7, None, env)?.unpack_into(&mut warnings)),
             Token::ExclamationMark // An exclamation mark before an expected expression signifies a `not` operator
-                => expr_unary_op!(Not, self.parse_expression(6, None, env)?.unpack_into(&mut warnings)),
+                => expr_unary_op!(Not, self.parse_expression(7, None, env)?.unpack_into(&mut warnings)),
             Token::Identifier(id) if id == "D" || id == "D_" => { // Total derivative
                 // Expected tokens: ("D" | "D_{...}") <FunctionExpr> (<point>) [<direction>].
                 // For a list of all accepted syntaxes, see the documentation of the program's syntax.
@@ -130,7 +133,7 @@ impl Parser {
                         }
                     }
                 }
-                let mut function_expr = self.parse_expression(8, None, env)?.unpack_into(&mut warnings);
+                let mut function_expr = self.parse_expression(9, None, env)?.unpack_into(&mut warnings);
                 // At this point, the next token can either be a parenthesis or a bracket.
                 let point = match (self.peek()?, &mut function_expr) {
                     // This case means the point is yet to parse.
@@ -183,7 +186,7 @@ impl Parser {
                 Expression::FoldedOperation(op, index_var_name, Box::new(index_var_init), conditions, Box::new(superscript), Box::new(inner))
             }
             Token::Identifier(id) if id.starts_with("int_") => {
-                let rest = id.strip_prefix("int_").unwrap(); // Safe because of `starts_with` call above
+                let rest = id.strip_prefix("int_").unwrap();
                 let subscript = if !rest.is_empty() {
                     // Parse `rest` and expect to get a single expression out.
                     let mut rest_parser = Parser::from(tokenize(rest)?);
@@ -205,6 +208,65 @@ impl Parser {
                     other => return Err(format!("Expected \"dv\" where \"v\" is some identifier; got {:?}.", other))
                 };
                 Expression::Integral(Box::new(inner), Box::new(subscript), Box::new(superscript), int_var)
+            }
+            Token::Identifier(id) if id.starts_with("lim") && (id.len() == 3 || id.chars().nth(3) == Some('_')) => {
+                tracing::info!("limit");
+                // We attempt to determine the index variable's name now, but this may require knowledge
+                // of the inner expression, e.g. in `lim (n^2)`
+                let (opt_idx_name, direction, idx_limit) = if id.len() > 4 {
+                    // Then, the subscript can't contain an explicit limit, i.e. it has to
+                    // simply be of the form `n` instead of e.g. `n -> ∞`.
+                    // The index's limit is then inferred to be `∞`.
+                    (id.strip_prefix("lim_").map(|s| s.to_string()), 0, Expression::Number(f64::INFINITY))
+                } else if id.len() != 3 {
+                    self.expect_token(Token::LBrace, Some(" to specify subscript of `lim`."))?;
+                    let name = match self.next()? {
+                        Token::Identifier(id) => id,
+                        other => return Err(format!("Expected name of index variable, got {:?}.", other))
+                    };
+                    if let Ok(Token::RBrace) = self.peek() {
+                        // Then, we actually are in the same case as when `id.len() > 4` (besides the braces)
+                        let _ = self.next();
+                        (Some(name), 0, Expression::Number(f64::INFINITY))
+                    } else {
+                        let direction: u8 = match self.next()? {
+                            Token::Identifier(id) if id == "↗" => 0,
+                            Token::Identifier(id) if id == "↘" => 1,
+                            Token::Identifier(id) if id == "→" => 2,
+                            Token::Minus if matches!(self.peek(), Ok(Token::Comparison(Comparison::Gt, _))) => {
+                                let _ = self.next();
+                                2
+                            },
+                            other => return Err(format!("Expected arrow, got {:?}.", other))
+                        };
+                        let f: Box<dyn Fn(&Token) -> bool> = Box::new(|t: &Token| matches!(t, Token::RBrace));
+                        let limit = self.parse_expression(0, Some(&f), env)?.unpack_into(&mut warnings);
+                        self.expect_token(Token::RBrace, None)?;
+                        (Some(name), direction, limit)
+                    }
+                } else {
+                    // No idx_name provided, we'll have to infer it from the inner expression
+                    (None, 0, Expression::Number(f64::INFINITY))
+                };
+                tracing::info!("{opt_idx_name:?} ->[{direction}] {idx_limit}");
+                let inner = self.parse_expression(6, None, env)?.unpack_into(&mut warnings);
+                let idx_name = match opt_idx_name {
+                    Some(n) => n,
+                    None => {
+                        let mut unknown = HashSet::new();
+                        inner.get_unknown_identifiers(&VarStack::Empty, env, &mut unknown);
+                        if unknown.len() != 1 {
+                            return Err(format!(
+                                "There are multiple free variables in the expression `{}` (namely, {:?}), so the index variable for the limit cannot be inferred.\
+                                \nSpecify an index variable explicitly, e.g. `lim_{{n → ∞}} f(n)`.",
+                                inner,
+                                unknown
+                            ));
+                        }
+                        unknown.into_iter().next().unwrap()
+                    }
+                };
+                Expression::Limit(idx_name, direction, Box::new(idx_limit), Box::new(inner))
             }
             Token::Identifier(x) => {
                 // We have to check whether this will be a function call: we judge this to be the case iff the next token is an LParenthesis and
@@ -340,16 +402,16 @@ impl Parser {
         }
         loop {
             let (mut op, prec, consume) = match self.peek()? {
-                Token::Plus => (BinaryOperation::Add, 5, true),
-                Token::Minus => (BinaryOperation::Sub, 5, true),
-                Token::Asterisk => (BinaryOperation::Mul, 6, true),
-                Token::LParenthesis => (BinaryOperation::Mul, 6, false), // Expressions such as "2(x+1)" are parsed as "2*(x+1)".
-                Token::LBracket => (BinaryOperation::Mul, 6, false), // Same if a vector/matrix follows.
-                Token::Identifier(_) => (BinaryOperation::Mul, 6, false), // Expressions such as "(x+1)y" are parsed as "(x+1)*y".
-                Token::Slash => (BinaryOperation::Div, 6, true),
-                Token::DoubleSlash => (BinaryOperation::Quo, 6, true),
-                Token::Percent => (BinaryOperation::Rem, 6, true),
-                Token::Circumflex => (BinaryOperation::Pow(true), 7, true),
+                Token::Plus => (BinaryOperation::Add, 6, true),
+                Token::Minus => (BinaryOperation::Sub, 6, true),
+                Token::Asterisk => (BinaryOperation::Mul, 7, true),
+                Token::LParenthesis => (BinaryOperation::Mul, 7, false), // Expressions such as "2(x+1)" are parsed as "2*(x+1)".
+                Token::LBracket => (BinaryOperation::Mul, 7, false), // Same if a vector/matrix follows.
+                Token::Identifier(_) => (BinaryOperation::Mul, 7, false), // Expressions such as "(x+1)y" are parsed as "(x+1)*y".
+                Token::Slash => (BinaryOperation::Div, 7, true),
+                Token::DoubleSlash => (BinaryOperation::Quo, 7, true),
+                Token::Percent => (BinaryOperation::Rem, 7, true),
+                Token::Circumflex => (BinaryOperation::Pow(true), 8, true),
                 Token::Assign => (BinaryOperation::Add, 0, true), // We don't need any operation here, so 'Add' is just a placeholder to simplify notation
                 // Importantly, we only fetch the comparison's optional parameter later, when we actually consume the operator (avoids cloning).
                 Token::Comparison(c, _) => (BinaryOperation::Comp(*c, None), 4, true),
@@ -476,7 +538,7 @@ impl Parser {
                                     other => Ok((s, crate::math::expressions::Repeat::Expression(other)))
                                 }
                             ).collect::<Result<Vec<_>, _>>()?,
-                            Box::new(self.parse_expression(8, None, env)?.unpack_into(&mut warnings))
+                            Box::new(self.parse_expression(9, None, env)?.unpack_into(&mut warnings))
                         )
                     }
                     // Default
@@ -520,10 +582,11 @@ impl Parser {
     /// <trd> <td>&&<td/> <td>2<td/> </tr>
     /// <trd> <td>! (not)<td/> <td>3<td/> </tr>
     /// <trd> <td><, >, <=, >=, ==<td/> <td>4<td/> </tr>
-    /// <tr> <td>+, - (binary)<td/> <td>5<td/> </tr>
-    /// <tr> <td>*, /, //, %, - (unary)<td/> <td>6<td/> </tr>
-    /// <tr> <td>^<td/> <td>7<td/> </tr>
-    /// <tr> <td>d/dx, D<td/> <td>8<td/> </tr>
+    /// <tr> <td>lim<td/> <td>5<td/> </tr>
+    /// <tr> <td>+, - (binary)<td/> <td>6<td/> </tr>
+    /// <tr> <td>*, /, //, %, - (unary)<td/> <td>7<td/> </tr>
+    /// <tr> <td>^<td/> <td>8<td/> </tr>
+    /// <tr> <td>d/dx, D<td/> <td>9<td/> </tr>
     /// </table>
     pub fn parse_next(&mut self, env: &mut Env) -> Option<Result<Status<Expression>, String>> {
         // Note on design choice: works as an iterator instead of a vector because in some cases,

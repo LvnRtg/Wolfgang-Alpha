@@ -159,6 +159,15 @@ For the directional derivative, multiple syntaxes are available. All of them ret
 - `D f(p)[d]`: If `f` is a function, then the shortened syntax `D f(p)[d]` computes the exact same result as `D_{x_1, ..., x_n} f(x_1, ..., x_n) (p)[d]` where `n` is the number of arguments that `f` expects.
 - `D expr (p_1, ..., p_n)[d_1, ..., d_m]`: collects all unknown identifiers within `expr` into a vector in ascending alphabetic order `x_1, ..., x_l`. If `l=m=n`, this syntax then returns the same result as `D_{x_1, ..., x_n} expr (p_1, ..., p_n)[d_1, ..., d_n]`. Otherwise, throws an error.
 
+### Limits
+Limits are computed using expressions of the form `lim_{n → ∞} 1/n`. Currently, all limits are evaluated purely numerically. I intend on adding a layer of symbolic processing before, as for derivatives.
+- The index variable (`n` in the above example) can be changed to any identifier.
+- The index variable's limit (`∞` in the above example) can be changed to any real number or `-∞`.
+- The arrow can be replaced by `->`, `↗` or `↘`. The limit will be taken from the corresponding side. In case of `→`/`->`, the limit is taken from both sides, meaning that the program alternates between values slightly above and sligthly below the index variable's limit. In case said limit is infinite, the arrow will be ignored.
+- When the index goes to `+∞`, one can simply type `lim_n 1/n` or `lim_{n} 1/n` instead. This still works with identifier in place of `n`.
+- If there is only one free variable within the expression, one can even elide the index of `lim` entirely: for example, `lim 1/n` automatically detects that `n` is the desired index and lets it go to `+∞`.
+- The limit operator has a precedence greater than comparisons but less than `+` and `-`.
+
 ### Warnings
 Here is a list of warnings for which an explanation may be helpful. Not all warnings are listed here.
 - "_Exponents in numerator and denominator of partial derivative operator do not match. Ignoring numerator._"<br>

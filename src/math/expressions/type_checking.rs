@@ -165,6 +165,10 @@ impl Expression {
                 // The integration variable has to be real.
                 func.get_type(&extra_vars.with(wrt, Cow::Owned(Object::Real(1.0))), env)
             }
+            Expression::Limit(idx_name, .., inner) => {
+                // Currently, limits `lim_{x -> a}` are only valid for real `x`
+                inner.get_type(&extra_vars.with(idx_name, Cow::Owned(Object::Real(1.0))), env)
+            }
             // Below, we can have a problem if `iftrue` and `iffalse` are different. Logically, this shouldn't be the case,
             // but the user _can_ do this. However, there is no way to solve this since without knowing the free variables,
             // we can't simply check the condition to know which expression is returned.
@@ -664,6 +668,29 @@ impl Expression {
                                 |x| Expression::Integral(Box::new(x), a.clone(), b.clone(), wrt.clone())
                             ).collect()),
                             other => Expression::Integral(Box::new(other), a.clone(), b.clone(), wrt.clone())
+                        },
+                        itype
+                    ))
+                }
+            }
+            Expression::Limit(idx_name, direction, idx_limit, inner) => {
+                let (iexpr, itype) = inner.make_type_top_level(
+                    substitute_constants,
+                    &extra_vars.with(idx_name, Cow::Owned(Object::Real(1.0))),
+                    env
+                )?;
+                if matches!(itype, ObjType::NonObject | ObjType::Tuple) {
+                    Err(MakeTypeTopLevelError::Err(format!("Operation 'lim' invalid for operand {:?}.", iexpr)))
+                } else {
+                    Ok((
+                        match iexpr {
+                            Expression::Vector(v) => Expression::Vector(v.into_iter().map(
+                                |x| Expression::Limit(idx_name.clone(), *direction, idx_limit.clone(), Box::new(x))
+                            ).collect()),
+                            Expression::Matrix(m, n, v) => Expression::Matrix(m, n, v.into_iter().map(
+                                |x| Expression::Limit(idx_name.clone(), *direction, idx_limit.clone(), Box::new(x))
+                            ).collect()),
+                            other => Expression::Limit(idx_name.clone(), *direction, idx_limit.clone(), Box::new(other))
                         },
                         itype
                     ))

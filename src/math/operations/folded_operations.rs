@@ -6,15 +6,8 @@ use crate::lang::eval;
 use crate::math::objects::try_operation;
 use crate::math::traits::*;
 use crate::math::{Env, Expression, Object, ObjType, utils, VarStack};
-use crate::status::{ExtResult, Status};
+use crate::status::{ExtResult, Status, WARNING_CAP};
 use super::binary_operations::BinaryOperation;
-
-
-/// Maximum amount of warnings emitted by a call to `eval_folded_operation`.
-/// 
-/// Reason for having a cap: every iteration could emit at least one warning (in fact, if some iteration emits a warning,
-/// this is very likely), which would saturate the console and consume huge amounts of memory for nothing.
-pub const FOLDED_OP_WARNING_CAP: usize = 10;
 
 
 /// Any operation for which an operator of the type `sum_{i=1}^n ...` is implemented.
@@ -174,14 +167,14 @@ where
         let varstack = extra_vars.with(index_var, Cow::Owned(Object::Real(i)));
 
         // Note: the caller is responsible for modifying `get_to` if `to` doesn't need to be recomputed in every iteration (cf. `eval_folded_operation`).
-        current_to_eval = get_to(&varstack, env)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP).expect_float()?;
+        current_to_eval = get_to(&varstack, env)?.unpack_into_with_cap(&mut warnings, WARNING_CAP).expect_float()?;
         if i > current_to_eval {
             break;
         }
 
         // Check if all conditions are met. If not, skip this `i`.
         for cond in get_conditions.iter_mut().map(|f| f(&varstack, env)) {
-            if !cond?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP).expect_bool()? {
+            if !cond?.unpack_into_with_cap(&mut warnings, WARNING_CAP).expect_bool()? {
                 // Condition not met; skip `i`
                 i += 1.0;
                 continue 'outer;
@@ -189,8 +182,8 @@ where
         }
 
         // At this point, all conditions are met.
-        let next_term = get_inner(&varstack, env)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP);
-        res = try_operation(&res, &next_term, &binop, None)?.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP);
+        let next_term = get_inner(&varstack, env)?.unpack_into_with_cap(&mut warnings, WARNING_CAP);
+        res = try_operation(&res, &next_term, &binop, None)?.unpack_into_with_cap(&mut warnings, WARNING_CAP);
         i += 1.0;
     }
     Ok(Status{value: res, warnings})
@@ -235,7 +228,7 @@ where
             )
         ) {
             match cond_res {
-                Ok(cond) => match cond.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP).expect_bool() {
+                Ok(cond) => match cond.unpack_into_with_cap(&mut warnings, WARNING_CAP).expect_bool() {
                     Ok(true) => {},
                     Ok(false) => return None,
                     Err(e) => return Some(Err(e))
@@ -250,7 +243,7 @@ where
     let summands = i_range.iter().enumerate().map(|(i_index, i)| {
         let first_factors = i_range[..i_index].iter().map(|j| {
             get_f(&extra_vars.with(index_var, Cow::Owned(Object::Real(*j as f64))), env)
-            .map(|s| s.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP))
+            .map(|s| s.unpack_into_with_cap(&mut warnings, WARNING_CAP))
         });
         let mut res = if let Some(r) = utils::fold_res_obj_iter(first_factors, &BinaryOperation::Mul) {
             // If `first_factors` is non-empty, compute `(prod_{x in first_factors} x) * f'(i)`
@@ -259,11 +252,11 @@ where
             // Otherwise, this is the same as `f'(i)`
             get_f_prime(&extra_vars.with(index_var, Cow::Owned(Object::Real(*i as f64))), env)
         }
-        .map(|s| s.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP));
+        .map(|s| s.unpack_into_with_cap(&mut warnings, WARNING_CAP));
 
         // Multiply with all remaining factors
         for j in i_range[i_index+1..].iter() {
-            res = res?.mul(get_f(&extra_vars.with(index_var, Cow::Owned(Object::Real(*j as f64))), env)?).map(|s| s.unpack_into_with_cap(&mut warnings, FOLDED_OP_WARNING_CAP));
+            res = res?.mul(get_f(&extra_vars.with(index_var, Cow::Owned(Object::Real(*j as f64))), env)?).map(|s| s.unpack_into_with_cap(&mut warnings, WARNING_CAP));
         }
         res
     });

@@ -42,7 +42,7 @@ macro_rules! fill_match {
         match $self {
             // Generally, do not process LHS of assignment
             Expression::UnaryOperation(_, x) | Expression::PartialDerivative(_, x) | Expression::Assignment(_, x) => x.$name($($args),*),
-            Expression::BinaryOperation(x, _, y) => {
+            Expression::BinaryOperation(x, _, y) | Expression::Limit(.., x, y) => {
                 x.$name($($args),*);
                 y.$name($($args),*);
             }
@@ -92,16 +92,19 @@ impl Expression {
                 *self = by.clone();
             },
             // In the following cases, do not parse `inner` because `wrt` will shadow `ident` in an evaluation
-            FoldedOperation(_, wrt, from, conditions, to, inner) if wrt == ident => {
+            FoldedOperation(_, wrt, from, conditions, to, _) if wrt == ident => {
                 // Here, do not parse `to` and `conditions` either.
                 from.replace_identifiers_in_place(ident, by);
             },
-            Integral(from, to, inner, wrt) if wrt == ident => {
+            Integral(from, to, _, wrt) if wrt == ident => {
                 from.replace_identifiers_in_place(ident, by);
                 to.replace_identifiers_in_place(ident, by);
             },
-            PartialDerivative(wrt, inner) if wrt.iter().any(|(s, _)| s == ident) => {},
-            DirectionalDerivative(vars, inner, point, direction) if vars.contains(ident) => {
+            Limit(idx_name, _, idx_limit, _) if idx_name == ident => {
+                idx_limit.replace_identifiers_in_place(ident, by);
+            },
+            PartialDerivative(wrt, _) if wrt.iter().any(|(s, _)| s == ident) => {},
+            DirectionalDerivative(vars, _, point, direction) if vars.contains(ident) => {
                 point.iter_mut().for_each(|u| u.replace_identifiers_in_place(ident, by));
                 direction.iter_mut().for_each(|u| u.replace_identifiers_in_place(ident, by));
             }
@@ -110,36 +113,36 @@ impl Expression {
 
     /// Parses the expression `expr` recursively and collects all identifiers that are neither in
     /// `constants` nor in `extra_vars` nor bound by an outer expression (e.g. as the integration
-    /// variable of an integral) into a HashSet `modified_identifiers`.
+    /// variable of an integral) into a HashSet `unknown_identifiers`.
     /// 
     /// Ignores the LHS of assignment operators.
     pub fn get_unknown_identifiers(
         &self,
         extra_vars: &VarStack,
         env: &Env,
-        modified_identifiers: &mut HashSet<String>
+        unknown_identifiers: &mut HashSet<String>
     ) {
         fill_match!(
-            self; iter; get_unknown_identifiers(extra_vars, env, modified_identifiers);
+            self; iter; get_unknown_identifiers(extra_vars, env, unknown_identifiers);
             Identifier(x) => {
                 if !env.constants.contains_key(x) && extra_vars.lookup(x).is_none() {
-                    modified_identifiers.insert(x.clone());
+                    unknown_identifiers.insert(x.clone());
                 }
             },
             FoldedOperation(_, varname, from, conditions, to, inner) => {
                 // Important: `varname` is no longer unknown within `conditions`, `inner` and `to`; however, it is still unknown within `from`.
                 let varstack = extra_vars.with(varname, Cow::Owned(Object::Success)); // Varstack where `varname` is declared as known
-                from.get_unknown_identifiers(extra_vars, env, modified_identifiers); // Here, use old `extra_vars`
-                conditions.iter().for_each(|v| v.get_unknown_identifiers(&varstack, env, modified_identifiers));
-                to.get_unknown_identifiers(&varstack, env, modified_identifiers); // Here too
-                inner.get_unknown_identifiers(&varstack, env, modified_identifiers);
+                from.get_unknown_identifiers(extra_vars, env, unknown_identifiers); // Here, use old `extra_vars`
+                conditions.iter().for_each(|v| v.get_unknown_identifiers(&varstack, env, unknown_identifiers));
+                to.get_unknown_identifiers(&varstack, env, unknown_identifiers); // Here too
+                inner.get_unknown_identifiers(&varstack, env, unknown_identifiers);
             },
             PartialDerivative(wrt, expr) => {
                 // Same as above
                 expr.get_unknown_identifiers(
                     &extra_vars.with_multiple(wrt.iter().map(|&(ref s, _)| s), std::iter::repeat_n(&Object::Success, wrt.len())),
                     env,
-                    modified_identifiers
+                    unknown_identifiers
                 )
             },
             DirectionalDerivative(vars, expr, point, direction) => {
@@ -147,19 +150,27 @@ impl Expression {
                 expr.get_unknown_identifiers(
                     &extra_vars.with_multiple(vars.iter(), std::iter::repeat_n(&Object::Success, vars.len())),
                     env,
-                    modified_identifiers
+                    unknown_identifiers
                 );
-                point.iter().for_each(|v| v.get_unknown_identifiers(extra_vars, env, modified_identifiers));
-                direction.iter().for_each(|v| v.get_unknown_identifiers(extra_vars, env, modified_identifiers));
+                point.iter().for_each(|v| v.get_unknown_identifiers(extra_vars, env, unknown_identifiers));
+                direction.iter().for_each(|v| v.get_unknown_identifiers(extra_vars, env, unknown_identifiers));
             },
             Integral(func, a, b, wrt) => {
                 func.get_unknown_identifiers(
                     &extra_vars.with(wrt, Cow::Owned(Object::Success)),
                     env,
-                    modified_identifiers
+                    unknown_identifiers
                 );
-                a.get_unknown_identifiers(extra_vars, env, modified_identifiers);
-                b.get_unknown_identifiers(extra_vars, env, modified_identifiers);
+                a.get_unknown_identifiers(extra_vars, env, unknown_identifiers);
+                b.get_unknown_identifiers(extra_vars, env, unknown_identifiers);
+            },
+            Limit(idx_name, _, idx_limit, inner) => {
+                inner.get_unknown_identifiers(
+                    &extra_vars.with(idx_name, Cow::Owned(Object::Success)),
+                    env,
+                    unknown_identifiers
+                );
+                idx_limit.get_unknown_identifiers(extra_vars, env, unknown_identifiers);
             }
         )
     }
@@ -174,14 +185,6 @@ impl Expression {
         fill_match!(
             self; iter; add_contained_identifiers(identifiers, contained_identifiers);
             Identifier(x) if identifiers.contains(x) => {contained_identifiers.insert(x);},
-            Integral(func, a, b, wrt) => {
-                a.add_contained_identifiers(identifiers, contained_identifiers);
-                b.add_contained_identifiers(identifiers, contained_identifiers);
-                // Ignore presence of `identifier` in `func` if we integrate w.r.t. `identifier`
-                let was_contained = contained_identifiers.contains(wrt);
-                func.add_contained_identifiers(identifiers, contained_identifiers);
-                if !was_contained {contained_identifiers.remove(wrt);}
-            },
             FoldedOperation(_, wrt, from, conditions, to, inner) => {
                 from.add_contained_identifiers(identifiers, contained_identifiers);
                 let was_contained = contained_identifiers.contains(wrt);
@@ -207,6 +210,20 @@ impl Expression {
                 for var in not_previously_contained {
                     contained_identifiers.remove(var);
                 }
+            },
+            Integral(func, a, b, wrt) => {
+                a.add_contained_identifiers(identifiers, contained_identifiers);
+                b.add_contained_identifiers(identifiers, contained_identifiers);
+                // Ignore presence of `identifier` in `func` if we integrate w.r.t. `identifier`
+                let was_contained = contained_identifiers.contains(wrt);
+                func.add_contained_identifiers(identifiers, contained_identifiers);
+                if !was_contained {contained_identifiers.remove(wrt);}
+            },
+            Limit(idx_name, _, idx_limit, inner) => {
+                idx_limit.add_contained_identifiers(identifiers, contained_identifiers);
+                let was_contained = contained_identifiers.contains(idx_name);
+                inner.add_contained_identifiers(identifiers, contained_identifiers);
+                if !was_contained {contained_identifiers.remove(idx_name);}
             }
         )
     }
@@ -231,7 +248,7 @@ macro_rules! fill_match_bool {
         match $self {
             // Generally, do not process LHS of assignment
             Expression::UnaryOperation(_, x) | Expression::PartialDerivative(_, x) | Expression::Assignment(_, x) => x.$name($($args),*),
-            Expression::BinaryOperation(x, _, y) => {
+            Expression::BinaryOperation(x, _, y) | Expression::Limit(.., x, y) => {
                 x.$name($($args),*)
                 || y.$name($($args),*)
             }
@@ -276,13 +293,16 @@ impl Expression {
             self; contains_identifier(ident);
             Identifier(x) => x == ident,
             FoldedOperation(_, wrt, from, ..) if wrt == ident => from.contains_identifier(ident),
-            Integral(_, from, to, wrt) if wrt == ident => {
-                from.contains_identifier(ident) || to.contains_identifier(ident)
-            },
             PartialDerivative(wrt, _) if wrt.iter().any(|(s, _)| s == ident) => false,
             DirectionalDerivative(vars, _, point, direction) if vars.contains(ident) => {
                 point.iter().any(|x| x.contains_identifier(ident))
                 || direction.iter().any(|x| x.contains_identifier(ident))
+            },
+            Integral(_, from, to, wrt) if wrt == ident => {
+                from.contains_identifier(ident) || to.contains_identifier(ident)
+            },
+            Limit(idx_name, _, idx_limit, _) if idx_name == ident => {
+                idx_limit.contains_identifier(ident)
             }
         )
     }
@@ -309,13 +329,6 @@ impl Expression {
                 || to.contains_any_of(&new_hashset)
                 || inner.contains_any_of(&new_hashset)
             },
-            Integral(inner, from, to, wrt) if identifiers.contains(wrt) => {
-                let mut new_hashset = identifiers.clone();
-                new_hashset.remove(wrt);
-                from.contains_any_of(identifiers)
-                || to.contains_any_of(identifiers)
-                || inner.contains_any_of(&new_hashset)
-            },
             PartialDerivative(wrt, inner) if wrt.iter().any(|(s, _)| identifiers.contains(s)) => {
                 let mut new_hashset = identifiers.clone();
                 for (var, _) in wrt {
@@ -330,6 +343,19 @@ impl Expression {
                 }
                 point.iter().any(|x| x.contains_any_of(identifiers))
                 || direction.iter().any(|x| x.contains_any_of(identifiers))
+                || inner.contains_any_of(&new_hashset)
+            },
+            Integral(inner, from, to, wrt) if identifiers.contains(wrt) => {
+                let mut new_hashset = identifiers.clone();
+                new_hashset.remove(wrt);
+                from.contains_any_of(identifiers)
+                || to.contains_any_of(identifiers)
+                || inner.contains_any_of(&new_hashset)
+            },
+            Limit(idx_name, _, idx_limit, inner) if identifiers.contains(idx_name) => {
+                let mut new_hashset = identifiers.clone();
+                new_hashset.remove(idx_name);
+                idx_limit.contains_any_of(identifiers)
                 || inner.contains_any_of(&new_hashset)
             }
         )
@@ -406,6 +432,15 @@ impl Expression {
                 Box::new(a.replace_identifiers_recursive(replacements, ignore)),
                 Box::new(b.replace_identifiers_recursive(replacements, ignore)),
                 wrt.clone()
+            ),
+            Expression::Limit(idx_name, direction, idx_limit, inner) => Expression::Limit(
+                idx_name.clone(),
+                *direction,
+                Box::new(idx_limit.replace_identifiers_recursive(replacements, ignore)),
+                Box::new(inner.replace_identifiers_recursive(
+                    replacements,
+                    &Stack::Frame { value: &HashSet::from([idx_name]), parent: ignore }
+                ))
             )
         }
     }
@@ -499,7 +534,11 @@ impl Expression {
                 a.get_new_free_identifier_recursive(prefix, i)
                 .max(b.get_new_free_identifier_recursive(prefix, i))
                 .max(func.get_new_free_identifier_recursive(prefix, i))
-                .max(check_id(wrt))
+                .max(check_id(wrt)),
+            Expression::Limit(idx_name, _, idx_limit, inner) =>
+                idx_limit.get_new_free_identifier_recursive(prefix, i)
+                .max(inner.get_new_free_identifier_recursive(prefix, i))
+                .max(check_id(idx_name))
         }
     }
 }
