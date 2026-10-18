@@ -103,12 +103,14 @@ A range of standard functions for matrices and vectors are pre-defined:
 - The size of tuples isn't taken into account during type checks. This is used to our advantage for functions returning an unknown amount of values, e.g. the function `eig` (that computes the eigenvalues of a matrix).
 
 ### Folded operations
-Currently, the implemented folded operations are `sum` and `prod` (product).
-- Syntax: `sum_{i=a}^b f(i)` where `i` has to be an identifier, `a` must be evaluable to an integer and `b` to a float (`a`, `b` do not need to be constants). The type of the object inside the sum is inferred. If `a > b` initially, then `0` is returned (in the appropriate type).
+Currently, the implemented folded operations are `sum` and `prod` (product). The below documentation considers the folded operation `sum`, but everything works analogously for `prod`.
+- Syntax: `sum_{i=a}^b f(i)` where `i` has to be an identifier, `a` must be evaluable to an integer or `±∞` and `b` to a float or `±∞` (`a`, `b` do not need to be constants). The type of the object inside the sum is inferred. If `a > b` initially, then `0` is returned (in the appropriate type), except if `b = -∞`; then, it is interpreted as `sum_{i=-∞}^a f(i)`.
+- If `a` or `b` is infinite, then the sum is interpreted as the limit of the recursive sequence $x_{n+1} = x_n + f(n+1)$. For details on the evaluation, see the section [limits](#limits).
 - An arbitrary amount of conditions can be added to a folded operation as follows: `sum_{i=a, i != 5, ...}^b f(i)`. All values of `i` that do not satisfy all of the given conditions will be skipped.
 - Consider `sum_{i=a}^b f(i)`. Non-constant bounds `a`, `b` are supported in the following sense.
   - `a` is only evaluated once: it may _not_ depend on `i` and it is useless to have it change as `f` is evaluated.
   - `b` is allowed to depend on `i` or change as `f` is evaluated. Then, `b` will be freshly evaluated after every iteration until `i > b`, after which the iteration is terminated. If no such variability of `b` is detected, it is only evaluated once at the start of the iteration. The precise criterion is: the expression `b` is evaluated in every iteration iff `b` contains the identifier `i` (in any form) or `f(i)` contains an assignment `x := ...` for which `b` contains the identifier `x`.
+  - Infinite bounds are _not_ supported for non-constant `a`, `b`: to evaluate an infinite folded operation, it must necessarily be clear from the start that `a`/`b` are infinite.
   - Conditions will evidently depend on `i`, but they may also change as `f` is evaluated. Usually, conditions will be evaluated during the iteration anyway, so no further checks need to be done here.
   - In certain built-in double-sums, further optimizations are done to evaluate `a`, `b` and all conditions as few times as possible (for instance `compute_product_derivative_helper` [here](./src/math/operations/folded_operations.rs)).
 

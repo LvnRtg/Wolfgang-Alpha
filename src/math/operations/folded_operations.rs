@@ -84,7 +84,7 @@ where
     F: FnMut (         &VarStack, &mut Env) -> ExtResult,
     G: FnOnce(&Object, &VarStack, &mut Env) -> Result<ObjType, String>
 {
-    // Because two macros never have the same type, the following `if/else` block needs to be pulled outside of the function call.
+    // Because two closures never have the same type, the following `if/else` block needs to be pulled outside of the function call.
     // Check if `to` needs to be reevaluated in every iteration. From `README.md`, the precise criterion for `sum_{i=a}^b f(i)` is:
     // The expression `b` is evaluated in every iteration iff `b` contains the identifier `i` (in any form)
     // or `f(i)` contains an assignment `x := ...` for which `b` contains the identifier `x`.

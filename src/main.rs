@@ -15,7 +15,7 @@ const MONO_BOLD: Asset = asset!("/style/fonts/JetBrainsMono-Bold.woff2");
 const EXAMPLES: [Example; 4] = [
     Example {
         label: "Differentiate",
-        expression: "d/dx (x^3 + 2x + 1)",
+        expression: "d/dx x^3 + 2x + 1",
     },
     Example {
         label: "Integrate",
@@ -26,8 +26,8 @@ const EXAMPLES: [Example; 4] = [
         expression: "det([1, 2; 3, 4])",
     },
     Example {
-        label: "Finite sum",
-        expression: "sum_{i=1}^10 i^2",
+        label: "Sum",
+        expression: "sum_{i=1}^∞ 1/i^2",
     },
 ];
 

@@ -5,13 +5,14 @@ use std::collections::HashSet;
 use statrs::function::gamma;
 use itertools::Itertools;
 
+use crate::math::operations::FoldedOperation;
 use crate::ok;
 use crate::math;
 use crate::math::{Env, Expression, FunctionRepr, Object, Matrix, VarStack, VarStackLookup};
 use crate::math::objects::{try_operation, MatrixType};
 use crate::math::operations::{BinaryOperation, Comparison, UnaryOperation};
 use crate::math::traits::*;
-use crate::math::utils::{approx_eq, linspace_as_objects};
+use crate::math::utils::{approx_eq, expect_int, linspace_as_objects};
 use crate::status::{ExtResult, Status, WARNING_CAP};
 
 
@@ -451,8 +452,130 @@ pub fn eval(
                 eval_binop(lhs, rhs, op, extra_vars, env)
             }
         }
-        Expression::FoldedOperation(op, index_var, from, conditions, to, inner)
-            => math::operations::folded_operations::folded_operation_helper(
+        Expression::FoldedOperation(op, index_var, from, conditions, to, inner) => {
+            fn _infinite_folded_op(
+                op: &FoldedOperation,
+                index_var: &String,
+                indices: impl Iterator<Item = f64>,
+                conditions: &Vec<Expression>,
+                inner: &Expression,
+                varstack: &VarStack,
+                env: &mut Env
+            ) -> ExtResult {
+                let binop = op.underlying_binop();
+                // Most of the time, there are no conditions, so it makes sense to check this before starting the limit computation
+                if conditions.is_empty() {
+                    math::limits::compute_recursive_limit_numerically(
+                        op.if_empty(&inner.get_type(&varstack.with(index_var, Cow::Owned(Object::Real(1.0))), env)?),
+                        |i, previous_term| {
+                            eval(
+                                inner,
+                                &varstack.with(index_var, Cow::Owned(Object::Real(i))),
+                                env
+                            )
+                            .and_then(|s| s.try_map_flatten(
+                                |new_term| try_operation(previous_term, &new_term, &binop, None)
+                            ))
+                        },
+                        indices
+                    )
+                } else {
+                    math::limits::compute_recursive_limit_numerically(
+                        op.if_empty(&inner.get_type(&varstack.with(index_var, Cow::Owned(Object::Real(1.0))), env)?),
+                        |i, previous_term| {
+                            let _varstack = varstack.with(index_var, Cow::Owned(Object::Real(i)));
+                            let mut warnings = Vec::new();
+                            // Check if all conditions are met. If not, skip this `i`.
+                            for cond in conditions.iter().map(|e| eval(e, &_varstack, env)) {
+                                if !cond?.unpack_into_with_cap(&mut warnings, WARNING_CAP).expect_bool()? {
+                                    // Condition not met; skip `i`
+                                    return Ok(Status {value: previous_term.clone(), warnings});
+                                }
+                            }
+                            Ok(Status {
+                                value: try_operation(
+                                    previous_term,
+                                    &eval(
+                                        inner,
+                                        &_varstack,
+                                        env
+                                    )?
+                                    .unpack_into(&mut warnings),
+                                    &binop,
+                                    None
+                                )?.unpack_into(&mut warnings),
+                                warnings
+                            })
+                            
+                        },
+                        indices
+                    )
+                }
+            }
+            // Check if the folded operations has some infinite bound (e.g. `sum_{i=1}^∞ 1/(i^2)`),
+            // then call the above helper `_infinite_folded_op` with the appropriate index set.
+            let to_eval = eval(to, extra_vars, env);
+            if let Ok(Status{value: Object::Real(f64::INFINITY), warnings: _}) = &to_eval {
+                let mut warnings = to_eval.unwrap().warnings;
+                let from_eval = eval(from, extra_vars, env)?.unpack_into(&mut warnings).expect_float()?;
+                if from_eval == -f64::INFINITY {
+                    return Ok(Status {
+                        value: _infinite_folded_op(
+                            op,
+                            index_var,
+                            std::iter::once(0.0).chain((1..).flat_map(|n| [n as f64, -n as f64])),
+                            conditions,
+                            inner,
+                            extra_vars,
+                            env
+                        )?.unpack_into(&mut warnings),
+                        warnings
+                    })
+                } else {
+                    return Ok(Status {
+                        value: _infinite_folded_op(
+                            op,
+                            index_var,
+                            (expect_int::<i32>(from_eval).ok_or("Expected integer or -∞ as lower bound of folded operation.".to_string())?..).map(|n| n as f64),
+                            conditions,
+                            inner,
+                            extra_vars,
+                            env
+                        )?.unpack_into(&mut warnings),
+                        warnings
+                    })
+                }
+            } else if let Ok(Status{value: Object::Real(x), warnings: _}) = &to_eval && *x == -f64::INFINITY {
+                let mut warnings = to_eval.unwrap().warnings;
+                let from_eval = eval(from, extra_vars, env)?.unpack_into(&mut warnings).expect_int::<i32>()?;
+                return Ok(Status {
+                    value: _infinite_folded_op(
+                        op,
+                        index_var,
+                        (-from_eval..).map(|n| -n as f64),
+                        conditions,
+                        inner,
+                        extra_vars,
+                        env
+                    )?.unpack_into(&mut warnings),
+                    warnings
+                })
+            } else if let Ok(Status{value: Object::Real(x), mut warnings}) = eval(from, extra_vars, env) && x == -f64::INFINITY {
+                return Ok(Status {
+                    value: _infinite_folded_op(
+                        op,
+                        index_var,
+                        (-to_eval?.unpack_into(&mut warnings).expect_int::<i32>()?..).map(|n| -n as f64),
+                        conditions,
+                        inner,
+                        extra_vars,
+                        env
+                    )?.unpack_into(&mut warnings),
+                    warnings
+                })
+            }
+            // Finite folded operation
+            math::operations::folded_operations::folded_operation_helper(
                 op,
                 index_var,
                 from,
@@ -468,7 +591,8 @@ pub fn eval(
                 },
                 extra_vars,
                 env
-            ),
+            )
+        }
         Expression::Function(function_name, given_arg_exprs) => {
             // Note this case can only occur when we actually have a function call, not an assignment.
             // We can be sure about this because the assignment operator is given the lowest priority level by the tokenizer
@@ -554,51 +678,32 @@ pub fn eval(
             eval(idx_limit_expr, extra_vars, env)?
             .try_map_flatten(|value| {
                 let idx_limit = value.expect_float()?;
-                // We can't pull the following if statements inside the function call because
-                // two iterators never have the exact same type.
+                /// The below if-statements can't be condensed because our iterators
+                /// don't have the same types; hence, this helper function is used.
+                fn _eval_limit(idx_name: &String, inner: &Expression, extra_vars: &VarStack, env: &mut Env, indices: impl Iterator<Item=f64>) -> ExtResult {
+                    math::limits::compute_limit_numerically(
+                        |idx_val| eval(
+                            inner,
+                            &extra_vars.with(idx_name, Cow::Owned(Object::Real(idx_val))),
+                            env
+                        ),
+                        indices
+                    )
+                }
                 if idx_limit == f64::INFINITY {
-                    math::limits::compute_limit_numerically(
-                        |idx_val| eval(
-                            inner,
-                            &extra_vars.with(idx_name, Cow::Owned(Object::Real(idx_val))),
-                            env
-                        ),
-                        (1..).map(|n| n as f64)
-                    )
+                    _eval_limit(idx_name, inner, extra_vars, env, (1..).map(|n| n as f64))
                 } else if idx_limit == -f64::INFINITY {
-                    math::limits::compute_limit_numerically(
-                        |idx_val| eval(
-                            inner,
-                            &extra_vars.with(idx_name, Cow::Owned(Object::Real(idx_val))),
-                            env
-                        ),
-                        (1..).map(|n| -n as f64)
-                    )
+                    _eval_limit(idx_name, inner, extra_vars, env, (1..).map(|n| -n as f64))
                 } else if *direction == 0 { // From below
-                    math::limits::compute_limit_numerically(
-                        |idx_val| eval(
-                            inner,
-                            &extra_vars.with(idx_name, Cow::Owned(Object::Real(idx_val))),
-                            env
-                        ),
-                        (1..).map(|n| idx_limit - 1.0 / n as f64)
-                    )
+                    _eval_limit(idx_name, inner, extra_vars, env, (1..).map(|n| idx_limit - 1.0 / n as f64))
                 } else if *direction == 1 { // From above
-                    math::limits::compute_limit_numerically(
-                        |idx_val| eval(
-                            inner,
-                            &extra_vars.with(idx_name, Cow::Owned(Object::Real(idx_val))),
-                            env
-                        ),
-                        (1..).map(|n| idx_limit + 1.0 / n as f64)
-                    )
+                    _eval_limit(idx_name, inner, extra_vars, env, (1..).map(|n| idx_limit + 1.0 / n as f64))
                 } else { // Oscillate
-                    math::limits::compute_limit_numerically(
-                        |idx_val| eval(
-                            inner,
-                            &extra_vars.with(idx_name, Cow::Owned(Object::Real(idx_val))),
-                            env
-                        ),
+                    _eval_limit(
+                        idx_name,
+                        inner,
+                        extra_vars,
+                        env,
                         (1..).flat_map(|n| {
                             let frac = 1.0 / n as f64;
                             [idx_limit - frac, idx_limit + frac]

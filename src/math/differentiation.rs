@@ -214,7 +214,7 @@ pub fn analytic_partial_derivative(
                 Err(MakeTypeTopLevelError::Err(e)) => Err(e)
             }
         }
-        Expression::BinaryOperation(lhs, op, rhs) => Status::combine(
+        Expression::BinaryOperation(lhs, op, rhs) => Status::combine_flatten(
             analytic_partial_derivative(lhs, wrt, extra_vars, env)?,
             analytic_partial_derivative(rhs, wrt, extra_vars, env)?,
             |diff_l, diff_r| {
@@ -241,11 +241,11 @@ pub fn analytic_partial_derivative(
                     Decomposed::from_indecomposable(diff_r)
                 };
                 match op {
-                    BinaryOperation::Add => Ok(simplify_add(diff_l, diff_r).to_expr()),
-                    BinaryOperation::Sub => Ok(simplify_sub(diff_l, diff_r).to_expr()),
+                    BinaryOperation::Add => ok!(simplify_add(diff_l, diff_r).to_expr()),
+                    BinaryOperation::Sub => ok!(simplify_sub(diff_l, diff_r).to_expr()),
                     BinaryOperation::Quo | BinaryOperation::Rem | BinaryOperation::And | BinaryOperation::Or
                         => Err(format!("Cannot differentiate the operation `{op}`.")),
-                    BinaryOperation::Mul => Ok(
+                    BinaryOperation::Mul => ok!(
                         simplify_add(
                             simplify_mul(diff_l, simplify_if!(rhs, r_is_scalar)) // f'(x) * g(x)
                             .to_indecomposable_if(merge_inbetween),
@@ -257,7 +257,7 @@ pub fn analytic_partial_derivative(
                     BinaryOperation::Div => {
                         // d/dx (f(x) / g(x)) = (f'(x)g(x) - f(x)g'(x)) / g(x)²
                         let rhs = simplify_if!(rhs, r_is_scalar);
-                        Ok(
+                        ok!(
                             simplify_div(
                                 simplify_sub(
                                     simplify_mul(diff_l, rhs.clone()).to_indecomposable_if(merge_inbetween),
@@ -269,10 +269,10 @@ pub fn analytic_partial_derivative(
                         )
                     }
                     BinaryOperation::Pow(_) => {
-                        if let Ok(i) = eval(rhs, extra_vars, env).and_then(|s| s.value.expect_int::<f64>()) {
+                        if let Ok(Status{value: i, warnings}) = eval(rhs, extra_vars, env).and_then(|s| s.try_map(|o| o.expect_int::<f64>())) {
                             // Exponent is a constant integer, so d/dx (f(x) ^ i) = i * f'(x) * f(x)^(i-1).
-                            Ok(
-                                simplify_mul(
+                            Ok(Status {
+                                value: simplify_mul(
                                     Decomposed::from_f64(i),
                                     simplify_mul(
                                         diff_l,
@@ -282,13 +282,14 @@ pub fn analytic_partial_derivative(
                                         )
                                     )
                                 )
-                                .to_expr()
-                            )
+                                .to_expr(),
+                                warnings
+                            })
                         } else {
                             // d/dx (f(x) ^ g(x)) = f(x)^(g(x)-1) * (f'(x)g(x) + f(x)g'(x)ln(f(x)))
                             // (provided f(x) > 0)
                             let (lhs, rhs) = (simplify_if!(lhs, l_is_scalar), simplify_if!(rhs, r_is_scalar));
-                            Ok(
+                            ok!(
                                 simplify_if_else(
                                     simplify_gt_zero(lhs.clone()),
                                     simplify_mul(
