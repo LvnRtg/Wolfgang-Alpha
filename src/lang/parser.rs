@@ -4,8 +4,6 @@ use std::collections::HashSet;
 use std::iter::Peekable;
 use std::vec::IntoIter;
 
-use dioxus::logger::tracing;
-
 use crate::{expr_unary_op, ok};
 use crate::lang::lexer::{Keyword, Token, tokenize};
 use crate::math::operations::{BinaryOperation, Comparison, UnaryOperation, FoldedOperation};
@@ -133,7 +131,7 @@ impl Parser {
                         }
                     }
                 }
-                let mut function_expr = self.parse_expression(9, None, env)?.unpack_into(&mut warnings);
+                let mut function_expr = self.parse_expression(6, None, env)?.unpack_into(&mut warnings);
                 // At this point, the next token can either be a parenthesis or a bracket.
                 let point = match (self.peek()?, &mut function_expr) {
                     // This case means the point is yet to parse.
@@ -210,7 +208,6 @@ impl Parser {
                 Expression::Integral(Box::new(inner), Box::new(subscript), Box::new(superscript), int_var)
             }
             Token::Identifier(id) if id.starts_with("lim") && (id.len() == 3 || id.chars().nth(3) == Some('_')) => {
-                tracing::info!("limit");
                 // We attempt to determine the index variable's name now, but this may require knowledge
                 // of the inner expression, e.g. in `lim (n^2)`
                 let (opt_idx_name, direction, idx_limit) = if id.len() > 4 {
@@ -248,7 +245,6 @@ impl Parser {
                     // No idx_name provided, we'll have to infer it from the inner expression
                     (None, 0, Expression::Number(f64::INFINITY))
                 };
-                tracing::info!("{opt_idx_name:?} ->[{direction}] {idx_limit}");
                 let inner = self.parse_expression(6, None, env)?.unpack_into(&mut warnings);
                 let idx_name = match opt_idx_name {
                     Some(n) => n,
@@ -538,7 +534,7 @@ impl Parser {
                                     other => Ok((s, crate::math::expressions::Repeat::Expression(other)))
                                 }
                             ).collect::<Result<Vec<_>, _>>()?,
-                            Box::new(self.parse_expression(9, None, env)?.unpack_into(&mut warnings))
+                            Box::new(self.parse_expression(6, None, env)?.unpack_into(&mut warnings))
                         )
                     }
                     // Default
@@ -582,11 +578,10 @@ impl Parser {
     /// <trd> <td>&&<td/> <td>2<td/> </tr>
     /// <trd> <td>! (not)<td/> <td>3<td/> </tr>
     /// <trd> <td><, >, <=, >=, ==<td/> <td>4<td/> </tr>
-    /// <tr> <td>lim<td/> <td>5<td/> </tr>
+    /// <tr> <td>lim, d/dx, D<td/> <td>5<td/> </tr>
     /// <tr> <td>+, - (binary)<td/> <td>6<td/> </tr>
     /// <tr> <td>*, /, //, %, - (unary)<td/> <td>7<td/> </tr>
     /// <tr> <td>^<td/> <td>8<td/> </tr>
-    /// <tr> <td>d/dx, D<td/> <td>9<td/> </tr>
     /// </table>
     pub fn parse_next(&mut self, env: &mut Env) -> Option<Result<Status<Expression>, String>> {
         // Note on design choice: works as an iterator instead of a vector because in some cases,

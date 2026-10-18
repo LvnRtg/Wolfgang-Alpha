@@ -1,5 +1,3 @@
-use dioxus::logger::tracing;
-
 use crate::lang;
 use crate::math;
 use crate::status::Status;
@@ -12,7 +10,6 @@ pub fn eval_line(input: &str, env: &mut math::Env) -> (Vec<String>, bool) {
         Ok(x) => x,
         Err(e) => return (vec![e], false),
     };
-    tracing::info!("{:?}", tokens);
     let mut parser = lang::Parser::from(tokens);
     let mut output = Vec::<String>::new();
     let mut is_error = false;

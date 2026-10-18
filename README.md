@@ -137,10 +137,10 @@ These functions are prefixed with `___`.
 - `___diff_num(expr, v_1, ..., v_n, p_1, ..., p_n, d_1, ..., d_n)`, where `expr` is an expression, `v_i` are identifiers and `p_i`, `d_i` are objects. Computes the numerical directional derivative of `expr` w.r.t. the variables `v_1, ..., v_n` at point `(p_1, ..., p_n)` in direction `(d_1, ..., d_n)`. Hint: set `d_i := \delta_{i,j}` to compute the partial derivative of `expr` w.r.t. `v_j`.
 
 ### Differentiation
+All differential operators listed below have the same precedence, greater than comparisons but less than `+` and `-`.
 
 #### First-order partial derivatives
 Partially differentiate an expression by typing e.g. `d/dx (x^3 + 2x + 1)`. This returns `3x^2 + 2` as expression.
-- Beware that by mathematical convention, the operator `d/dx` binds very strongly. Hence, `d/dx x^2` will be interpreted as `(d/dx x)^2`.
 - The resulting expression can be stored in a function by typing `f(x) := d/dx g(x)`. Then, the partial derivative will be evaluated _before defining `f`_, that is, the defining expression of `f(x)` will the result of the partial derivative, not the unmodified expression `d/dx g(x)`. For instance, typing `f(x) := d/dx (x^2)` will effectively define `f(x) := 2x`.
 - Differentiating a function with a matrix/vector as output will differentiate component-wise and return the corresponding matrix/vector-valued function.
 - Derivatives are simplified automatically after being computed.
