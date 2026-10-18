@@ -269,32 +269,49 @@ pub fn analytic_partial_derivative(
                         )
                     }
                     BinaryOperation::Pow(_) => {
-                        // d/dx (f(x) ^ g(x)) = f(x)^(g(x)-1) * (f'(x)g(x) + f(x)g'(x)ln(f(x)))
-                        // (provided f(x) > 0)
-                        let (lhs, rhs) = (simplify_if!(lhs, l_is_scalar), simplify_if!(rhs, r_is_scalar));
-                        Ok(
-                            simplify_if_else(
-                                simplify_gt_zero(lhs.clone()),
+                        if let Ok(i) = eval(rhs, extra_vars, env).and_then(|s| s.value.expect_int::<f64>()) {
+                            // Exponent is a constant integer, so d/dx (f(x) ^ i) = i * f'(x) * f(x)^(i-1).
+                            Ok(
                                 simplify_mul(
-                                    simplify_pow(
-                                        lhs.clone(),
-                                        simplify_sub(
-                                            rhs.clone(),
-                                            Decomposed::from_f64(1.0)
+                                    Decomposed::from_f64(i),
+                                    simplify_mul(
+                                        diff_l,
+                                        simplify_pow(
+                                            simplify_if!(lhs, l_is_scalar),
+                                            Decomposed::from_f64(i - 1.0)
                                         )
-                                    ).to_indecomposable_if(merge_inbetween),
-                                    simplify_add(
-                                        simplify_mul(diff_l, rhs).to_indecomposable_if(merge_inbetween),
-                                        simplify_mul(
-                                            simplify_mul(lhs.clone(), diff_r).to_indecomposable_if(merge_inbetween),
-                                            simplify_ln(lhs).to_indecomposable_if(merge_inbetween)
-                                        ).to_indecomposable_if(merge_inbetween)
-                                    ).to_indecomposable_if(merge_inbetween)
-                                ),
-                                Decomposed::Indecomposable(Expression::None)
+                                    )
+                                )
+                                .to_expr()
                             )
-                            .to_expr()
-                        )
+                        } else {
+                            // d/dx (f(x) ^ g(x)) = f(x)^(g(x)-1) * (f'(x)g(x) + f(x)g'(x)ln(f(x)))
+                            // (provided f(x) > 0)
+                            let (lhs, rhs) = (simplify_if!(lhs, l_is_scalar), simplify_if!(rhs, r_is_scalar));
+                            Ok(
+                                simplify_if_else(
+                                    simplify_gt_zero(lhs.clone()),
+                                    simplify_mul(
+                                        simplify_pow(
+                                            lhs.clone(),
+                                            simplify_sub(
+                                                rhs.clone(),
+                                                Decomposed::from_f64(1.0)
+                                            )
+                                        ).to_indecomposable_if(merge_inbetween),
+                                        simplify_add(
+                                            simplify_mul(diff_l, rhs).to_indecomposable_if(merge_inbetween),
+                                            simplify_mul(
+                                                simplify_mul(lhs.clone(), diff_r).to_indecomposable_if(merge_inbetween),
+                                                simplify_ln(lhs).to_indecomposable_if(merge_inbetween)
+                                            ).to_indecomposable_if(merge_inbetween)
+                                        ).to_indecomposable_if(merge_inbetween)
+                                    ),
+                                    Decomposed::Indecomposable(Expression::None)
+                                )
+                                .to_expr()
+                            )
+                        }
                     }
                     BinaryOperation::Comp(..) => Err(format!("Cannot differentiate comparison {:?}", expr)),
                 }
